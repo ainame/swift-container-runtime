@@ -6,8 +6,8 @@ The goal is feature parity with the behavior implemented by [kontainer-runtime a
 
 | Surface | Target behavior | Swift status |
 | --- | --- | --- |
-| `run` | Bundle, foreground wait/status/cleanup, detach, keep, PID file, console socket, pidfd socket, no-pivot | Foreground subset implemented; persistent lifecycle in progress |
-| `create`, `start`, `state`, `kill`, `delete`, `list` | Persistent transitions and process identity; named/numeric signals; kill-all; force deletion; table/JSON/quiet listing | In progress |
+| `run` | Bundle, foreground wait/status/cleanup, detach, keep, PID file, console socket, pidfd socket, no-pivot | Foreground and detached subset implemented; keep and descriptor/console options missing |
+| `create`, `start`, `state`, `kill`, `delete`, `list` | Persistent transitions and process identity; named/numeric signals; kill-all; force deletion; table/JSON/quiet listing | Core lifecycle implemented; kill-all without a private PID namespace and optional flags remain missing |
 | `pause`, `resume` | Cgroup freezer | Missing |
 | `update` | Resources file or stdin; individual resource flags; memory check-before-update | Missing |
 | `events` | Stats snapshot or interval stream, OOM events, termination on deletion | Missing |
@@ -15,7 +15,7 @@ The goal is feature parity with the behavior implemented by [kontainer-runtime a
 | `exec` | Command or process JSON; detach, terminal, console/PID/pidfd; cwd, env, user/groups, capabilities, preserved FDs, sub-cgroup, ignore-paused | Missing |
 | `spec` | Generate default `config.json`; bundle and rootless options | Missing |
 | `features` | OCI feature JSON matching actual runtime support | Missing |
-| Global options | State root, log path, text/JSON logs, debug | State root in progress; logging missing |
+| Global options | State root, log path, text/JSON logs, debug | State root implemented; logging missing |
 | Version | Runtime version, commit, OCI specification version; `--version`/`-v` | Missing |
 
 Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/KontainerConfig.kt`.
@@ -35,7 +35,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | Foreground and descriptors | Signal forwarding, terminal I/O/resizing, console handoff, socket activation, explicit preserved descriptors. OCI foreground execution already marks inherited non-stdio descriptors close-on-exec |
 | Portability and integration | arm64 and x86_64 Linux; real musl/static build and execution; applicable runc compatibility tests; containerd/go-runc interactions |
 
-The current foreground subset has real Linux debug/release evidence for PID 1, pivoted rootfs, proc/tmpfs/devpts, standard devices, hostname, cwd, explicit environment, stdio, status propagation, rejected configurations, descriptor cleanup, and failure cleanup. It does not establish the remaining behavior above.
+The current foreground and persistent lifecycle subset has real Linux debug/release evidence for PID 1, pivoted rootfs, proc/tmpfs/devpts, standard devices, hostname, cwd, explicit environment, stdio, status propagation, rejected configurations, descriptor cleanup, lifecycle transitions, concurrent create/start, signal delivery, stale process identity protection, and failure cleanup. It does not establish the remaining behavior above.
 
 Evidence paths in the target, relative to `src/nativeMain/kotlin/`:
 

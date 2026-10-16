@@ -8,7 +8,8 @@ The target is an understandable Linux runtime with roughly the features of konta
 | --- | --- |
 | 1. Namespace lab | Implemented as `namespace-run`; Linux integration in `scripts/integration.sh`. |
 | 2. OCI foreground run | Implemented as `run --bundle PATH ID` for a narrow subset; everything outside it is rejected (see README). Linux integration with a static BusyBox rootfs and runc comparison in `scripts/oci-integration.sh`. |
-| 3–6 | Not started. |
+| 3. Persistent OCI lifecycle | Implemented for the phase 2 subset: `create`, `start`, `state`, `kill`, `delete`, `list`, and foreground/detached `run` with a `--root` state directory (see README). Linux integration with runc comparison in `scripts/lifecycle-integration.sh`. macOS unit tests and Linux debug/release unit and integration gates pass; the gaps listed below remain. |
+| 4–6 | Not started. |
 
 ## 1. Namespace lab
 
@@ -30,15 +31,19 @@ Check a BusyBox bundle through both runc and this runtime: PID 1, root filesyste
 
 References: kontainer `spec/Spec.kt`, `process/InitProcess.kt`, and `rootfs/Rootfs.kt`; runc `libcontainer/standard_init_linux.go` and `libcontainer/rootfs_linux.go`.
 
-Implemented subset: new mount (required), pid, uts, ipc, and network namespaces. Mounts are `proc` at `/proc`, `tmpfs`, and `devpts` at `/dev/pts`, with nosuid/nodev/noexec/strictatime and validated data options. runc's default character devices and `/dev` links are created in a `/dev` tmpfs. The process takes an absolute `args[0]`, an explicit `env`, a created `cwd`, and uid/gid 0 only. Mount destinations are resolved per component from a rootfs descriptor with `O_NOFOLLOW`, and symlink components are rejected rather than resolved in-root as runc does. Setup then calls `pivot_root(".", ".")` and detaches the old root. Deliberate differences from runc: no PATH lookup, no `HOME` default, symlinked mount destinations fail, and `/dev` is populated only when it is a tmpfs. Every unknown or unimplemented `config.json` field is rejected. The ID is validated but unused until phase 3. The bundle and rootfs are trusted and must stay unchanged during setup; launch pins the rootfs with `O_NOFOLLOW` and checks its identity after the self-bind, which detects but does not prevent host-side races.
+Implemented subset: new mount (required), pid, uts, ipc, and network namespaces. Mounts are `proc` at `/proc`, `tmpfs`, and `devpts` at `/dev/pts`, with nosuid/nodev/noexec/strictatime and validated data options. runc's default character devices and `/dev` links are created in a `/dev` tmpfs. The process takes an absolute `args[0]`, an explicit `env`, a created `cwd`, and uid/gid 0 only. Mount destinations are resolved per component from a rootfs descriptor with `O_NOFOLLOW`, and symlink components are rejected rather than resolved in-root as runc does. Setup then calls `pivot_root(".", ".")` and detaches the old root. Deliberate differences from runc: no PATH lookup, no `HOME` default, symlinked mount destinations fail, and `/dev` is populated only when it is a tmpfs. Every unknown or unimplemented `config.json` field is rejected. Phase 3 uses the validated ID as the state directory name. The bundle and rootfs are trusted and must stay unchanged during setup; launch pins the rootfs with `O_NOFOLLOW` and checks its identity after the self-bind, which detects but does not prevent host-side races.
 
 ## 3. Persistent OCI lifecycle
 
 Implement `create`, `start`, `state`, `kill`, `delete`, detached `run`, and `list`. Store absolute bundle paths, validate container IDs, write state atomically, coordinate competing mutating commands across processes, and keep cleanup metadata independent of the source bundle. Track process identity with PID and `/proc/<pid>/stat` start time, with pidfds where useful.
 
-Check that create leaves the workload waiting, start runs it exactly once, state reflects real exit, signals reach the intended process, invalid transitions fail, stopped containers delete, force deletion cleans up, duplicate IDs fail, PID reuse cannot target an unrelated process, and failure leaves no orphan process or state directory.
+Check that create leaves the workload waiting, start runs it exactly once, state reflects real exit, signals reach the intended process, invalid transitions fail, stopped containers delete, force deletion cleans up, duplicate IDs fail, PID reuse cannot target an unrelated process, and failed create/run clean up their processes and state. A failed start retains stopped state until deletion.
 
 References: kontainer `command/{Create,Start,Run,State,Kill,Delete,List}.kt`, `state/State.kt`, and `channel/NotifySocket.kt`; runc `create.go`, `start.go`, `state.go`, `kill.go`, and `delete.go`.
+
+Implemented design: no monitor process, as in runc. The launcher reports the init PID while it is an unreaped child; the CLI pins it with a pidfd and records PID, start time, and boot ID before releasing the launcher. A created init finishes setup, waits for a commit byte that follows the `state.json` write (EOF makes it exit), then serves `start.sock`. The init accepts only a connected client's request, unlinks the socket (the created-to-running marker), and execs; the close-on-exec connection gives `start` EOF on success or the exec error. Status is derived on each query (record, verified init, socket). Signals use `pidfd_send_signal` after verifying start time, boot ID, and PID namespace. Mutating commands hold a bounded per-container `flock`; `mkdirat` rejects duplicate IDs; `state.json` is replaced by fsync and rename. Foreground `run` keeps its parent-death signal chain and removes state on exit; a detached init has no parent-death signal and starts a new session.
+
+Deliberate differences from runc: `start` reports exec failures; a dead `start` client before the request check does not consume the start; the state root must be private to its owner. Missing compared with runc and kontainer: `pause`/`resume`, hooks (including poststart/poststop), `NOTIFY_SOCKET`, `--pid-file`, `--console-socket`, `--pidfd-socket`, `--preserve-fds`, `run --keep`, `--no-subreaper`, signal forwarding for foreground `run` (phase 5), and cgroup-based killing of containers without a PID namespace (phase 4). Rootless state roots (`$XDG_RUNTIME_DIR`) are not handled.
 
 ## 4. Security and resource setup
 

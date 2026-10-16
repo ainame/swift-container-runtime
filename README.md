@@ -4,9 +4,9 @@ An educational Linux container runtime in Swift. [runc](https://github.com/openc
 
 > **Educational status.** This is a learning project, not a production runtime. It implements a narrow subset of the OCI runtime specification and **is not a security boundary**: there are no capability, seccomp, no_new_privs, cgroup, user-namespace, masked-path, or read-only controls yet. Workloads run as root with the caller's privileges.
 
-Two commands exist so far:
+Commands:
 
-- `run` (roadmap phase 2) runs an OCI bundle in the foreground with its own root filesystem, using a deliberately small subset of `config.json`. Unsupported fields are rejected.
+- `create`, `start`, `state`, `kill`, `delete`, `list`, and `run` (phases 2 and 3) manage OCI bundles with their own root filesystem through runc's lifecycle, using a deliberately small subset of `config.json`. Unsupported fields are rejected.
 - `namespace-run` (phase 1) is a **namespace lab**. It creates new UTS, PID, and mount namespaces, makes mount propagation private, mounts `/proc` for the new PID namespace, and executes a command. It shares the surrounding Linux filesystem.
 
 ## Run an OCI bundle
@@ -16,7 +16,41 @@ swift build
 sudo .build/debug/swift-container-runtime run --bundle /path/to/bundle mybox
 ```
 
-Requires root and Linux 5.11 or later: `close_range` with `CLOSE_RANGE_CLOEXEC` (5.11; plain `close_range` is 5.9). `namespace-run` still needs only 5.3. `--bundle` (`-b`) defaults to the current directory, like runc. The runtime reads `config.json`, sets up the container, waits for the workload, and exits with its status. Setup failures exit 125 and print the failing step. Usage errors exit 64. The container ID is validated with runc's character rules, but no state is stored until phase 3, so it is not checked for duplicates and there is no `state`, `kill`, or `delete`.
+Requires root and Linux 5.11 or later: `close_range` with `CLOSE_RANGE_CLOEXEC` (5.11; plain `close_range` is 5.9). `namespace-run` still needs only 5.3. `--bundle` (`-b`) defaults to the current directory, like runc. The runtime reads `config.json`, sets up the container, waits for the workload, and exits with its status. While it runs, the container is visible to `state`, `kill`, and `delete --force`; its state is removed when the workload exits or setup fails, as with runc (there is no `--keep`). Setup failures exit 125 and print the failing step. Usage errors exit 64.
+
+## Container lifecycle
+
+```sh
+rt="sudo .build/debug/swift-container-runtime"
+$rt create --bundle /path/to/bundle mybox < /dev/null > mybox.log 2>&1
+$rt state mybox          # status "created"; the workload has not run
+$rt start mybox          # returns once the workload's execve succeeded
+$rt list                 # ID PID STATUS BUNDLE CREATED OWNER
+$rt kill mybox TERM      # default TERM; names (KILL, SIGKILL) or numbers
+$rt delete mybox         # stopped (or created) containers; --force kills a running one
+$rt run --detach --bundle /path/to/bundle other   # create + start, then return
+```
+
+The semantics follow runc:
+
+- **State root.** `--root PATH` (before or after the subcommand) selects the state directory; the default is `/run/swift-container-runtime`. It is created with mode 0700 and must belong to the caller and not be group- or world-writable. Each container uses `<root>/<id>/`, opened relative to the root without following symlinks. On macOS every lifecycle command fails before touching the filesystem.
+- **Status.** `state` prints OCI state JSON (`ociVersion`, `id`, `pid`, `status`, `bundle`, `rootfs`, `created`, and `annotations` when present), pretty-printed with sorted keys. The status is `creating`, `created`, `running`, or `stopped`, and is derived on every query from the live system rather than stored: the init counts as running only while its PID still has the recorded `/proc/<pid>/stat` start time and boot ID and is not a zombie. `pid` is 0 when stopped. `list` prints runc's table, `--format json` a JSON array (`null` when empty, as in runc), and `--quiet` only IDs; unreadable entries are reported on stderr and skipped.
+- **Transitions.** `start` needs `created` and succeeds at most once, also under concurrent starts. `kill` needs `created` or `running`. `delete` removes a `stopped` container and, like runc, also a `created` one after killing its waiting init; a `running` one needs `--force`, which sends SIGKILL, waits up to 10 seconds, and then removes the state. `delete --force` of a missing container succeeds. Invalid transitions fail with `cannot <command> container <id> in the <status> state`. Duplicate IDs fail with `container <id> already exists`.
+- **Bundles.** The bundle and rootfs are stored as canonical absolute paths. Everything later commands need is in `state.json`, so the bundle may be renamed or removed after `create`.
+- **Stdio.** The workload inherits the stdin, stdout, and stderr of `create` or `run --detach`, which the waiting init holds open. Redirect them when capturing that command's output; otherwise a capture such as `$(... create ...)` waits for the container to exit, as with runc.
+- **Exit statuses.** Lifecycle command failures exit 1, as in runc; `run` failures exit 125.
+
+### Lifecycle design
+
+There is no monitor process. `create` forks the usual launcher and init. The launcher reports the init's PID while it is still an unreaped child, the CLI pins it with a pidfd, records its start time and boot ID, and only then lets the launcher exit. The init completes the whole setup (namespaces, mounts, `pivot_root`, hostname, cwd, identity, and a check that the executable exists), reports readiness, and waits. The CLI writes `state.json` and sends a commit byte; if the CLI fails or dies before that, the init sees EOF and exits, and the failed create kills it through the pidfd and removes the state directory. A detached init has no parent-death signal, starts a new session, and is reparented to the nearest subreaper or PID 1, which reaps it.
+
+The created init listens on `start.sock` in the state directory (bound by the CLI before forking). `start` connects and sends a request. The init ignores a client that has already hung up, so a `start` that dies before that check leaves the container created. Otherwise the init unlinks `start.sock`, which marks the container running, and calls `execve`. The connection is close-on-exec: `start` sees EOF after a successful exec, or the exec error, which it reports. Unlike runc's exec FIFO, `start` therefore confirms the exec itself.
+
+Signals and deletion go through `pidfd_send_signal` on a pidfd that is verified after it is opened: the PID must still have the recorded start time and boot ID, must not be PID 1 or the caller, and for a container with a PID namespace must be outside the caller's PID namespace. A reused PID or tampered state therefore cannot direct a signal to an unrelated process; such a container reads as stopped.
+
+Mutating commands (`create`, `start`, `kill`, `delete`, `run`) take an exclusive `flock` on the container directory for one short synchronous critical section, with waits bounded to 30 seconds. `state` and `list` take no lock; `state.json` is replaced atomically by writing and syncing a temporary file and renaming it. Forked children close their copy of the lock descriptor first, so a long-lived init never holds it. `mkdirat` makes duplicate creates fail atomically.
+
+Without a PID namespace, killing the init does not kill other workload processes (runc uses cgroups for this, which are a phase 4 feature).
 
 A minimal `config.json` for a static BusyBox rootfs:
 
@@ -108,7 +142,7 @@ The package requires Swift tools 6.4. `.swift-version` selects the macOS 6.4.0 r
 swift test
 ```
 
-Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace and OCI checks in the pinned Swift 6.4.1 Linux image.
+Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace, OCI, and lifecycle checks in the pinned Swift 6.4.1 Linux image.
 
 ## Development on macOS
 
@@ -125,12 +159,14 @@ The script uses a disposable VM-backed `swift:6.4.1` container and stores Linux 
 
 Inside the VM it also installs `busybox-static` and `runc` and runs `scripts/oci-integration.sh`. That script builds a static BusyBox rootfs and runs the same bundles through this runtime and runc. Both must satisfy the shared checks: PID 1, rootfs contents and isolation from host files, hostname, cwd, environment replacement, device nodes, separate stdout/stderr, exit 42, and missing executables. Runtime-specific checks cover exit 125 diagnostics, rejected configurations, symlink escapes from mount destinations (absolute and relative), and setup failures after partial mounting. Those failures must not run the workload or change host mounts and hostname. Set `RUNC_COMPARE=0` to skip runc, or `RUNC_COMPARE=1` to require it.
 
+`scripts/lifecycle-integration.sh` then runs the lifecycle against both runtimes (`RUNC_COMPARE=1` in the VM and CI): a created init is PID 1 in the prepared rootfs and has not run the workload; created, running, and stopped transitions; a single start; TERM reaching a handler and KILL; real exits; invalid transitions; `delete --force` leaving no process of the PID namespace; duplicate IDs; detached and foreground `run`; and renamed or removed bundles. Runtime-specific checks cover exact messages, concurrent starts and creates, `list` formats, create-time and start-time exec failures, descriptor isolation, foreground parent-death cleanup, and stale or tampered state that must not signal an unrelated process. Failed create and foreground run clean up their state and processes. An exec failure during `start` leaves stopped state for inspection and deletion; abrupt CLI termination can also leave stopped metadata.
+
 The local development environment has Apple `container` 0.9.0 and a cached `swift:6.4.1` image. That installation has no `container machine` subcommand. A successful Swift build inside an Apple container checks Linux compilation; a namespace smoke test must separately demonstrate that its guest environment grants the required kernel capabilities.
 
 ## Design
 
 - Swift handles argument validation and the host-side command interface.
-- Namespace setup, rootfs setup, process creation, startup-error reporting, and waiting are implemented in Swift. `namespace-run` and `run` share one fork/unshare/fork launcher; each supplies its own init body. The synchronous launch API is unavailable directly from async contexts and rejects callers with more than one thread before it forks. Invoke it before starting background work; signal handlers must not introduce concurrent work during launch.
+- Namespace setup, rootfs setup, process creation, startup-error reporting, and waiting are implemented in Swift. `namespace-run`, `run`, and `create` share one fork/unshare/fork launcher; each supplies its own init body. The synchronous launch API is unavailable directly from async contexts and rejects callers with more than one thread before it forks. Invoke it before starting background work; signal handlers must not introduce concurrent work during launch. Lifecycle commands are synchronous and single-threaded throughout; cross-process coordination uses `flock`, never an in-process lock.
 - libc imports select `Musl` when available, otherwise `Glibc` on Linux (`Darwin` for portable macOS code). A small header-only `LinuxAPI` module exposes missing GNU declarations and fixed-signature adapters for variadic `prctl`/`syscall`/`openat` (including `pivot_root`, which glibc does not wrap); it contains no launch or supervision logic. musl execution has not yet been tested.
 - Descriptor operations and errors use [swift-system](https://github.com/apple/swift-system), currently resolved to 1.8.1. A noncopyable owner wraps its copyable `FileDescriptor`, closes on scope exit, and supports scoped borrowing, explicit closing, and ownership handoff. Scoped access keeps the owner alive through each descriptor operation. Pipe creation uses atomic close-on-exec behavior; Linux-specific namespace operations retain their libc bindings.
 - The CLI uses [swift-argument-parser](https://github.com/apple/swift-argument-parser), currently resolved to 1.8.2. It preserves workload arguments after the required `--` separator. Usage errors exit 64; setup failures exit 125; workload exit statuses pass through.
@@ -140,4 +176,4 @@ The local development environment has Apple `container` 0.9.0 and a cached `swif
 
 ## Not yet implemented
 
-Lifecycle commands and state (`create`, `start`, `state`, `kill`, `delete`, detached `run`, `list`) are planned for phase 3. Credentials other than root, capabilities, no_new_privs, rlimits, seccomp, cgroups, masked/read-only paths, read-only rootfs, and hooks are planned for phase 4. Terminals, signal forwarding, `exec`, user namespaces, and rootless operation are planned for phase 5. Bind mounts, other filesystem types, PATH lookup, `HOME` defaulting, network setup, and the rest of the phase 6 inventory are also missing. musl builds have not been verified. See the [implementation roadmap](docs/roadmap.md) for the path toward kontainer-runtime feature parity.
+The lifecycle lacks runc's `pause`/`resume`, `ps`, `events`, `update`, `--pid-file`, `--console-socket`, `--pidfd-socket`, `--preserve-fds`, `run --keep`, `NOTIFY_SOCKET`, and hooks. Credentials other than root, capabilities, no_new_privs, rlimits, seccomp, cgroups, masked/read-only paths, read-only rootfs, and hooks are planned for phase 4. Terminals, signal forwarding, `exec`, user namespaces, and rootless operation are planned for phase 5. Bind mounts, other filesystem types, PATH lookup, `HOME` defaulting, network setup, and the rest of the phase 6 inventory are also missing. musl builds have not been verified. See the [implementation roadmap](docs/roadmap.md) for the path toward kontainer-runtime feature parity.

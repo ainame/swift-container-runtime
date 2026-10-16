@@ -10,6 +10,11 @@ struct OwnedFileDescriptor: ~Copyable {
         self.descriptor = descriptor
     }
 
+    /// An owner that holds nothing yet; borrowing it throws `EBADF`.
+    init() {
+        descriptor = nil
+    }
+
     borrowing func withDescriptor<Result>(
         _ body: (FileDescriptor) throws -> Result
     ) throws -> Result {
@@ -34,5 +39,23 @@ struct OwnedFileDescriptor: ~Copyable {
 
     deinit {
         try? descriptor?.close()
+    }
+}
+
+extension OwnedFileDescriptor {
+    /// Reads to EOF, failing once more than `limit` bytes arrive.
+    func readAll(limit: Int) throws -> [UInt8] {
+        try withDescriptor { descriptor in
+            var bytes: [UInt8] = []
+            var chunk = [UInt8](repeating: 0, count: 16 * 1024)
+            while true {
+                let count = try chunk.withUnsafeMutableBytes { buffer in
+                    unsafe try descriptor.read(into: buffer)
+                }
+                if count == 0 { return bytes }
+                bytes += chunk[..<count]
+                guard bytes.count <= limit else { throw RuntimeError("input exceeds \(limit) bytes") }
+            }
+        }
     }
 }

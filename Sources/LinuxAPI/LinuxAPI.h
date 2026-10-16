@@ -4,7 +4,11 @@
 #if defined(__linux__)
 #include <fcntl.h>
 #include <linux/sched.h>
+#include <poll.h>
 #include <signal.h>
+#include <stddef.h>
+#include <sys/file.h>
+#include <sys/socket.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -50,6 +54,36 @@ static inline int linux_mark_descriptors_cloexec(unsigned int first) {
 static inline int linux_open_path(int dirfd, const char *path, int flags) {
     return openat(dirfd, path, flags | O_PATH | O_CLOEXEC);
 }
+
+/* Opens a close-on-exec descriptor relative to dirfd with an explicit mode. */
+static inline int linux_open_at(int dirfd, const char *path, int flags, unsigned int mode) {
+    return openat(dirfd, path, flags | O_CLOEXEC, (mode_t)mode);
+}
+
+/* pidfd_send_signal(2), Linux 5.1. Use the target headers' syscall number. */
+static inline int linux_pidfd_send_signal(int pidfd, int signal_number) {
+    return (int)syscall(SYS_pidfd_send_signal, pidfd, signal_number, NULL, 0U);
+}
+
+/* glibc imports SOCK_* as enum members and hides accept4 without _GNU_SOURCE
+ * (its GNU prototype also differs from musl's); these fixed-signature adapters
+ * give both libcs one close-on-exec spelling. */
+static inline int linux_unix_seqpacket_socket(void) {
+    return socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+}
+
+static inline int linux_unix_stream_socketpair(int descriptors[2]) {
+    return socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, descriptors);
+}
+
+static inline int linux_accept_cloexec(int fd) {
+    return (int)syscall(SYS_accept4, fd, NULL, NULL, SOCK_CLOEXEC);
+}
+
+/* A peer hangup on a stream or seqpacket socket (GNU extension). */
+#ifndef POLLRDHUP
+#define POLLRDHUP 0x2000
+#endif
 #endif
 
 #endif

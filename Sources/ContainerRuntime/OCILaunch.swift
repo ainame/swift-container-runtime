@@ -48,7 +48,11 @@ private let standardDevLinks: [(target: String, name: String)] = [
 ]
 
 extension OCIRunPlan {
-    func runOnLinux() throws -> Int32 {
+    /// Launches the container. Without a gate the init executes the workload
+    /// after setup and this returns its status. With a gate (and detached
+    /// hooks) the init waits for `start` instead, and this returns 0 once it
+    /// has been committed.
+    func runOnLinux(hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil) throws -> Int32 {
         var groups: [[String]] = [
             arguments,
             environment,
@@ -71,23 +75,27 @@ extension OCIRunPlan {
             return "\(stage.description) \(mounts[Int(detail)].destinationPath)"
         }
         return unsafe try strings.withPointers { pointers in
-            unsafe try runLaunch(namespaceFlags: flags, context: context) { report in
+            unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit in
                 unsafe initializeContainer(
-                    strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev, report: report
+                    strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
+                    report: report, commit: commit, gate: gate
                 )
             }
         }
     }
 }
 
-/// Runs in the namespace init. Returns only on failure, after reporting it.
+/// Runs in the namespace init. Returns only on failure, after reporting it
+/// (or, while waiting for start, after the creator has gone).
 @unsafe
 private func initializeContainer(
     strings: UnsafePointer<UnsafeMutablePointer<CChar>?>,
     starts: [Int],
     mounts: [OCIRunPlan.Mount],
     populatesDev: Bool,
-    report: borrowing OwnedFileDescriptor
+    report: borrowing OwnedFileDescriptor,
+    commit: borrowing OwnedFileDescriptor,
+    gate: StartGate?
 ) -> Int32 {
     func group(_ index: Int) -> UnsafePointer<UnsafeMutablePointer<CChar>?> {
         unsafe strings + starts[index]
@@ -178,17 +186,19 @@ private func initializeContainer(
 
     // An explicit envp replaces the caller's environment entirely.
     let argv = unsafe group(Group.arguments)
-    _ = unsafe execve(argv[0]!, argv, group(Group.environment))
-    return failureStatus(report, .execute)
-}
-
-/// Device and inode numbers of an owned descriptor, or nil if fstat fails.
-private func fileIdentity(_ owner: borrowing OwnedFileDescriptor) -> (device: dev_t, inode: ino_t)? {
-    try? owner.withDescriptor { descriptor -> (device: dev_t, inode: ino_t)? in
-        var status = stat()
-        guard unsafe fstat(descriptor.rawValue, &status) == 0 else { return nil }
-        return (status.st_dev, status.st_ino)
+    let environment = unsafe group(Group.environment)
+    if let gate {
+        // Like runc's create-time lookup, a missing executable fails create
+        // rather than start. Exec can still fail later if the rootfs changes.
+        guard unsafe access(argv[0]!, X_OK) == 0 else { return failureStatus(report, .execute) }
+        guard writeRecord(report, LaunchRecord(.ready)) else { return 125 }
+        // EOF instead of the commit: the creator failed or died before
+        // recording this init, so nothing could ever start or delete it.
+        guard receiveCommit(commit) else { return 125 }
+        return unsafe gate.serve(arguments: argv, environment: environment)
     }
+    _ = unsafe execve(argv[0]!, argv, environment)
+    return failureStatus(report, .execute)
 }
 
 /// Mounts a filesystem on a destination resolved beneath `root`.

@@ -89,6 +89,87 @@ func rejectsInvalidRunInvocation(_ arguments: [String]) {
     }
 }
 
+@Test func rootOptionWorksBeforeOrAfterSubcommandLikeRunc() throws {
+    let before = try #require(RuntimeCommand.parseAsRoot(["--root", "/tmp/state", "state", "box"]) as? State)
+    #expect(before.globals.root == "/tmp/state")
+    #expect(before.id == "box")
+    let after = try #require(RuntimeCommand.parseAsRoot(["start", "--root", "/tmp/state", "box"]) as? Start)
+    #expect(after.globals.root == "/tmp/state")
+    let defaulted = try #require(RuntimeCommand.parseAsRoot(["delete", "box"]) as? Delete)
+    #expect(defaulted.globals.root == "/run/swift-container-runtime")
+    #expect(!defaulted.force)
+}
+
+@Test func parsesLifecycleCommands() throws {
+    let create = try #require(RuntimeCommand.parseAsRoot(["create", "-b", "/srv/bundle", "box"]) as? Create)
+    #expect(create.bundle == "/srv/bundle")
+    #expect(create.id == "box")
+    let defaultBundle = try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create)
+    #expect(defaultBundle.bundle == ".")
+
+    let kill = try #require(RuntimeCommand.parseAsRoot(["kill", "box"]) as? Kill)
+    #expect(kill.signal == "TERM")
+    let killNamed = try #require(RuntimeCommand.parseAsRoot(["kill", "box", "SIGKILL"]) as? Kill)
+    #expect(killNamed.signal == "SIGKILL")
+    let killNumbered = try #require(RuntimeCommand.parseAsRoot(["kill", "box", "9"]) as? Kill)
+    #expect(killNumbered.signal == "9")
+
+    let delete = try #require(RuntimeCommand.parseAsRoot(["delete", "-f", "box"]) as? Delete)
+    #expect(delete.force)
+    let deleteLong = try #require(RuntimeCommand.parseAsRoot(["delete", "--force", "box"]) as? Delete)
+    #expect(deleteLong.force)
+
+    let list = try #require(RuntimeCommand.parseAsRoot(["list"]) as? List)
+    #expect(list.format == .table)
+    #expect(!list.quiet)
+    let json = try #require(RuntimeCommand.parseAsRoot(["list", "-f", "json", "-q"]) as? List)
+    #expect(json.format == .json)
+    #expect(json.quiet)
+
+    let detached = try #require(RuntimeCommand.parseAsRoot(["run", "-d", "-b", "/srv/bundle", "box"]) as? Run)
+    #expect(detached.detach)
+    let foreground = try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run)
+    #expect(!foreground.detach)
+}
+
+@Test(arguments: [
+    ["create"],
+    ["create", "bad/id"],
+    ["create", "--bundle", "", "box"],
+    ["start"],
+    ["start", "a", "b"],
+    ["state", ".."],
+    ["kill", "box", "NOPE"],
+    ["kill", "box", "TERM", "extra"],
+    ["delete"],
+    ["list", "--format", "xml"],
+    ["list", "extra"],
+    ["--root", "", "list"],
+    ["state", "--root", "", "box"],
+])
+func rejectsInvalidLifecycleInvocation(_ arguments: [String]) {
+    do {
+        _ = try RuntimeCommand.parseAsRoot(arguments)
+        Issue.record("Expected parsing to reject \(arguments)")
+    } catch {
+        #expect(RuntimeCommand.exitCode(for: error) == .validationFailure)
+    }
+}
+
+@Test func rootHelpListsLifecycleCommands() {
+    do {
+        var command = try RuntimeCommand.parseAsRoot(["--help"])
+        try command.run()
+        Issue.record("Expected a help request")
+    } catch {
+        #expect(RuntimeCommand.exitCode(for: error) == .success)
+        let help = RuntimeCommand.fullMessage(for: error)
+        for name in ["create", "start", "state", "kill", "delete", "list", "run", "--root"] {
+            #expect(help.contains(name), "missing \(name)")
+        }
+    }
+}
+
 @Test func runHelpDocumentsEducationalSubset() {
     do {
         var command = try RuntimeCommand.parseAsRoot(["run", "--help"])
@@ -101,4 +182,9 @@ func rejectsInvalidRunInvocation(_ arguments: [String]) {
         // Help text wraps, so check a single word of the security disclaimer.
         #expect(help.contains("security"))
     }
+}
+
+@Test func parsesSignalZeroAsAProbe() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["kill", "box", "0"]) as? Kill)
+    #expect(command.signal == "0")
 }

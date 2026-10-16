@@ -7,8 +7,8 @@ import Darwin
 #endif
 import SystemPackage
 
-/// A container ID with runc's accepted character set. Phase 2 keeps no
-/// state, so the ID is validated but not yet stored or checked for duplicates.
+/// A container ID with runc's accepted character set. Lifecycle commands use
+/// it as a single directory name below the state root.
 public struct ContainerID: Sendable, Equatable {
     public let rawValue: String
 
@@ -58,8 +58,11 @@ public struct OCIRunPlan: Sendable {
         public var destinationPath: String { "/" + destination.joined(separator: "/") }
     }
 
+    public let ociVersion: String
     public let bundle: FilePath
     public let rootfs: FilePath
+    /// Recorded in container state; they do not affect setup.
+    public let annotations: [String: String]
     public let namespaces: [Namespace]
     public let hostname: String?
     public let mounts: [Mount]
@@ -160,8 +163,10 @@ public struct OCIRunPlan: Sendable {
             try Self.mount(mount, index: index, namespaces: namespaces)
         }
 
+        self.ociVersion = version
         self.bundle = bundle
         self.rootfs = rootfs
+        self.annotations = configuration.annotations
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.hostname = configuration.hostname
         self.mounts = mounts
