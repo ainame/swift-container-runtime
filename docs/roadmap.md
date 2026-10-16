@@ -36,7 +36,7 @@ Add UID/GID and supplementary groups, capability sets, no_new_privs, rlimits, um
 
 Check actual identities and capability masks, denied operations, readonly/masked paths, limit files and enforcement, cgroup cleanup, invalid settings, and setup ordering. Add lifecycle hooks and their timeout, environment, state-input, and failure semantics.
 
-References: kontainer `process/ProcessSecurity.kt`, `capability/Capability.kt`, `cgroup/CgroupV2.kt`, `seccomp/Seccomp.kt`, and `hook/Hook.kt`; runc `libcontainer/standard_init_linux.go`, `libcontainer/seccomp`, and `libcontainer/cgroups`.
+References: kontainer `process/ProcessSecurity.kt`, `capability/Capability.kt`, `cgroup/CgroupV2.kt`, `seccomp/Seccomp.kt`, and `hook/Hook.kt`; runc `libcontainer/standard_init_linux.go`, `libcontainer/seccomp`, and `vendor/github.com/opencontainers/cgroups`.
 
 ## 5. Exec, rootless operation, and terminal support
 

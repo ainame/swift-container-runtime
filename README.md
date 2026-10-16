@@ -6,7 +6,7 @@ The first iteration is a **namespace lab**. It creates new UTS, PID, and mount n
 
 ## Try the namespace lab
 
-Requires Swift 6.2 or later and Linux with permission to create namespaces and mount procfs, normally root with the necessary capabilities.
+Requires Swift 6.2 or later and Linux with permission to create namespaces and mount procfs, normally root with the necessary capabilities. The launcher currently requires Linux 5.3 or later for pidfds.
 
 ```sh
 swift build
@@ -20,11 +20,20 @@ swiftbox
 1
 ```
 
-The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The runtime waits for it and forwards its exit status. An outer container can restrict namespace or mount operations even when its user is root.
+The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The runtime waits for it and forwards its exit status. For ordinary workloads retaining their parent-death signal setting, terminating the foreground runtime also terminates its launcher and namespace init. Credential changes, setuid/setgid or file-capability executables, and explicit changes to that signal setting can defeat this cleanup; stronger external supervision is a later milestone. Terminal relaying and graceful signal forwarding are not implemented yet. An outer container can restrict namespace or mount operations even when its user is root.
 
 ## Development on macOS
 
 The command performs Linux kernel operations; macOS builds cannot run the namespace lab directly. Use a Linux VM or Apple's [`container`](https://github.com/apple/container) command to build and test the Linux executable.
+
+Run the complete Linux build, unit tests, and privileged integration checks from macOS:
+
+```sh
+container system start
+scripts/test-linux.sh
+```
+
+The script uses a disposable VM-backed `swift:6.4` container and stores Linux build products separately in `.build/linux`. It verifies namespaces, procfs, surrounding hostname/mount preservation, exit and signal status, argument handling, permission failures, and parent-death cleanup.
 
 The local development environment has Apple `container` 0.9.0 and a cached `swift:6.4` image. That installation has no `container machine` subcommand. A successful Swift build inside an Apple container checks Linux compilation; a namespace smoke test must separately demonstrate that its guest environment grants the required kernel capabilities.
 

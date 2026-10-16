@@ -10,9 +10,10 @@ before_uts=$(readlink /proc/self/ns/uts)
 before_mnt=$(readlink /proc/self/ns/mnt)
 before_pid=$(readlink /proc/self/ns/pid)
 "$runtime" namespace-run --hostname swiftbox -- /bin/sh -c '
+    set -eu
     test "$(hostname)" = swiftbox
     test "$$" = 1
-    test "$(awk '\''/^NSpid:/ { print $NF }'\'' /proc/self/status)" = 1
+    test "$(awk '\''/^NSpid:/ { print $NF }'\'' /proc/1/status)" = 1
     printf "%s\n" "$(readlink /proc/self/ns/uts)" "$(readlink /proc/self/ns/mnt)" "$(readlink /proc/self/ns/pid)"
 ' > "$scratch/namespaces"
 test "$(sed -n '1p' "$scratch/namespaces")" != "$before_uts"
@@ -42,6 +43,23 @@ status=$?
 set -e
 test "$status" = 137
 
+# Foreground owner termination must not leave a running namespace init.
+rm "$scratch/ready"
+"$runtime" namespace-run -- /bin/sh -c 'echo ready > "$1"; exec /bin/sleep 30' -- "$scratch/ready" &
+runtime_pid=$!
+timeout 5 /bin/sh -c 'while test ! -f "$1"; do sleep 0.01; done' -- "$scratch/ready"
+launcher_pid=$(ps -o pid= --ppid "$runtime_pid" | tr -d ' ')
+init_pid=$(ps -o pid= --ppid "$launcher_pid" | tr -d ' ')
+kill -KILL "$runtime_pid"
+wait "$runtime_pid" 2>/dev/null || :
+timeout 5 /bin/sh -c '
+    while test -d "/proc/$1"; do
+        state=$(ps -o stat= -p "$1" || :)
+        case "$state" in Z*|"") exit 0 ;; esac
+        sleep 0.01
+    done
+' -- "$init_pid"
+
 # An exec failure is distinct from a workload choosing to exit 125.
 set +e
 "$runtime" namespace-run -- /definitely/not/a/program 2> "$scratch/error"
@@ -61,4 +79,4 @@ set -e
 test "$status" = 125
 test ! -s "$scratch/output"
 grep -q 'create namespaces:' "$scratch/error"
-printf '%s\n' 'Linux integration checks passed: namespaces, procfs, host preservation, exit/signal status, exec errors, argv, privilege errors.'
+printf '%s\n' 'Linux integration checks passed: namespaces, procfs, host preservation, exit/signal status, exec errors, argv, privilege errors, parent-death cleanup.'
