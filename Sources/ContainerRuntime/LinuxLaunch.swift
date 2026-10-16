@@ -5,6 +5,7 @@ import Musl
 import Glibc
 #endif
 import LinuxAPI
+import SystemPackage
 
 private enum LaunchStage: Int32 {
     case pipe = 1, forkLauncher, namespaces, propagation, forkInit, procMount
@@ -35,9 +36,8 @@ private struct LaunchFailure {
 }
 
 private func launchError(_ stage: LaunchStage, _ code: Int32 = errno) -> RuntimeError {
-    // libc returns a NUL-terminated error message, copied before another call.
-    let message = unsafe String(cString: strerror(code))
-    return RuntimeError("\(stage.description): \(message) (errno \(code))")
+    let error = Errno(rawValue: code)
+    return RuntimeError("\(stage.description): \(error) (errno \(code))")
 }
 
 /// The Swift bootstrap requires a single-threaded caller, with no concurrent
@@ -58,16 +58,19 @@ func launchThreadCount() throws -> Int {
     return count
 }
 
-private func reportFailure(_ fd: Int32, _ stage: LaunchStage) -> Never {
-    var failure = LaunchFailure(stage: stage.rawValue, code: errno)
-    // The message fits PIPE_BUF. EINTR is retried without formatting errors in
-    // the child; only the original parent constructs a diagnostic string.
-    withUnsafeBytes(of: &failure) { bytes in
-        var result: Int
-        repeat { result = unsafe write(fd, bytes.baseAddress!, bytes.count) }
-        while result < 0 && errno == EINTR
-    }
-    _exit(125)
+private func failureStatus(_ owner: borrowing OwnedFileDescriptor, _ stage: LaunchStage) -> Int32 {
+    let code = errno
+    return (try? owner.withDescriptor { descriptor in
+        var failure = LaunchFailure(stage: stage.rawValue, code: code)
+        // Keep ownership through the write. A cached raw number alone could
+        // outlive its owner on a child path that never returns to Swift.
+        withUnsafeBytes(of: &failure) { bytes in
+            var result: Int
+            repeat { result = unsafe write(descriptor.rawValue, bytes.baseAddress!, bytes.count) }
+            while result < 0 && errno == EINTR
+        }
+        return 125
+    }) ?? 125
 }
 
 private func waitStatus(_ pid: pid_t) -> Int32? {
@@ -90,77 +93,87 @@ func runNamespaceProcess(
     hostname: UnsafePointer<CChar>,
     arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>
 ) throws -> Int32 {
+    let channel: (readEnd: FileDescriptor, writeEnd: FileDescriptor)
+    do {
+        channel = try FileDescriptor.pipe(options: .closeOnExec)
+    } catch {
+        throw launchError(.pipe, error.rawValue)
+    }
+    var readOwner = OwnedFileDescriptor(takingOwnershipOf: channel.readEnd)
+    var writeOwner = OwnedFileDescriptor(takingOwnershipOf: channel.writeEnd)
+    // Perform library initialization before checking the bootstrap precondition.
     guard try launchThreadCount() == 1 else {
         throw RuntimeError("namespace launch requires a single-threaded process; use the synchronous CLI before starting background work")
     }
-    var channel: InlineArray<2, Int32> = [0, 0]
-    let opened: Int32
-    do {
-        var descriptors = channel.mutableSpan
-        opened = descriptors.withUnsafeMutableBufferPointer {
-            unsafe pipe2($0.baseAddress!, O_CLOEXEC)
-        }
-    }
-    guard opened == 0 else { throw launchError(.pipe) }
-    let readEnd = channel[0]
-    let writeEnd = channel[1]
     let hostnameLength = unsafe strlen(hostname)
     let supervisor = getpid()
     let launcher = fork()
     guard launcher >= 0 else {
-        let error = launchError(.forkLauncher)
-        _ = close(readEnd); _ = close(writeEnd)
-        throw error
+        throw launchError(.forkLauncher)
     }
     if launcher == 0 {
-        _ = close(readEnd)
-        guard linux_set_parent_death_signal(SIGKILL) == 0 else { reportFailure(writeEnd, .parentLifetime) }
+        try? readOwner.close()
+        guard linux_set_parent_death_signal(SIGKILL) == 0 else { _exit(failureStatus(writeOwner, .parentLifetime)) }
         guard getppid() == supervisor else { _exit(125) }
         guard unshare(Int32(CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS)) == 0 else {
-            reportFailure(writeEnd, .namespaces)
+            _exit(failureStatus(writeOwner, .namespaces))
         }
         guard unsafe mount(nil, "/", nil, UInt(MS_REC | MS_PRIVATE), nil) == 0 else {
-            reportFailure(writeEnd, .propagation)
+            _exit(failureStatus(writeOwner, .propagation))
         }
         // PID 1 sees getppid()==0 because its parent is outside its namespace.
         // The inherited pidfd detects parent death before PDEATHSIG is set.
-        let parentFD = linux_pidfd_open(getpid())
-        guard parentFD >= 0 else { reportFailure(writeEnd, .parentLifetime) }
+        let parentRawFD = linux_pidfd_open(getpid())
+        guard parentRawFD >= 0 else { _exit(failureStatus(writeOwner, .parentLifetime)) }
+        var parentOwner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: parentRawFD))
         let child = fork()
-        guard child >= 0 else { reportFailure(writeEnd, .forkInit) }
+        guard child >= 0 else { _exit(failureStatus(writeOwner, .forkInit)) }
         if child == 0 {
-            guard linux_set_parent_death_signal(SIGKILL) == 0 else { reportFailure(writeEnd, .parentLifetime) }
-            var parent = pollfd(fd: parentFD, events: Int16(POLLIN), revents: 0)
-            var ready: Int32
-            repeat { ready = unsafe poll(&parent, 1, 0) } while ready < 0 && errno == EINTR
-            guard ready >= 0 else { reportFailure(writeEnd, .parentLifetime) }
+            guard linux_set_parent_death_signal(SIGKILL) == 0 else { _exit(failureStatus(writeOwner, .parentLifetime)) }
+            guard let ready = try? parentOwner.withDescriptor({ descriptor in
+                var parent = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
+                var result: Int32
+                repeat { result = unsafe poll(&parent, 1, 0) } while result < 0 && errno == EINTR
+                return result
+            }) else { _exit(failureStatus(writeOwner, .parentLifetime)) }
+            guard ready >= 0 else { _exit(failureStatus(writeOwner, .parentLifetime)) }
             guard ready == 0 else { _exit(125) }
-            _ = close(parentFD)
+            try? parentOwner.close()
             guard unsafe mount("proc", "/proc", "proc", UInt(MS_NOSUID | MS_NODEV | MS_NOEXEC), nil) == 0 else {
-                reportFailure(writeEnd, .procMount)
+                _exit(failureStatus(writeOwner, .procMount))
             }
-            guard unsafe sethostname(hostname, hostnameLength) == 0 else { reportFailure(writeEnd, .hostname) }
+            guard unsafe sethostname(hostname, hostnameLength) == 0 else { _exit(failureStatus(writeOwner, .hostname)) }
             _ = unsafe execv(arguments[0]!, arguments)
-            reportFailure(writeEnd, .execute)
+            _exit(failureStatus(writeOwner, .execute))
         }
-        _ = close(parentFD); _ = close(writeEnd)
+        try? parentOwner.close(); try? writeOwner.close()
         guard let status = waitStatus(child) else { _exit(125) }
         _exit(shellStatus(status))
     }
-    _ = close(writeEnd)
+    try? writeOwner.close()
     var failure = LaunchFailure()
-    let readError: Int32? = withUnsafeMutableBytes(of: &failure) { bytes in
-        var received = 0
-        while received < bytes.count {
-            let count = unsafe read(readEnd, bytes.baseAddress!.advanced(by: received), bytes.count - received)
-            if count < 0 && errno == EINTR { continue }
-            if count < 0 { return errno }
-            if count == 0 { return received == 0 ? nil : EIO }
-            received += count
+    let readError: Int32?
+    do {
+        readError = try readOwner.withDescriptor { readEnd in
+            withUnsafeMutableBytes(of: &failure) { bytes in
+                var received = 0
+                while received < bytes.count {
+                    let count: Int
+                    do {
+                        count = unsafe try readEnd.read(into: UnsafeMutableRawBufferPointer(rebasing: bytes[received...]))
+                    } catch {
+                        return (error as? Errno)?.rawValue ?? EIO
+                    }
+                    if count == 0 { return received == 0 ? nil : EIO }
+                    received += count
+                }
+                return nil
+            }
         }
-        return nil
+    } catch {
+        readError = (error as? Errno)?.rawValue ?? EIO
     }
-    _ = close(readEnd)
+    try? readOwner.close()
     guard let status = waitStatus(launcher) else { throw launchError(.wait) }
     if let readError { throw launchError(.protocolRead, readError) }
     if failure.stage != 0 {

@@ -27,5 +27,5 @@ jobs:
         run: sh scripts/integration.sh .build/debug/swift-container-runtime
       - name: Optimized namespace integration
         run: |
-          swift build -c release --disable-automatic-resolution
+          swift test -c release --disable-automatic-resolution
           sh scripts/integration.sh .build/release/swift-container-runtime

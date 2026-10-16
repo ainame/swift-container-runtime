@@ -10,6 +10,6 @@ container run --rm --cpus 4 --memory 4G \
         swift test --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         swift build --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         sh scripts/integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        swift build -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
+        swift test -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         sh scripts/integration.sh .build/linux-6.4.1/release/swift-container-runtime
     '

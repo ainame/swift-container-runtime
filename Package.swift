@@ -15,10 +15,18 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
+        .package(url: "https://github.com/apple/swift-system", from: "1.8.1"),
     ],
     targets: [
         .systemLibrary(name: "LinuxAPI"),
-        .target(name: "ContainerRuntime", dependencies: [.target(name: "LinuxAPI", condition: .when(platforms: [.linux]))], swiftSettings: checkedSwiftSettings),
+        .target(
+            name: "ContainerRuntime",
+            dependencies: [
+                .target(name: "LinuxAPI", condition: .when(platforms: [.linux])),
+                .product(name: "SystemPackage", package: "swift-system"),
+            ],
+            swiftSettings: checkedSwiftSettings
+        ),
         .executableTarget(
             name: "RuntimeCLI",
             dependencies: [
@@ -27,7 +35,14 @@ let package = Package(
             ],
             swiftSettings: checkedSwiftSettings
         ),
-        .testTarget(name: "ContainerRuntimeTests", dependencies: ["ContainerRuntime"], swiftSettings: checkedSwiftSettings),
+        .testTarget(
+            name: "ContainerRuntimeTests",
+            dependencies: [
+                "ContainerRuntime",
+                .product(name: "SystemPackage", package: "swift-system"),
+            ],
+            swiftSettings: checkedSwiftSettings
+        ),
         .testTarget(
             name: "RuntimeCLITests",
             dependencies: [
