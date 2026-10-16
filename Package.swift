@@ -1,17 +1,41 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.4
 import PackageDescription
+
+let checkedSwiftSettings: [SwiftSetting] = [
+    .strictMemorySafety(),
+    .treatAllWarnings(as: .error),
+]
 
 let package = Package(
     name: "swift-container-runtime",
+    platforms: [.macOS(.v15)],
     products: [
         .library(name: "ContainerRuntime", targets: ["ContainerRuntime"]),
         .executable(name: "swift-container-runtime", targets: ["RuntimeCLI"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
+    ],
     targets: [
         .target(name: "CRuntime"),
-        .target(name: "ContainerRuntime", dependencies: ["CRuntime"]),
-        .executableTarget(name: "RuntimeCLI", dependencies: ["ContainerRuntime"]),
-        .testTarget(name: "ContainerRuntimeTests", dependencies: ["ContainerRuntime"]),
+        .target(name: "ContainerRuntime", dependencies: ["CRuntime"], swiftSettings: checkedSwiftSettings),
+        .executableTarget(
+            name: "RuntimeCLI",
+            dependencies: [
+                "ContainerRuntime",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            swiftSettings: checkedSwiftSettings
+        ),
+        .testTarget(name: "ContainerRuntimeTests", dependencies: ["ContainerRuntime"], swiftSettings: checkedSwiftSettings),
+        .testTarget(
+            name: "RuntimeCLITests",
+            dependencies: [
+                "RuntimeCLI",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            swiftSettings: checkedSwiftSettings
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

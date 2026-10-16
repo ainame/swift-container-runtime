@@ -2,7 +2,6 @@
 #include "CRuntime.h"
 #include <errno.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -23,7 +22,6 @@ const char *scr_stage_name(int32_t stage) {
     default: return "unsupported platform";
     }
 }
-void scr_exit(int32_t status) { exit(status); }
 void scr_write_error(const char *message) { fputs(message, stderr); fputc('\n', stderr); }
 
 #if defined(__linux__)

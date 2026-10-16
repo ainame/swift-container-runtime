@@ -14,6 +14,5 @@ int scr_namespace_run(const char *hostname, char *const argv[],
                       int32_t *exit_status, scr_failure *failure);
 const char *scr_error_message(int32_t error_number);
 const char *scr_stage_name(int32_t stage);
-void scr_exit(int32_t status);
 void scr_write_error(const char *message);
 #endif

@@ -67,9 +67,22 @@ status=$?
 set -e
 test "$status" = 125
 grep -q 'exec workload:' "$scratch/error"
-"$runtime" namespace-run -- /bin/sh -c 'printf "%s\n" "$@"' -- 'a b' '\$(hostname)' '' > "$scratch/args"
-printf '%s\n' 'a b' '\$(hostname)' '' > "$scratch/expected"
+"$runtime" namespace-run -- /bin/sh -c 'printf "%s\n" "$@"' -- 'a b' '\$(hostname)' '' '日本語 🦉' '--hostname' '-h' > "$scratch/args"
+printf '%s\n' 'a b' '\$(hostname)' '' '日本語 🦉' '--hostname' '-h' > "$scratch/expected"
 cmp "$scratch/args" "$scratch/expected"
+
+# Workload exit 125 is not a setup error and must not print a diagnostic.
+set +e
+"$runtime" namespace-run -- /bin/sh -c 'exit 125' 2> "$scratch/error"
+status=$?
+set -e
+test "$status" = 125
+test ! -s "$scratch/error"
+
+"$runtime" --help > "$scratch/help"
+grep -q namespace-run "$scratch/help"
+"$runtime" namespace-run --help > "$scratch/help"
+grep -q privileges "$scratch/help"
 
 # Running unprivileged must fail before any workload executes.
 set +e

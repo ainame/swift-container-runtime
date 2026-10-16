@@ -1,0 +1,31 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    container:
+      image: swift:6.4.1
+      # Namespace and procfs integration tests require CAP_SYS_ADMIN.
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify toolchain
+        run: |
+          swift --version
+          swift --version | grep -q 'Swift version 6.4.1 '
+      - name: Unit tests with strict memory diagnostics
+        run: swift test --disable-automatic-resolution
+      - name: Debug namespace integration
+        run: sh scripts/integration.sh .build/debug/swift-container-runtime
+      - name: Optimized namespace integration
+        run: |
+          swift build -c release --disable-automatic-resolution
+          sh scripts/integration.sh .build/release/swift-container-runtime
