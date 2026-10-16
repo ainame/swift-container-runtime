@@ -32,6 +32,7 @@ let package = Package(
             dependencies: [
                 "ContainerRuntime",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "SystemPackage", package: "swift-system"),
             ],
             swiftSettings: checkedSwiftSettings
         ),

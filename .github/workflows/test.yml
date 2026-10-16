@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: swift:6.4.1
-      # Namespace and procfs integration tests require CAP_SYS_ADMIN.
+      # Namespace, procfs, mount, and mknod integration tests require privileges.
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -21,11 +21,18 @@ jobs:
         run: |
           swift --version
           swift --version | grep -q 'Swift version 6.4.1 '
+      - name: Install OCI fixtures
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc
       - name: Unit tests with strict memory diagnostics
         run: swift test --disable-automatic-resolution
-      - name: Debug namespace integration
-        run: sh scripts/integration.sh .build/debug/swift-container-runtime
-      - name: Optimized namespace integration
+      - name: Debug namespace and OCI integration
+        run: |
+          sh scripts/integration.sh .build/debug/swift-container-runtime
+          sh scripts/oci-integration.sh .build/debug/swift-container-runtime
+      - name: Optimized namespace and OCI integration
         run: |
           swift test -c release --disable-automatic-resolution
           sh scripts/integration.sh .build/release/swift-container-runtime
+          sh scripts/oci-integration.sh .build/release/swift-container-runtime

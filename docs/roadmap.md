@@ -2,6 +2,14 @@
 
 The target is an understandable Linux runtime with roughly the features of kontainer-runtime, built in small working iterations. runc is the behavioral authority when implementations differ. Each phase needs Linux integration evidence; portable unit tests and successful compilation alone cannot establish namespace or container behavior.
 
+## Progress
+
+| Phase | Status |
+| --- | --- |
+| 1. Namespace lab | Implemented as `namespace-run`; Linux integration in `scripts/integration.sh`. |
+| 2. OCI foreground run | Implemented as `run --bundle PATH ID` for a narrow subset; everything outside it is rejected (see README). Linux integration with a static BusyBox rootfs and runc comparison in `scripts/oci-integration.sh`. |
+| 3–6 | Not started. |
+
 ## 1. Namespace lab
 
 First command:
@@ -21,6 +29,8 @@ Add typed bundle decoding and a validated immutable setup plan, supplied rootfs,
 Check a BusyBox bundle through both runc and this runtime: PID 1, root filesystem contents, hostname, cwd/environment, stdout/stderr, workload exit status, missing executable, and setup failure cleanup. Do not infer a security boundary from namespace creation alone.
 
 References: kontainer `spec/Spec.kt`, `process/InitProcess.kt`, and `rootfs/Rootfs.kt`; runc `libcontainer/standard_init_linux.go` and `libcontainer/rootfs_linux.go`.
+
+Implemented subset: new mount (required), pid, uts, ipc, and network namespaces. Mounts are `proc` at `/proc`, `tmpfs`, and `devpts` at `/dev/pts`, with nosuid/nodev/noexec/strictatime and validated data options. runc's default character devices and `/dev` links are created in a `/dev` tmpfs. The process takes an absolute `args[0]`, an explicit `env`, a created `cwd`, and uid/gid 0 only. Mount destinations are resolved per component from a rootfs descriptor with `O_NOFOLLOW`, and symlink components are rejected rather than resolved in-root as runc does. Setup then calls `pivot_root(".", ".")` and detaches the old root. Deliberate differences from runc: no PATH lookup, no `HOME` default, symlinked mount destinations fail, and `/dev` is populated only when it is a tmpfs. Every unknown or unimplemented `config.json` field is rejected. The ID is validated but unused until phase 3. The bundle and rootfs are trusted and must stay unchanged during setup; launch pins the rootfs with `O_NOFOLLOW` and checks its identity after the self-bind, which detects but does not prevent host-side races.
 
 ## 3. Persistent OCI lifecycle
 

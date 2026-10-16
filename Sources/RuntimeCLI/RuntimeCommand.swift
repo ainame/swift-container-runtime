@@ -1,14 +1,54 @@
 import ArgumentParser
 import ContainerRuntime
+import SystemPackage
 
 @main
 struct RuntimeCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "swift-container-runtime",
         abstract: "An educational Linux container runtime.",
-        discussion: "Experimental namespace lab; not yet an OCI runtime or a security sandbox.",
-        subcommands: [NamespaceRun.self]
+        discussion: "Educational subset of an OCI runtime; not a security sandbox.",
+        subcommands: [Run.self, NamespaceRun.self]
     )
+}
+
+struct Run: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "run",
+        abstract: "Run an OCI bundle in the foreground and exit with its status.",
+        discussion: "Supports an educational subset of config.json and rejects anything else. "
+            + "No lifecycle state is kept and the ID is only validated. "
+            + "There are no capability, seccomp, cgroup, or user-namespace controls, so this is not a security boundary."
+    )
+
+    @Option(name: [.customShort("b"), .long], help: "Path to the OCI bundle directory.")
+    var bundle = "."
+
+    @Argument(help: "Container ID.")
+    var id: String
+
+    mutating func validate() throws {
+        guard !bundle.isEmpty, !bundle.utf8.contains(0) else {
+            throw ValidationError("bundle path must be non-empty and contain no NUL")
+        }
+        do {
+            _ = try ContainerID(id)
+        } catch {
+            throw ValidationError(String(describing: error))
+        }
+    }
+
+    mutating func run() throws {
+        let status: Int32
+        do {
+            status = try OCIRunPlan.load(bundle: FilePath(bundle)).run()
+        } catch {
+            RuntimeDiagnostics.writeError("swift-container-runtime: \(error)")
+            throw ExitCode(125)
+        }
+        // Keep this outside the catch: a workload may itself choose exit 125.
+        throw ExitCode(status)
+    }
 }
 
 struct NamespaceRun: ParsableCommand {

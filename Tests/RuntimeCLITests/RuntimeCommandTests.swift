@@ -60,3 +60,45 @@ func helpExitsSuccessfully(_ arguments: [String]) {
         }
     }
 }
+
+@Test func parsesRunBundleAndID() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["run", "--bundle", "/srv/bundle", "box-1"]) as? Run)
+    #expect(command.bundle == "/srv/bundle")
+    #expect(command.id == "box-1")
+    let short = try #require(RuntimeCommand.parseAsRoot(["run", "-b", "relative", "box"]) as? Run)
+    #expect(short.bundle == "relative")
+    // Like runc, the bundle defaults to the current directory.
+    let defaulted = try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run)
+    #expect(defaulted.bundle == ".")
+}
+
+@Test(arguments: [
+    ["run"],
+    ["run", "--bundle", "/srv/bundle"],
+    ["run", "--bundle", "", "box"],
+    ["run", "bad/id"],
+    ["run", ".."],
+    ["run", "box", "extra"],
+])
+func rejectsInvalidRunInvocation(_ arguments: [String]) {
+    do {
+        _ = try RuntimeCommand.parseAsRoot(arguments)
+        Issue.record("Expected parsing to reject \(arguments)")
+    } catch {
+        #expect(RuntimeCommand.exitCode(for: error) == .validationFailure)
+    }
+}
+
+@Test func runHelpDocumentsEducationalSubset() {
+    do {
+        var command = try RuntimeCommand.parseAsRoot(["run", "--help"])
+        try command.run()
+        Issue.record("Expected a help request")
+    } catch {
+        #expect(RuntimeCommand.exitCode(for: error) == .success)
+        let help = RuntimeCommand.fullMessage(for: error)
+        #expect(help.contains("--bundle"))
+        // Help text wraps, so check a single word of the security disclaimer.
+        #expect(help.contains("security"))
+    }
+}
