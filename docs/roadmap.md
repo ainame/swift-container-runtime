@@ -10,7 +10,7 @@ First command:
 swift-container-runtime namespace-run --hostname swiftbox -- /bin/sh -c 'hostname; echo $$'
 ```
 
-Create UTS, PID, and mount namespaces; make propagation private; mount procfs for the new PID namespace; execute an absolute command path and report its exit status. Keep post-fork setup in a small C shim. No OCI bundle or isolated root filesystem yet.
+Create UTS, PID, and mount namespaces; make propagation private; mount procfs for the new PID namespace; execute an absolute command path and report its exit status. Keep setup in synchronous Swift using conditional Glibc/Musl imports and minimal header-only Linux API adapters. Reject multithreaded callers before fork. No OCI bundle or isolated root filesystem yet.
 
 Check hostname, PID 1 visibility, procfs namespace identity, surrounding hostname remaining unchanged, nonzero exit propagation, and actionable errors when namespace privileges are absent. Exercise this in Linux through the available Apple `container` installation where its guest permissions permit it.
 
@@ -68,6 +68,6 @@ Checkpoint/restore, cgroup v1, and systemd cgroup management are outside the ini
 
 ## Dependency and portability policy
 
-Use Swift 6.4 (6.4.1 for Linux validation), swift-argument-parser for the CLI, and a small C target. Enable strict memory-safety diagnostics and warnings-as-errors in all project-owned Swift targets. Prefer safe initialization and borrowed memory APIs such as OutputSpan and Span; keep unavoidable raw-pointer operations scoped and documented. SystemPackage remains an option if it simplifies ownership or syscall wrappers. Discuss other package dependencies before introducing them. Isolate libc-facing details behind the C shim rather than importing GNU libc into Swift; Linux-specific kernel calls are expected. Portability to musl is an implementation goal requiring a real build and execution test, not a current compatibility claim.
+Use Swift 6.4 (6.4.1 for Linux validation), swift-argument-parser for the CLI, and a minimal header-only Linux API target. Enable strict memory-safety diagnostics and warnings-as-errors in all project-owned Swift targets. Prefer safe initialization and borrowed memory APIs such as OutputSpan and Span; keep unavoidable raw-pointer operations scoped and documented. SystemPackage remains an option if it simplifies ownership or syscall wrappers. Discuss other package dependencies before introducing them. Conditionally import Musl or Glibc; keep only missing declarations and fixed-signature variadic adapters in the Linux header. Launch runs synchronously before background work begins; future async supervision must preserve that boundary or introduce a fresh bootstrap process. Linux-specific kernel calls are expected. Portability to musl is an implementation goal requiring a real build and execution test, not a current compatibility claim.
 
 All kontainer Kotlin paths above are relative to `src/nativeMain/kotlin/` in [ternbusty/kontainer-runtime](https://github.com/ternbusty/kontainer-runtime), except paths explicitly starting with `scripts/`, `test-scripts/`, or `src/nativeInterop/`. runc paths are relative to [opencontainers/runc](https://github.com/opencontainers/runc). The namespace and lifecycle behavior should be checked against those sources and Linux itself as each phase is implemented.

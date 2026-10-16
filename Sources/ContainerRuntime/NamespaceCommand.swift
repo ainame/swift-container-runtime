@@ -1,5 +1,3 @@
-import CRuntime
-
 public struct RuntimeError: Error, CustomStringConvertible, Sendable {
     public let description: String
     public init(_ description: String) { self.description = description }
@@ -24,25 +22,20 @@ public struct NamespaceCommand: Sendable {
         self.arguments = arguments
     }
 
-    /// Synchronous by design: do not run namespace setup on an async executor.
+    /// Namespace setup runs before background work begins. The Linux
+    /// launch rejects multithreaded callers before executing Swift in a child.
+    @available(*, noasync, message: "launch namespaces before starting async work")
     public func run() throws -> Int32 {
+        #if os(Linux)
         var argv = try CStringVector(arguments)
-        var status: Int32 = 0
-        var failure = scr_failure()
-        let result = hostname.withCString { hostname in
-            unsafe argv.withPointers { pointers in
-                // The synchronous C call does not retain either pointer in the
-                // parent. Forked children use their inherited address space.
-                unsafe scr_namespace_run(hostname, pointers, &status, &failure)
+        return try hostname.withCString { hostname in
+            unsafe try argv.withPointers { pointers in
+                unsafe try runNamespaceProcess(hostname: hostname, arguments: pointers)
             }
         }
-        guard result == 0 else {
-            // Both C helpers return NUL-terminated static strings.
-            let stage = unsafe String(cString: scr_stage_name(failure.stage))
-            let message = unsafe String(cString: scr_error_message(failure.error_number))
-            throw RuntimeError("\(stage): \(message) (errno \(failure.error_number))")
-        }
-        return status
+        #else
+        throw RuntimeError("namespace launch requires Linux")
+        #endif
     }
 }
 
@@ -75,30 +68,23 @@ private struct CStringVector: ~Copyable {
 
     @unsafe
     mutating func withPointers(
-        _ body: (UnsafePointer<UnsafeMutablePointer<CChar>?>) -> Int32
-    ) -> Int32 {
+        _ body: (UnsafePointer<UnsafeMutablePointer<CChar>?>) throws -> Int32
+    ) rethrows -> Int32 {
         let starts = offsets
-        return storage.withUnsafeMutableBufferPointer { bytes in
+        return try storage.withUnsafeMutableBufferPointer { bytes in
             // The byte slab cannot resize while borrowed here. All offsets
             // point to initialized, NUL-terminated strings in that slab.
-            unsafe withTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: starts.count + 1) { output in
+            unsafe try withTemporaryAllocation(of: UnsafeMutablePointer<CChar>?.self, capacity: starts.count + 1) { output in
                 for offset in starts {
                     unsafe output.append(bytes.baseAddress!.advanced(by: offset))
                 }
                 unsafe output.append(nil)
                 // Span borrows the initialized pointer vector. Neither the
                 // vector nor its pointees may escape this nested callback.
-                return unsafe output.span.withUnsafeBufferPointer { pointers in
-                    unsafe body(pointers.baseAddress!)
+                return unsafe try output.span.withUnsafeBufferPointer { pointers in
+                    unsafe try body(pointers.baseAddress!)
                 }
             }
         }
-    }
-}
-
-public enum RuntimeDiagnostics {
-    public static func writeError(_ message: String) {
-        // C consumes the temporary NUL-terminated string synchronously.
-        message.withCString { unsafe scr_write_error($0) }
     }
 }

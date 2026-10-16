@@ -50,10 +50,10 @@ The local development environment has Apple `container` 0.9.0 and a cached `swif
 ## Design
 
 - Swift handles argument validation and the host-side command interface.
-- A small C launch shim performs namespace creation and child setup. Work after `fork` stays in C until `exec`, avoiding Swift runtime operations in the child of a potentially multithreaded process.
-- Swift does not import `Glibc`. The shim uses Linux kernel APIs and ordinary C library interfaces, keeping a future musl build possible. musl has not yet been tested.
+- Namespace setup, process creation, startup-error reporting, and waiting are implemented in Swift. The synchronous launch API is unavailable directly from async contexts and rejects callers with more than one thread before it forks. Invoke it before starting background work; signal handlers must not introduce concurrent work during launch.
+- libc imports select `Musl` when available, otherwise `Glibc` on Linux (`Darwin` for portable macOS code). A small header-only `LinuxAPI` module exposes missing GNU declarations and fixed-signature adapters for variadic `prctl`/`syscall`; it contains no launch or supervision logic. musl execution has not yet been tested.
 - The CLI uses [swift-argument-parser](https://github.com/apple/swift-argument-parser), currently resolved to 1.8.2. It preserves workload arguments after the required `--` separator. Usage errors exit 64; setup failures exit 125; workload exit statuses pass through.
-- Every project-owned Swift target enables `.strictMemorySafety()` and treats warnings as errors. This checks Swift source and its C call sites; it does not verify the C implementation.
+- Every project-owned Swift target enables `.strictMemorySafety()` and treats warnings as errors. This checks Swift source and its C call sites; it does not verify libc or the header adapters.
 - Argument bytes use Swift 6.4's `OutputSpan` initialization API in a single owned slab. A temporary `OutputSpan` owns the NUL-terminated pointer vector; its borrowed `Span` stays inside the C call. Audited `unsafe` expressions mark the raw-pointer boundary, with no manual Swift allocation/deallocation.
 
 This starting point tests the process and interoperability assumptions before introducing OCI lifecycle management. See the [implementation roadmap](docs/roadmap.md) for the path toward kontainer-runtime feature parity.

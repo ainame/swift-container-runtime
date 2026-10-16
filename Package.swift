@@ -17,8 +17,8 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
     ],
     targets: [
-        .target(name: "CRuntime"),
-        .target(name: "ContainerRuntime", dependencies: ["CRuntime"], swiftSettings: checkedSwiftSettings),
+        .systemLibrary(name: "LinuxAPI"),
+        .target(name: "ContainerRuntime", dependencies: [.target(name: "LinuxAPI", condition: .when(platforms: [.linux]))], swiftSettings: checkedSwiftSettings),
         .executableTarget(
             name: "RuntimeCLI",
             dependencies: [

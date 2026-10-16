@@ -21,3 +21,23 @@ func rejectsInvalidArguments(_ arguments: [String]) {
     #expect(command.arguments == arguments)
     #expect(command.hostname.utf8.count == 64)
 }
+
+#if os(Linux)
+@Test func rejectsMultithreadedCallerBeforeForking() throws {
+    // Swift Testing's concurrent executor supplies a real multithreaded caller.
+    // Check that premise explicitly rather than risk exercising the launch path.
+    try #require(launchThreadCount() > 1)
+    let command = try NamespaceCommand(hostname: "must-not-launch", arguments: ["/bin/true"])
+    do {
+        _ = try command.run()
+        Issue.record("Expected the multithreaded caller to be rejected")
+    } catch let error as RuntimeError {
+        #expect(error.description.contains("requires a single-threaded process"))
+    }
+}
+#else
+@Test func reportsUnsupportedPlatform() throws {
+    let command = try NamespaceCommand(hostname: "swiftbox", arguments: ["/bin/true"])
+    #expect(throws: RuntimeError.self) { try command.run() }
+}
+#endif
