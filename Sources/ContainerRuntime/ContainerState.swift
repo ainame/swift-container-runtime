@@ -5,15 +5,17 @@ import Foundation
 #endif
 import SystemPackage
 
-/// The OCI runtime status of a container. `paused` is not implemented.
+/// Runtime status, including runc's cgroup-freezer `paused` extension.
 public enum ContainerStatus: String, Sendable, Codable, CaseIterable {
-    case creating, created, running, stopped
+    case creating, created, running, paused, stopped
 }
 
 /// A lifecycle command whose permitted source states follow runc.
 public enum LifecycleOperation: Sendable, Equatable {
     case start
     case kill
+    case pause
+    case resume
     case delete(force: Bool)
 
     /// What a permitted operation must do.
@@ -32,11 +34,12 @@ public enum LifecycleOperation: Sendable, Equatable {
     /// init; a running container needs `--force`.
     public func action(for status: ContainerStatus, id: ContainerID) throws -> Action {
         switch (self, status) {
-        case (.start, .created), (.kill, .created), (.kill, .running):
+        case (.start, .created), (.kill, .created), (.kill, .running), (.kill, .paused),
+             (.pause, .created), (.pause, .running), (.resume, .paused):
             return .proceed
         case (.delete, .stopped):
             return .destroy
-        case (.delete, .created), (.delete(force: true), .running), (.delete(force: true), .creating):
+        case (.delete, .created), (.delete(force: true), .running), (.delete(force: true), .paused), (.delete(force: true), .creating):
             return .killThenDestroy
         default:
             throw LifecycleError.invalidTransition(id: id, operation: verb, status: status)
@@ -47,6 +50,8 @@ public enum LifecycleOperation: Sendable, Equatable {
         switch self {
         case .start: "start"
         case .kill: "kill"
+        case .pause: "pause"
+        case .resume: "resume"
         case .delete: "delete"
         }
     }
@@ -169,10 +174,11 @@ func isValidBootID(_ value: String) -> Bool {
 /// refreshState does: a record without an init is creating while its creator
 /// holds the lock and stopped otherwise; a recorded init that no longer
 /// matches its identity is stopped; a live init is created until it consumes
-/// the start socket and running afterwards.
-func deriveStatus(hasInit: Bool, initAlive: Bool, creatorActive: Bool, startSocketPresent: Bool) -> ContainerStatus {
+/// the start socket and running afterwards, unless its cgroup is frozen.
+func deriveStatus(hasInit: Bool, initAlive: Bool, creatorActive: Bool, startSocketPresent: Bool, frozen: Bool = false) -> ContainerStatus {
     guard hasInit else { return creatorActive ? .creating : .stopped }
     guard initAlive else { return .stopped }
+    if frozen { return .paused }
     return startSocketPresent ? .created : .running
 }
 
@@ -181,7 +187,7 @@ public struct ContainerStateReport: Sendable, Equatable {
     public let ociVersion: String
     public let id: String
     public let status: ContainerStatus
-    /// The init PID in the caller's PID namespace; 0 when stopped, as in runc.
+    /// The init PID, retained while paused; 0 when stopped, as in runc.
     public let pid: Int32
     public let bundle: String
     public let rootfs: String

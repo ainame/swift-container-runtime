@@ -340,7 +340,10 @@ func containerStatus(
     }
     let alive = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { _ in true } ?? false
     let waiting = try alive && entryExists(directory, StateFile.startSocket)
-    return deriveStatus(hasInit: true, initAlive: alive, creatorActive: false, startSocketPresent: waiting)
+    // A dead init is stopped even if an empty cgroup is still frozen.
+    // Only the recorded cgroup generation may contribute a paused state.
+    let frozen = try alive && record.cgroup.map { try CgroupLeaf.isFrozen($0) } == true
+    return deriveStatus(hasInit: true, initAlive: alive, creatorActive: false, startSocketPresent: waiting, frozen: frozen)
 }
 
 /// Names in a directory other than `.` and `..`.

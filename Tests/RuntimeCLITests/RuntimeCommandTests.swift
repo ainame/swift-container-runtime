@@ -107,6 +107,8 @@ func rejectsInvalidRunInvocation(_ arguments: [String]) {
     let defaultBundle = try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create)
     #expect(defaultBundle.bundle == ".")
 
+    #expect(try (RuntimeCommand.parseAsRoot(["pause", "box"]) as? Pause)?.id == "box")
+    #expect(try (RuntimeCommand.parseAsRoot(["resume", "box"]) as? Resume)?.id == "box")
     let kill = try #require(RuntimeCommand.parseAsRoot(["kill", "box"]) as? Kill)
     #expect(kill.signal == "TERM")
     let killNamed = try #require(RuntimeCommand.parseAsRoot(["kill", "box", "SIGKILL"]) as? Kill)
@@ -142,6 +144,8 @@ func rejectsInvalidRunInvocation(_ arguments: [String]) {
     ["kill", "box", "NOPE"],
     ["kill", "box", "TERM", "extra"],
     ["delete"],
+    ["pause"],
+    ["resume", "bad/id"],
     ["list", "--format", "xml"],
     ["list", "extra"],
     ["--root", "", "list"],
@@ -164,7 +168,7 @@ func rejectsInvalidLifecycleInvocation(_ arguments: [String]) {
     } catch {
         #expect(RuntimeCommand.exitCode(for: error) == .success)
         let help = RuntimeCommand.fullMessage(for: error)
-        for name in ["create", "start", "state", "kill", "delete", "list", "run", "--root"] {
+        for name in ["create", "start", "state", "kill", "pause", "resume", "delete", "list", "run", "--root"] {
             #expect(help.contains(name), "missing \(name)")
         }
     }

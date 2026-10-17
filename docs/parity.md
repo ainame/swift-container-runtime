@@ -8,7 +8,7 @@ The goal is feature parity with the behavior implemented by [kontainer-runtime a
 | --- | --- | --- |
 | `run` | Bundle, foreground wait/status/cleanup, detach, keep, PID file, console socket, pidfd socket, no-pivot | Foreground and detached subset implemented; keep and descriptor/console options missing |
 | `create`, `start`, `state`, `kill`, `delete`, `list` | Persistent transitions and process identity; named/numeric signals; kill-all; force deletion; table/JSON/quiet listing | Core lifecycle implemented; kill-all without a private PID namespace and optional flags remain missing |
-| `pause`, `resume` | Cgroup freezer | Missing |
+| `pause`, `resume` | Cgroup freezer | Implemented with completion checks, kernel-derived paused state, identity protection, and Linux workload tests against runc |
 | `update` | Resources file or stdin; individual resource flags; memory check-before-update | Missing |
 | `events` | Stats snapshot or interval stream, OOM events, termination on deletion | Missing |
 | `ps` | Table/JSON output and verbatim trailing host `ps` arguments | Missing |

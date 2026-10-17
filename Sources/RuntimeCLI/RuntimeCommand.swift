@@ -9,7 +9,7 @@ struct RuntimeCommand: ParsableCommand {
         abstract: "An educational Linux container runtime.",
         discussion: "Educational subset of an OCI runtime; not a security sandbox.",
         subcommands: [
-            Create.self, Start.self, State.self, Kill.self, Delete.self, List.self, Run.self, NamespaceRun.self,
+            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Run.self, NamespaceRun.self,
         ]
     )
 
@@ -113,8 +113,8 @@ struct State: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "state",
         abstract: "Print the OCI state of a container as JSON.",
-        discussion: "Fields: ociVersion, id, pid (0 unless created or running), status "
-            + "(creating, created, running, or stopped), bundle, rootfs, created, and annotations when present."
+        discussion: "Fields: ociVersion, id, pid (0 unless created, running, or paused), status "
+            + "(creating, created, running, paused, or stopped), bundle, rootfs, created, and annotations when present."
     )
 
     @OptionGroup var globals: GlobalOptions
@@ -140,7 +140,7 @@ struct State: ParsableCommand {
 struct Kill: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "kill",
-        abstract: "Send a signal (default TERM) to the init of a created or running container.",
+        abstract: "Send a signal (default TERM) to the init of a created, running, or paused container.",
         discussion: "SIGNAL is a name such as KILL or SIGKILL, or a number. "
             + "In a PID namespace the init is PID 1, which ignores signals it has no handler for, except KILL and STOP."
     )
@@ -168,6 +168,32 @@ struct Kill: ParsableCommand {
         } catch {
             throw failure(error)
         }
+    }
+}
+
+struct Pause: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "pause", abstract: "Freeze all processes in a created or running container.")
+    @OptionGroup var globals: GlobalOptions
+    @Argument(help: "Container ID.") var id: String
+
+    mutating func validate() throws { _ = try validatedID(id) }
+
+    mutating func run() throws {
+        do { try globals.lifecycle().pause(id: ContainerID(id)) }
+        catch { throw failure(error) }
+    }
+}
+
+struct Resume: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "resume", abstract: "Thaw a paused container.")
+    @OptionGroup var globals: GlobalOptions
+    @Argument(help: "Container ID.") var id: String
+
+    mutating func validate() throws { _ = try validatedID(id) }
+
+    mutating func run() throws {
+        do { try globals.lifecycle().resume(id: ContainerID(id)) }
+        catch { throw failure(error) }
     }
 }
 

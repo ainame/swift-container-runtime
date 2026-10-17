@@ -456,6 +456,54 @@ final class CgroupLeaf {
         return nil
     }
 
+    /// Opens only this recorded generation, never a replacement or a group
+    /// from another boot. Freezer writes use this pinned directory throughout.
+    private static func recordedDirectory(_ identity: CgroupIdentity) throws -> CgroupDirectory? {
+        guard identity.isValid, try currentBootID() == identity.bootID else { return nil }
+        var directory = try CgroupDirectory.openRoot()
+        for name in identity.components {
+            guard let child = try directory.child(name) else { return nil }
+            directory = child
+        }
+        return directory.inode == identity.inode ? directory : nil
+    }
+
+    /// runc checks the requested freezer state, then waits for completion
+    /// when freezing. A missing/replaced cgroup cannot make an init paused.
+    static func isFrozen(_ identity: CgroupIdentity) throws -> Bool {
+        guard let directory = try recordedDirectory(identity),
+              try directory.read("cgroup.freeze") == "1\n" else { return false }
+        try waitFrozen(directory)
+        return true
+    }
+
+    /// Called with the cross-process container-state lock held. This is a
+    /// synchronous cgroupfs operation, with no await while holding that lock.
+    static func setFrozen(_ identity: CgroupIdentity, frozen: Bool) throws {
+        guard let directory = try recordedDirectory(identity) else {
+            throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
+        }
+        let value = frozen ? "1" : "0"
+        let code = directory.write("cgroup.freeze", value)
+        guard code == 0 else {
+            throw RuntimeError("set \(directory.displayPath)/cgroup.freeze to \(value): \(Errno(rawValue: code))")
+        }
+        // A freeze request is asynchronous in the kernel. Readback of 1
+        // alone does not prove every task has reached the frozen state.
+        guard try directory.read("cgroup.freeze") == value + "\n" else {
+            throw RuntimeError("cgroup.freeze did not retain requested state \(value)")
+        }
+        if frozen { try waitFrozen(directory) }
+    }
+
+    private static func waitFrozen(_ directory: CgroupDirectory) throws {
+        for _ in 0..<1000 {
+            if try directory.keyedValue("cgroup.events", "frozen") == "1" { return }
+            sleep(milliseconds: 10)
+        }
+        throw RuntimeError("cgroup \(directory.displayPath) did not freeze within 10 seconds")
+    }
+
     private static func removeDescendants(of directory: CgroupDirectory) throws {
         for name in try directory.subdirectories() {
             guard let child = try directory.child(name) else { continue }

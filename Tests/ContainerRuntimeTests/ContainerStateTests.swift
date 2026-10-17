@@ -16,6 +16,11 @@ private let bootID = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"
     (LifecycleOperation.start, ContainerStatus.created, LifecycleOperation.Action.proceed),
     (.kill, .created, .proceed),
     (.kill, .running, .proceed),
+    (.kill, .paused, .proceed),
+    (.pause, .running, .proceed),
+    (.pause, .created, .proceed),
+    (.resume, .paused, .proceed),
+    (.delete(force: true), .paused, .killThenDestroy),
     (.delete(force: false), .stopped, .destroy),
     (.delete(force: true), .stopped, .destroy),
     // runc deletes a created container without --force by killing its init.
@@ -34,6 +39,11 @@ func permitsRuncTransitions(_ operation: LifecycleOperation, _ status: Container
     (.start, .stopped, "cannot start container box in the stopped state"),
     (.kill, .creating, "cannot kill container box in the creating state"),
     (.kill, .stopped, "cannot kill container box in the stopped state"),
+    (.pause, .paused, "cannot pause container box in the paused state"),
+    (.pause, .stopped, "cannot pause container box in the stopped state"),
+    (.resume, .running, "cannot resume container box in the running state"),
+    (.start, .paused, "cannot start container box in the paused state"),
+    (.delete(force: false), .paused, "cannot delete container box in the paused state (use --force)"),
     (.delete(force: false), .running, "cannot delete container box in the running state (use --force)"),
     (.delete(force: false), .creating, "cannot delete container box in the creating state (use --force)"),
 ])
@@ -64,6 +74,12 @@ func rejectsInvalidTransitionsWithStableMessages(_ operation: LifecycleOperation
 ])
 func derivesStatusFromLiveFacts(_ hasInit: Bool, _ alive: Bool, _ creator: Bool, _ socket: Bool, _ expected: ContainerStatus) {
     #expect(deriveStatus(hasInit: hasInit, initAlive: alive, creatorActive: creator, startSocketPresent: socket) == expected)
+}
+
+@Test func frozenStateRequiresALiveInit() {
+    #expect(deriveStatus(hasInit: true, initAlive: true, creatorActive: false, startSocketPresent: false, frozen: true) == .paused)
+    #expect(deriveStatus(hasInit: true, initAlive: true, creatorActive: false, startSocketPresent: true, frozen: true) == .paused)
+    #expect(deriveStatus(hasInit: true, initAlive: false, creatorActive: false, startSocketPresent: false, frozen: true) == .stopped)
 }
 
 // MARK: Persisted record

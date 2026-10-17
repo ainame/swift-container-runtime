@@ -69,6 +69,29 @@ public struct ContainerLifecycle: Sendable {
         #endif
     }
 
+    /// Freezes a running container, or a created init still at its start
+    /// gate, as runc does. Resume restores the live gate-derived status.
+    public func pause(id: ContainerID) throws {
+        try changeFreezer(id: id, frozen: true)
+    }
+
+    public func resume(id: ContainerID) throws {
+        try changeFreezer(id: id, frozen: false)
+    }
+
+    private func changeFreezer(id: ContainerID, frozen: Bool) throws {
+        #if os(Linux)
+        let container = try lock(id)
+        let record = try container.readRecord()
+        let operation: LifecycleOperation = frozen ? .pause : .resume
+        _ = try operation.action(for: try container.status(of: record), id: id)
+        guard let identity = record?.cgroup else { throw RuntimeError("container has no recorded cgroup") }
+        try CgroupLeaf.setFrozen(identity, frozen: frozen)
+        #else
+        throw Self.unsupported
+        #endif
+    }
+
     public func state(id: ContainerID) throws -> ContainerStateReport {
         #if os(Linux)
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }
@@ -87,6 +110,9 @@ public struct ContainerLifecycle: Sendable {
         guard let record, let process = record.initProcess,
               try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace, { try $0.signal(signal) }) == true else {
             throw LifecycleError.invalidTransition(id: id, operation: "kill", status: .stopped)
+        }
+        if signal == SIGKILL, let identity = record.cgroup {
+            try? CgroupLeaf.setFrozen(identity, frozen: false)
         }
         #else
         throw Self.unsupported
@@ -182,6 +208,9 @@ extension ContainerLifecycle {
         guard let record, let process = record.initProcess else { return true }
         let gone = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { handle in
             _ = try handle.signal(SIGKILL)
+            // runc thaws a paused container after SIGKILL. Identity checks
+            // keep this best-effort thaw away from a replacement cgroup.
+            if let identity = record.cgroup { try? CgroupLeaf.setFrozen(identity, frozen: false) }
             return handle.waitForExit(milliseconds: 10_000)
         }
         return gone ?? true
