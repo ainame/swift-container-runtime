@@ -125,7 +125,8 @@ struct OCIConfiguration: Decodable, Sendable {
     /// `linux.resources.memory`. `kernel`, `kernelTCP`, `swappiness`,
     /// `disableOOMKiller`, `useHierarchy`, and `checkBeforeUpdate` are not
     /// implemented and therefore rejected.
-    struct Memory: Decodable, Sendable {
+    struct Memory: Codable, Sendable, Equatable {
+        init() {}
         var limit: Int64?
         var reservation: Int64?
         var swap: Int64?
@@ -138,7 +139,8 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
-    struct Pids: Decodable, Sendable {
+    struct Pids: Codable, Sendable, Equatable {
+        init() {}
         /// Optional since runtime-spec 1.2.1; absent keeps the current value.
         var limit: Int64?
 
@@ -151,7 +153,8 @@ struct OCIConfiguration: Decodable, Sendable {
     /// `linux.resources.cpu`, with the runtime-spec types: unsigned shares,
     /// period, and burst, signed quota and idle, and CPU/node list strings.
     /// Realtime fields remain unsupported.
-    struct CPU: Decodable, Sendable {
+    struct CPU: Codable, Sendable, Equatable {
+        init() {}
         var shares: UInt64?
         var quota: Int64?
         var burst: UInt64?
@@ -175,7 +178,8 @@ struct OCIConfiguration: Decodable, Sendable {
     /// `linux.resources`. Only the memory, pids, and CPU controls are
     /// implemented; block I/O, hugepages, devices, network, RDMA, and unified
     /// keys are rejected rather than ignored.
-    struct Resources: Decodable, Sendable {
+    struct Resources: Codable, Sendable, Equatable {
+        init() {}
         var memory: Memory?
         var pids: Pids?
         var cpu: CPU?

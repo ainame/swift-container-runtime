@@ -320,3 +320,31 @@ func lifecycleRejectsInvalidRoots(_ root: String) {
     #expect(throws: RuntimeError.self) { try lifecycle.delete(id: box, force: true) }
 }
 #endif
+
+@Test func rawResourceSettingsSurviveStateRoundTrip() throws {
+    let config = try OCIConfiguration.decode(Array(#"""
+    {"ociVersion":"1.0.2","root":{"path":"rootfs"},"process":{"args":["/bin/true"],"cwd":"/"},
+     "linux":{"namespaces":[{"type":"mount"}],"resources":{
+       "memory":{"limit":8192,"swap":16384},"pids":{"limit":5},
+       "cpu":{"shares":512,"quota":50000,"period":200000,"burst":0,"cpus":"1"}}}}
+    """#.utf8))
+    let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/bundle/rootfs"))
+    let original = ContainerRecord(id: box, plan: plan, created: "2026-10-17T00:00:00Z")
+    let decoded = try ContainerRecord.decode(original.encoded(), expectedID: box)
+    let saved = try #require(decoded.resourceConfiguration)
+    #expect(saved.cpu?.quota == 50000)
+    #expect(saved.cpu?.period == 200000)
+    #expect(saved.cpu?.shares == 512)
+    #expect(saved.cpu?.burst == 0)
+    #expect(saved.memory?.swap == 16384)
+    #expect(try CgroupPlan.converted(saved) == plan.cgroup.resources)
+}
+
+@Test func legacyRecordsRemainDistinctFromEmptyResourceSettings() throws {
+    var expected = record()
+    #expect(expected.resourceConfiguration != nil)
+    expected.resourceConfiguration = nil
+    let legacy = try expected.encoded()
+    #expect(!String(decoding: legacy, as: UTF8.self).contains(#""resourceConfiguration""#))
+    #expect(try ContainerRecord.decode(legacy, expectedID: box) == expected)
+}

@@ -105,6 +105,9 @@ public struct OCIRunPlan: Sendable {
     /// `linux.cgroupsPath` and the implemented `linux.resources` subset.
     /// Every container gets its own cgroup v2 group, as in runc.
     public let cgroup: CgroupPlan
+    /// Raw values must survive bundle removal: future updates distinguish
+    /// omitted settings from defaults and merge quota/period independently.
+    let resourceConfiguration: OCIConfiguration.Resources
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
@@ -234,6 +237,7 @@ public struct OCIRunPlan: Sendable {
         self.resourceLimits = resourceLimits
         self.pathControls = pathControls
         self.cgroup = cgroup
+        resourceConfiguration = configuration.linux.resources ?? OCIConfiguration.Resources()
     }
 
     /// An absent `process.user` means uid and gid 0, as in runc. Values the

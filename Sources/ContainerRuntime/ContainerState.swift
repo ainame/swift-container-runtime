@@ -111,6 +111,9 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     /// before any init exists. Absent in records written before cgroup
     /// support (which created none) and before preparation.
     var cgroup: CgroupIdentity?
+    /// Raw resource configuration, independent of the source bundle. Nil
+    /// distinguishes legacy records from new containers with empty settings.
+    var resourceConfiguration: OCIConfiguration.Resources?
 
     init(id: ContainerID, plan: OCIRunPlan, created: String) {
         format = Self.currentFormat
@@ -123,6 +126,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         pidNamespace = plan.namespaces.contains(.pid)
         initProcess = nil
         cgroup = nil
+        resourceConfiguration = plan.resourceConfiguration
     }
 
     func encoded() throws -> [UInt8] {
