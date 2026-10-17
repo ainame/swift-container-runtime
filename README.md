@@ -16,7 +16,7 @@ swift build
 sudo .build/debug/swift-container-runtime run --bundle /path/to/bundle mybox
 ```
 
-Requires root and Linux 5.11 or later: `close_range` with `CLOSE_RANGE_CLOEXEC` (5.11; plain `close_range` is 5.9). `namespace-run` still needs only 5.3. `--bundle` (`-b`) defaults to the current directory, like runc. The runtime reads `config.json`, sets up the container, waits for the workload, and exits with its status. While it runs, the container is visible to `state`, `kill`, and `delete --force`; its state is removed when the workload exits or setup fails, as with runc (there is no `--keep`). Setup failures exit 125 and print the failing step. Usage errors exit 64.
+Requires root and Linux 5.11 or later: `close_range` with `CLOSE_RANGE_CLOEXEC` (5.11; plain `close_range` is 5.9). `namespace-run` still needs only 5.3. `--bundle` (`-b`) defaults to the current directory, like runc. The runtime reads `config.json`, sets up the container, waits for the workload, and exits with its status. While it runs, the container is visible to `state`, `kill`, and `delete --force`; its state is removed when the workload exits or setup fails, as with runc. `run --keep` retains stopped state and its cgroup until `delete`. `create` and `run` accept `--pid-file PATH`, which atomically replaces PATH with the decimal host init PID (without a newline); relative paths use the caller’s working directory. The PID file remains after exit and deletion. Publication failures fail the launch and clean it up. Setup failures exit 125 and print the failing step. Usage errors exit 64.
 
 ## Container lifecycle
 

@@ -56,6 +56,11 @@ private func validateBundle(_ bundle: String) throws {
     }
 }
 
+private func validatePIDFile(_ path: String?) throws {
+    guard let path else { return }
+    guard !path.utf8.contains(0) else { throw ValidationError("--pid-file must not contain NUL") }
+}
+
 /// Prints a runtime failure and exits with `status`: 1 for lifecycle
 /// commands as in runc, 125 for `run` so it stays distinct from workload exits.
 func failure(_ error: any Error, status: Int32 = 1) -> ExitCode {
@@ -77,17 +82,21 @@ struct Create: ParsableCommand {
     @Option(name: [.customShort("b"), .long], help: "Path to the OCI bundle directory.")
     var bundle = "."
 
+    @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
+    var pidFile: String?
+
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
         try validateBundle(bundle)
+        try validatePIDFile(pidFile)
         _ = try validatedID(id)
     }
 
     mutating func run() throws {
         do {
-            try globals.lifecycle().create(id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)))
+            try globals.lifecycle().create(id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile)
         } catch {
             throw failure(error)
         }
@@ -334,7 +343,7 @@ struct Run: ParsableCommand {
         discussion: "Supports an educational subset of config.json and rejects anything else. "
             + "In the foreground it exits with the workload's status and removes the container state. "
             + "With --detach it returns after the workload started and keeps the state for state, kill, and delete. "
-            + "There are no capability, seccomp, cgroup, or user-namespace controls, so this is not a security boundary."
+            + "Seccomp, rootless operation, and terminal support are not implemented; this is not a security boundary."
     )
 
     @OptionGroup var globals: GlobalOptions
@@ -345,11 +354,18 @@ struct Run: ParsableCommand {
     @Flag(name: [.customShort("d"), .long], help: "Return once the workload has started.")
     var detach = false
 
+    @Flag(help: "Retain the container state after foreground exit; remove it with delete.")
+    var keep = false
+
+    @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
+    var pidFile: String?
+
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
         try validateBundle(bundle)
+        try validatePIDFile(pidFile)
         _ = try validatedID(id)
     }
 
@@ -357,7 +373,7 @@ struct Run: ParsableCommand {
         let status: Int32
         do {
             status = try globals.lifecycle().run(
-                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach
+                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile
             )
         } catch {
             throw failure(error, status: 125)

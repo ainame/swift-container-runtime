@@ -242,3 +242,30 @@ private func decode(_ bytes: [UInt8]) throws -> DefaultSpecification {
     #expect(RuntimeFeatures.current == other)
     #endif
 }
+
+
+@Test func pidFileReplacesASymlinkWithoutTouchingItsTarget() throws {
+    try withBundle(cleanup: ["init.pid", "target", ".init.pid"]) { directory in
+        let target = directory.appending("target")
+        let destination = directory.appending("init.pid")
+        try writeFile(target, "untouched")
+        let linked = unsafe destination.withCString { path in unsafe symlink("target", path) }
+        #expect(linked == 0)
+        try PIDFile.write(12345, to: destination.string)
+        #expect(try readFile(destination) == "12345")
+        #expect(try readFile(target) == "untouched")
+        #expect(!exists(directory.appending(".init.pid")))
+    }
+}
+
+@Test func pidFileDoesNotOverwriteAnotherWritersTemporaryFile() throws {
+    try withBundle(cleanup: ["init.pid", ".init.pid"]) { directory in
+        let destination = directory.appending("init.pid")
+        let temporary = directory.appending(".init.pid")
+        try writeFile(destination, "old")
+        try writeFile(temporary, "other writer")
+        #expect(throws: (any Error).self) { try PIDFile.write(12345, to: destination.string) }
+        #expect(try readFile(destination) == "old")
+        #expect(try readFile(temporary) == "other writer")
+    }
+}

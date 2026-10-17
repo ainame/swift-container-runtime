@@ -33,9 +33,9 @@ public struct ContainerLifecycle: Sendable {
     /// Prepares the container and leaves its init waiting for `start`. The
     /// workload inherits this process's stdin, stdout, and stderr, as in runc.
     @available(*, noasync, message: "create containers before starting async work")
-    public func create(id: ContainerID, plan: OCIRunPlan) throws {
+    public func create(id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil) throws {
         #if os(Linux)
-        try createOnLinux(id: id, plan: plan, start: false)
+        try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile)
         #else
         throw Self.unsupported
         #endif
@@ -45,13 +45,15 @@ public struct ContainerLifecycle: Sendable {
     /// removes its state afterwards, returning the workload status. Detached,
     /// it returns 0 after a confirmed start and keeps the state.
     @available(*, noasync, message: "launch containers before starting async work")
-    public func run(id: ContainerID, plan: OCIRunPlan, detach: Bool) throws -> Int32 {
+    public func run(
+        id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil
+    ) throws -> Int32 {
         #if os(Linux)
         if detach {
-            try createOnLinux(id: id, plan: plan, start: true)
+            try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile)
             return 0
         }
-        return try runForegroundOnLinux(id: id, plan: plan)
+        return try runForegroundOnLinux(id: id, plan: plan, keep: keep, pidFile: pidFile)
         #else
         throw Self.unsupported
         #endif
@@ -338,7 +340,7 @@ extension ContainerLifecycle {
     /// `create`, and with `start` a detached `run`. Holding the lock for the
     /// whole command means no other command observes a half-made container;
     /// any failure kills the init and removes the state.
-    private func createOnLinux(id: ContainerID, plan: OCIRunPlan, start: Bool) throws {
+    private func createOnLinux(id: ContainerID, plan: OCIRunPlan, start: Bool, pidFile: String?) throws {
         // Reserve and pin the generation before recording or launching an init.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
@@ -362,6 +364,9 @@ extension ContainerLifecycle {
             // Commit readiness before asking the waiting init to execute.
             _ = try plan.runOnLinux(hooks: hooks, gate: gate)
             if start { try requestStart(container) }
+            if let pidFile, let process = record.initProcess {
+                try PIDFile.write(process.pid, to: pidFile)
+            }
         } catch {
             // Failed creates leave neither a live init, a cgroup, nor a
             // reserved ID (unless the cgroup cannot be removed).
@@ -374,7 +379,9 @@ extension ContainerLifecycle {
     /// Foreground `run`: state exists while the workload runs, so `state`,
     /// `kill`, and `delete --force` work from other processes, and it is
     /// removed when the workload exits or setup fails, as runc does.
-    private func runForegroundOnLinux(id: ContainerID, plan: OCIRunPlan) throws -> Int32 {
+    private func runForegroundOnLinux(
+        id: ContainerID, plan: OCIRunPlan, keep: Bool, pidFile: String?
+    ) throws -> Int32 {
         // Keep the directory locked throughout setup, then publish the init
         // and unlock only after execution has been confirmed.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
@@ -391,6 +398,9 @@ extension ContainerLifecycle {
             hooks.placeInit = { try cgroup.join($0) }
             hooks.initStarted = { record.initProcess = $0 }
             hooks.executed = {
+                if let pidFile, let process = record.initProcess {
+                    try PIDFile.write(process.pid, to: pidFile)
+                }
                 try container.writeRecord(record)
                 container.unlock()
             }
@@ -401,6 +411,8 @@ extension ContainerLifecycle {
             if (try? container.lock()) != nil { Self.abandon(record, container) }
             throw reported
         }
+        // Retained state and its cgroup are cleaned by an explicit delete.
+        if keep { return status }
         do {
             // A concurrent `delete --force` may already have removed it. The
             // init has exited, so what remains in its cgroup (descendants

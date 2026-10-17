@@ -226,3 +226,15 @@ func rejectsInvalidMemoryUnits(_ input: String) {
     #expect(command.pidsLimit == -1)
     _ = try command.request()
 }
+
+@Test func parsesLifecycleRetentionAndPIDFiles() throws {
+    let run = try #require(RuntimeCommand.parseAsRoot([
+        "run", "--keep", "--pid-file", "relative.pid", "box",
+    ]) as? Run)
+    #expect(run.keep)
+    #expect(run.pidFile == "relative.pid")
+    let create = try #require(RuntimeCommand.parseAsRoot([
+        "create", "--pid-file", "/tmp/init.pid", "box",
+    ]) as? Create)
+    #expect(create.pidFile == "/tmp/init.pid")
+}

@@ -310,6 +310,33 @@ shared_checks() {
     test "$status" = 42
     expect_failure "" $rt state "foreground-$tag"
     test -z "$($rt list -q)"
+    # PID files publish the host init PID, survive stop/delete, and resolve
+    # relative to the caller even when --bundle is elsewhere.
+    (cd "$scratch" && $rt create --pid-file "created-$tag.pid" --bundle "$bundles/loop" "pid-created-$tag" < /dev/null > /dev/null 2>&1)
+    test "$(cat "$scratch/created-$tag.pid")" = "$(pid_of "$rt" "pid-created-$tag")"
+    $rt delete "pid-created-$tag"
+    test -s "$scratch/created-$tag.pid"
+    $rt run -d --pid-file "$scratch/detached-$tag.pid" -b "$bundles/loop" "pid-detached-$tag" < /dev/null > /dev/null 2>&1
+    test "$(cat "$scratch/detached-$tag.pid")" = "$(pid_of "$rt" "pid-detached-$tag")"
+    $rt delete -f "pid-detached-$tag"
+
+    # --keep retains stopped state and the exact workload exit status.
+    set +e
+    $rt run --keep --pid-file "$scratch/kept-$tag.pid" -b "$bundles/exit42" "kept-$tag" < /dev/null
+    status=$?
+    set -e
+    test "$status" = 42
+    test "$(status_of "$rt" "kept-$tag")" = stopped
+    test "$(cat "$scratch/kept-$tag.pid")" -gt 1
+    dead "$(cat "$scratch/kept-$tag.pid")"
+    $rt delete "kept-$tag"
+
+    # A publication failure must stop the workload and remove its state.
+    expect_failure "" $rt create --pid-file "$scratch/no-parent/init.pid" -b "$bundles/loop" "pid-failed-$tag"
+    expect_failure "" $rt state "pid-failed-$tag"
+    expect_failure "" $rt run -d --pid-file "$scratch/no-parent/init.pid" -b "$bundles/loop" "pid-run-failed-$tag"
+    expect_failure "" $rt state "pid-run-failed-$tag"
+    test -z "$($rt list -q)"
     echo "$tag: create/start/state/kill/delete/run lifecycle ok"
 }
 
