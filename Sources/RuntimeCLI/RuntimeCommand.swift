@@ -10,7 +10,7 @@ struct RuntimeCommand: ParsableCommand {
         discussion: "Educational subset of an OCI runtime; not a security sandbox.",
         version: VersionOutput.text,
         subcommands: [
-            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Update.self, Events.self,
+            Create.self, Start.self, Exec.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Update.self, Events.self,
             Spec.self, Features.self, Run.self, NamespaceRun.self,
         ]
     )

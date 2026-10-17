@@ -28,6 +28,11 @@ struct OCIConfiguration: Decodable, Sendable {
         var umask: UInt32?
         var additionalGids: [UInt32]?
 
+        init(uid: UInt32 = 0, gid: UInt32 = 0) {
+            self.uid = uid
+            self.gid = gid
+        }
+
         init(from decoder: any Decoder) throws {
             // `username` is Windows-only in the OCI specification.
             let object = try StrictObject(decoder, allowed: ["uid", "gid", "umask", "additionalGids"])

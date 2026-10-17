@@ -19,6 +19,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* libc exposes setns only with GNU feature macros; both glibc and musl provide it. */
+extern int setns(int fd, int nstype);
+
 /* glibc hides O_PATH without _GNU_SOURCE; musl always defines it. */
 #if !defined(O_PATH) && defined(__O_PATH)
 #define O_PATH __O_PATH

@@ -480,6 +480,15 @@ final class CgroupLeaf {
         return nil
     }
 
+    /// Exec's child is unreaped and blocked until this write succeeds.
+    static func join(_ identity: CgroupIdentity, pid: pid_t) throws {
+        guard let directory = try recordedDirectory(identity) else {
+            throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
+        }
+        let code = directory.write("cgroup.procs", String(pid))
+        guard code == 0 else { throw RuntimeError("join exec process to cgroup: \(Errno(rawValue: code))") }
+    }
+
     /// Opens only this recorded generation, never a replacement or a group
     /// from another boot. Freezer writes use this pinned directory throughout.
     private static func recordedDirectory(_ identity: CgroupIdentity) throws -> CgroupDirectory? {

@@ -124,6 +124,35 @@ public struct OCIRunPlan: Sendable {
         return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs)
     }
 
+    /// Like runc's command-based exec, reread the bundle's process settings.
+    /// The live root and namespaces are pinned separately by the lifecycle.
+    static func loadExec(bundle: FilePath, rootfs: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?) throws -> OCIRunPlan {
+        var configuration = try OCIConfiguration.decode(readConfiguration(bundle.appending("config.json")))
+        configuration.process.args = arguments
+        configuration.process.terminal = false
+        configuration.process.env = (configuration.process.env ?? []) + environment
+        if let cwd { configuration.process.cwd = cwd }
+        if let user {
+            let pieces = user.split(separator: ":", omittingEmptySubsequences: false)
+            guard pieces.count == 1 || pieces.count == 2,
+                  let uid = UInt32(pieces[0]), uid != UInt32.max else {
+                throw RuntimeError("exec --user must be a numeric uid[:gid]")
+            }
+            // A missing OCI user defaults to root just as it does for run.
+            if configuration.process.user == nil {
+                configuration.process.user = OCIConfiguration.User()
+            }
+            configuration.process.user?.uid = uid
+            if pieces.count == 2 {
+                guard let gid = UInt32(pieces[1]), gid != UInt32.max else {
+                    throw RuntimeError("exec --user must be a numeric uid[:gid]")
+                }
+                configuration.process.user?.gid = gid
+            }
+        }
+        return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs)
+    }
+
     /// Runs the workload in the foreground and returns its shell-style exit
     /// status. Like `NamespaceCommand.run`, this rejects multithreaded callers.
     /// Without a container ID or state, a default-path cgroup gets a name

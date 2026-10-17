@@ -359,3 +359,19 @@ private func removeFile(_ path: FilePath) throws {
     let result = unsafe path.withPlatformString { unsafe unlink($0) }
     if result != 0 { throw Errno(rawValue: errno) }
 }
+
+
+@Test func execOverridesOnlyProcessSettingsAndUsesRecordedRootMetadata() throws {
+    try withTemporaryBundle { bundle in
+        try write(config(), to: bundle.appending("config.json"))
+        let command = try OCIRunPlan.loadExec(
+            bundle: bundle, rootfs: FilePath("/recorded-root"), arguments: ["/bin/echo", "--help"],
+            environment: ["GREETING=override"], cwd: "/tmp", user: "1000:1001")
+        #expect(command.arguments == ["/bin/echo", "--help"])
+        #expect(command.environment == ["PATH=/bin", "GREETING=override"])
+        #expect(command.cwd == ["tmp"])
+        #expect(command.security.uid == 1000)
+        #expect(command.security.gid == 1001)
+        #expect(command.rootfs == FilePath("/recorded-root"))
+    }
+}

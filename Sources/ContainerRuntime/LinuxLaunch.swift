@@ -11,7 +11,7 @@ enum LaunchStage: Int32 {
     case pipe = 1, forkLauncher, namespaces, propagation, forkInit, procMount
     case hostname, execute, wait, protocolRead, parentLifetime, inspectThreads
     case bindRootfs, openRootfs, resolveMount, mount, devices, pivotRoot, cwd, verifyRootfs, markDescriptors
-    case pinInit, commit, startRequest, startSocket
+    case pinInit, commit, startRequest, startSocket, joinNamespaces, enterRoot
     case noNewPrivileges, stdioOwnership, supplementaryGroups, setGroupID, setUserID
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
     case setResourceLimit, startDescriptor, readonlyRoot
@@ -40,6 +40,8 @@ enum LaunchStage: Int32 {
         case .cwd: "change to process.cwd"
         case .verifyRootfs: "verify rootfs was not replaced during setup"
         case .markDescriptors: "mark inherited descriptors close-on-exec (requires Linux 5.11+)"
+        case .joinNamespaces: "join container namespaces"
+        case .enterRoot: "enter container root"
         case .pinInit: "pin container init with a pidfd"
         case .commit: "release prepared container init"
         case .startRequest: "accept start request"
@@ -237,6 +239,8 @@ struct LaunchHooks {
     /// parent-death signal, starts a new session, and outlives the launcher
     /// and this process. Used by `create` and detached `run`.
     var detached = false
+    /// Exec detaches its lifetime but confirms exec rather than waiting at a start gate.
+    var waitsForReady = true
     /// Runs first in the forked launcher to close inherited descriptors that
     /// must not outlive the supervisor, such as the container lock.
     var closeInChildren: () -> Void = {}
@@ -273,6 +277,7 @@ func runLaunch(
     namespaceFlags: Int32,
     hooks: LaunchHooks = LaunchHooks(),
     context: (LaunchStage, Int32) -> String? = { _, _ in nil },
+    prepareLauncher: () -> Int32 = { 0 },
     initialize: (
         _ report: borrowing OwnedFileDescriptor, _ commit: borrowing OwnedFileDescriptor,
         _ launcher: borrowing OwnedFileDescriptor
@@ -311,11 +316,17 @@ func runLaunch(
         try? reportRead.close(); try? releaseWrite.close(); try? commitWrite.close()
         guard linux_set_parent_death_signal(SIGKILL) == 0 else { _exit(failureStatus(reportWrite, .parentLifetime)) }
         guard getppid() == supervisor else { _exit(125) }
-        guard unshare(namespaceFlags) == 0 else {
-            _exit(failureStatus(reportWrite, .namespaces))
+        let preparation = prepareLauncher()
+        guard preparation == 0 else {
+            _exit(failureStatus(reportWrite, .joinNamespaces, code: preparation))
         }
-        guard unsafe mount(nil, "/", nil, UInt(MS_REC | MS_PRIVATE), nil) == 0 else {
-            _exit(failureStatus(reportWrite, .propagation))
+        if namespaceFlags != 0 {
+            guard unshare(namespaceFlags) == 0 else {
+                _exit(failureStatus(reportWrite, .namespaces))
+            }
+            guard unsafe mount(nil, "/", nil, UInt(MS_REC | MS_PRIVATE), nil) == 0 else {
+                _exit(failureStatus(reportWrite, .propagation))
+            }
         }
         // PID 1 sees getppid()==0 because its parent is outside its namespace.
         // The inherited pidfd detects parent death before PDEATHSIG is set.
@@ -418,13 +429,13 @@ func runLaunch(
     try? reportRead.close()
 
     var succeeded = thrown == nil && failure == nil
-    if succeeded && hooks.detached && !ready {
+    if succeeded && hooks.detached && hooks.waitsForReady && !ready {
         thrown = RuntimeError("container init exited before completing setup")
         succeeded = false
     }
     if succeeded {
         do {
-            if hooks.detached {
+            if hooks.detached && hooks.waitsForReady {
                 try hooks.ready()
                 try sendCommit(commitWrite)
             } else if initPID != 0 {

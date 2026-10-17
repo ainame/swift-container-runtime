@@ -238,3 +238,24 @@ func rejectsInvalidMemoryUnits(_ input: String) {
     ]) as? Create)
     #expect(create.pidFile == "/tmp/init.pid")
 }
+
+
+@Test func execStopsParsingAtTheContainerID() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot([
+        "exec", "--root", "/tmp/state", "-e", "VALUE=hello", "--cwd", "/tmp", "-u", "1000:1000",
+        "-d", "--pid-file", "exec.pid", "box", "/bin/echo", "--help", "--root", "workload",
+    ]) as? Exec)
+    #expect(command.globals.root == "/tmp/state")
+    #expect(command.env == ["VALUE=hello"])
+    #expect(command.cwd == "/tmp")
+    #expect(command.user == "1000:1000")
+    #expect(command.detach)
+    #expect(command.pidFile == "exec.pid")
+    #expect(command.id == "box")
+    #expect(command.arguments == ["/bin/echo", "--help", "--root", "workload"])
+}
+
+@Test(arguments: [["exec"], ["exec", "box"], ["exec", "box", "sh"], ["exec", "--tty", "box", "/bin/sh"]])
+func rejectsUnsupportedOrIncompleteExec(_ arguments: [String]) {
+    #expect(throws: (any Error).self) { _ = try RuntimeCommand.parseAsRoot(arguments) }
+}

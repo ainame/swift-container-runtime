@@ -44,6 +44,16 @@ The semantics follow runc:
 
 ### Lifecycle design
 
+`exec` runs another nonterminal process in a created or running container:
+
+```sh
+$rt exec mybox /bin/echo hello
+$rt exec --cwd /tmp -e GREETING=hello --user 1000:1000 mybox /bin/sh -c 'echo "$GREETING"; id'
+$rt exec --detach --pid-file worker.pid mybox /bin/sleep 60
+```
+
+Place runtime options before the container ID; all arguments after the ID are passed to the workload. The command-based form rereads process defaults from the bundle, as runc does, so that bundle must still exist. Exec joins the live init's pinned namespaces and root and the recorded cgroup, confirms execution, and returns the workload status (or zero with `--detach`). Failure cleans up its own process and leaves init alone. It refuses paused or stopped containers. This initial subset requires an absolute executable path. Process JSON, terminals, signal forwarding, additional-group overrides, capability CLI flags, sub-cgroups, and descriptor/socket handoff remain to be added. The shared setup applies configured limits, credentials, and capabilities; the detailed exec security matrix remains future validation.
+
 There is no monitor process. `create` forks the usual launcher and init. The launcher reports the init's PID while it is still an unreaped child, the CLI pins it with a pidfd, records its start time and boot ID, and only then lets the launcher exit. The init completes the whole setup (namespaces, mounts, `pivot_root`, hostname, cwd, umask, `no_new_privs`, `process.rlimits`, the configured user and groups, and a check that the executable exists and is executable by that user), reports readiness, and waits with those credentials already in force. The CLI writes `state.json` and sends a commit byte; if the CLI fails or dies before that, the init sees EOF and exits, and the failed create kills it through the pidfd and removes the state directory. A detached init has no parent-death signal, starts a new session, and is reparented to the nearest subreaper or PID 1, which reaps it.
 
 The created init listens on `start.sock` in the state directory (bound by the CLI before forking). Its presence marks the container created. Because the init already runs as the workload user, it cannot modify the private, root-owned state directory, so `start` consumes the marker on the host while holding the container lock:

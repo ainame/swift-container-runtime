@@ -59,6 +59,48 @@ public struct ContainerLifecycle: Sendable {
         #endif
     }
 
+    /// Runs a nonterminal process in the live container, without changing
+    /// its init identity or state. CLI overrides apply to this process only.
+    @available(*, noasync, message: "exec processes before starting async work")
+    public func exec(
+        id: ContainerID, arguments: [String], environment: [String] = [],
+        cwd: String? = nil, user: String? = nil, detach: Bool = false, pidFile: String? = nil
+    ) throws -> Int32 {
+        #if os(Linux)
+        // Serialize acquisition with delete/start, then pin the recorded init
+        // and all kernel handles before releasing any new child.
+        let container = try lock(id)
+        guard let record = try container.readRecord(), let process = record.initProcess,
+              let cgroup = record.cgroup else { throw RuntimeError("container has no recorded init or cgroup") }
+        let status = try container.status(of: record)
+        guard status == .running || status == .created else {
+            throw RuntimeError("cannot exec in a \(status.rawValue) container")
+        }
+        let plan = try OCIRunPlan.loadExec(
+            bundle: FilePath(record.bundle), rootfs: FilePath(record.rootfs), arguments: arguments, environment: environment, cwd: cwd, user: user)
+        let result = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { handle in
+            let namespaces = try ExecNamespaceSet(process: handle)
+            var hooks = LaunchHooks()
+            hooks.detached = detach
+            hooks.waitsForReady = false
+            hooks.closeInChildren = { container.detachInForkedChild() }
+            hooks.placeInit = { try CgroupLeaf.join(cgroup, pid: $0) }
+            var child: Int32 = 0
+            hooks.initStarted = { child = $0.pid }
+            hooks.executed = {
+                if let pidFile { try PIDFile.write(child, to: pidFile) }
+                // Foreground wait must not block state, kill or deletion.
+                container.unlock()
+            }
+            return try plan.execOnLinux(namespaces: namespaces, hooks: hooks)
+        }
+        guard let result else { throw RuntimeError("container init is no longer running") }
+        return result
+        #else
+        throw Self.unsupported
+        #endif
+    }
+
     /// Executes the workload of a created container exactly once.
     public func start(id: ContainerID) throws {
         #if os(Linux)

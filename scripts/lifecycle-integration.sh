@@ -205,6 +205,11 @@ shared_checks() {
     test "$(bundle_of "$rt" "loop-$tag")" = "$bundles/loop"
     $rt state "loop-$tag" | grep -q '"org.example.test" *: *"lifecycle"'
 
+    # Exec joins the prepared root and namespace even before init starts.
+    test "$($rt exec "loop-$tag" /bin/cat /marker)" = inside-rootfs
+    test "$(status_of "$rt" "loop-$tag")" = created
+    test ! -e "$out/loop.starts"
+
     # start runs it exactly once: created -> running -> stopped.
     $rt start "loop-$tag"
     wait_until "loop-$tag to run" test -e "$out/loop.starts"
@@ -212,6 +217,48 @@ shared_checks() {
     test "$(pid_of "$rt" "loop-$tag")" = "$pid"
     expect_failure "" $rt start "loop-$tag"
     test "$(wc -l < "$out/loop.starts")" = 1
+    # A second process shares init's namespaces, root and cgroup while
+    # preserving its own arguments, environment, cwd and numeric identity.
+    test "$($rt exec "loop-$tag" /bin/readlink /proc/self/ns/pid)" = "$(readlink /proc/$pid/ns/pid)"
+    test "$($rt exec "loop-$tag" /bin/readlink /proc/self/ns/mnt)" = "$(readlink /proc/$pid/ns/mnt)"
+    test "$($rt exec --cwd /tmp -e VALUE=first -e VALUE=last -u 1000:1000 "loop-$tag" /bin/sh -c 'printf "%s|%s|%s|%s" "$PWD" "$VALUE" "$(id -u)" "$(id -g)"')" = '/tmp|last|1000|1000'
+    set +e
+    $rt exec "loop-$tag" /bin/sh -c 'exit 42'
+    exec_status=$?
+    set -e
+    test "$exec_status" = 42
+    test "$(status_of "$rt" "loop-$tag")" = running
+    expect_failure "" $rt exec "loop-$tag" /does/not/exist
+    test "$(status_of "$rt" "loop-$tag")" = running
+    test "$($rt exec "loop-$tag" /bin/sh -c 'test ! -e /proc/self/fd/9; echo clean' 9< "$scratch")" = clean
+    $rt exec -d --pid-file "$scratch/exec-$tag.pid" "loop-$tag" /bin/sleep 1000
+    exec_pid=$(cat "$scratch/exec-$tag.pid")
+    test "$exec_pid" -gt 1
+    alive "$exec_pid"
+    test "$(readlink /proc/$exec_pid/ns/pid)" = "$(readlink /proc/$pid/ns/pid)"
+    test "$(cat /proc/$exec_pid/cgroup)" = "$(cat /proc/$pid/cgroup)"
+    kill -KILL "$exec_pid"
+    wait_dead "$exec_pid"
+    expect_failure "" $rt exec -d --pid-file "$scratch/no-parent/exec.pid" "loop-$tag" /bin/sleep 1000
+    test "$(status_of "$rt" "loop-$tag")" = running
+
+    # A paused container refuses exec until resumed, and the foreground
+    # wait releases the state lock so other lifecycle commands remain responsive.
+    $rt pause "loop-$tag"
+    expect_failure "" $rt exec "loop-$tag" /bin/true
+    $rt resume "loop-$tag"
+    $rt exec --pid-file "$scratch/exec-wait-$tag.pid" "loop-$tag" /bin/sleep 1000 < /dev/null > /dev/null 2>&1 &
+    exec_job=$!
+    wait_until "foreground exec PID file" test -s "$scratch/exec-wait-$tag.pid"
+    $rt kill "loop-$tag" 0
+    kill -KILL "$(cat "$scratch/exec-wait-$tag.pid")"
+    set +e
+    wait "$exec_job"
+    exec_status=$?
+    set -e
+    test "$exec_status" = 137
+    test "$(status_of "$rt" "loop-$tag")" = running
+
     # A running container is not deleted without --force.
     expect_failure "" $rt delete "loop-$tag"
     test "$(status_of "$rt" "loop-$tag")" = running
@@ -595,4 +642,4 @@ no_runtime_processes
 
 comparison=skipped
 test "$compare" = 1 && comparison=runc
-printf '%s\n' "Lifecycle integration checks passed (comparison: $comparison): create without exec, PID 1 and prepared rootfs, start once (also concurrently), state transitions, kill TERM/KILL, delete and --force cleanup, duplicate IDs (also concurrently), detached and foreground run, bundle rename/removal, create/start failure cleanup, descriptor isolation, parent-death cleanup, PID-reuse and tampered-state protection."
+printf '%s\n' "Lifecycle integration checks passed (comparison: $comparison): create without exec, PID 1 and prepared rootfs, start once (also concurrently), state transitions, kill TERM/KILL, delete and --force cleanup, duplicate IDs (also concurrently), detached and foreground run, retained state and PID files, basic exec namespaces/credentials/environment/status/detach, bundle rename/removal, create/start failure cleanup, descriptor isolation, parent-death cleanup, PID-reuse and tampered-state protection."

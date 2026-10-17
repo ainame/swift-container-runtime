@@ -242,6 +242,28 @@ private func initializeContainer(
     if let failure = pathControls.apply() {
         return failureStatus(report, failure.stage, code: failure.code, detail: failure.index)
     }
+    return unsafe finishContainerProcess(
+        argv: group(Group.arguments), environment: group(Group.environment), directory: directory,
+        security: security, supplementaryGids: supplementaryGids, capabilities: capabilities,
+        lastCapability: lastCapability, resourceLimits: resourceLimits, foreground: foreground,
+        report: report, commit: commit, launcher: launcher, gate: gate
+    )
+}
+
+/// Shared process setup for the first workload and later exec processes.
+/// The caller has already entered the root and arranged all mounts.
+@unsafe
+func finishContainerProcess(
+    argv: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+    environment: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+    directory: UnsafeMutablePointer<CChar>?,
+    security: OCIRunPlan.ProcessSecurity,
+    supplementaryGids: UnsafeBufferPointer<gid_t>,
+    capabilities: ProcessCapabilities?, lastCapability: Int32,
+    resourceLimits: [ResourceLimit], foreground: Bool,
+    report: borrowing OwnedFileDescriptor, commit: borrowing OwnedFileDescriptor,
+    launcher: borrowing OwnedFileDescriptor, gate: StartGate?
+) -> Int32 {
     // As runc does, enter the cwd with the caller's credentials first and
     // retry after the switch only if they were denied it.
     var enterCwdAsUser = false
@@ -332,12 +354,10 @@ private func initializeContainer(
     // Like runc's create-time lookup, and with the workload's credentials, a
     // missing or non-executable program fails create (or run) rather than
     // start. Exec can still fail later if the rootfs changes.
-    let argv = unsafe group(Group.arguments)
     let lookup = unsafe executableError(argv[0]!)
     guard lookup == 0 else { return failureStatus(report, .execute, code: lookup) }
 
     // An explicit envp replaces the caller's environment entirely.
-    let environment = unsafe group(Group.environment)
     if let gate {
         // With every limit in force, a created init that could never accept
         // start (for example under RLIMIT_NOFILE 3) fails create now
@@ -415,7 +435,7 @@ private func applyResourceLimits(_ limits: [ResourceLimit]) -> Int32? {
 }
 
 /// The highest capability number the running kernel supports.
-private func kernelLastCapability() throws -> Int {
+func kernelLastCapability() throws -> Int {
     let path = "/proc/sys/kernel/cap_last_cap"
     let bytes: [UInt8]?
     do { bytes = try readProcFile(path) } catch { throw RuntimeError("read \(path): \(error)") }
