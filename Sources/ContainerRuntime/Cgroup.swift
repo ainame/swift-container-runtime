@@ -94,6 +94,10 @@ private final class CgroupDirectory {
         let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         do {
             return String(decoding: try owner.readAll(limit: 1 << 20), as: UTF8.self)
+        } catch let code as Errno where file == "cgroup.procs" && code.rawValue == ENOTSUP {
+            // Threaded cgroups expose TIDs through cgroup.threads instead,
+            // as runc's readProcsFile does after an unsupported procs read.
+            return try read("cgroup.threads")
         } catch {
             throw RuntimeError("read \(displayPath)/\(file): \(error)")
         }
@@ -494,6 +498,24 @@ final class CgroupLeaf {
             throw RuntimeError("cgroup.freeze did not retain requested state \(value)")
         }
         if frozen { try waitFrozen(directory) }
+    }
+
+    /// Includes descendant cgroups, as runc's GetAllPids does. A stale
+    /// identity contributes no PIDs from the group now at the recorded path.
+    static func processes(_ identity: CgroupIdentity) throws -> [Int32] {
+        guard let directory = try recordedDirectory(identity) else { return [] }
+        var pids: [Int32] = []
+        func collect(_ group: CgroupDirectory) throws {
+            for field in (try group.read("cgroup.procs") ?? "").split(whereSeparator: { $0.isWhitespace }) {
+                guard let pid = Int32(field), pid > 0 else { throw RuntimeError("invalid PID in cgroup.procs") }
+                pids.append(pid)
+            }
+            for name in try group.subdirectories().sorted() {
+                if let child = try group.child(name) { try collect(child) }
+            }
+        }
+        try collect(directory)
+        return pids
     }
 
     private static func waitFrozen(_ directory: CgroupDirectory) throws {

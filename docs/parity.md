@@ -11,7 +11,7 @@ The goal is feature parity with the behavior implemented by [kontainer-runtime a
 | `pause`, `resume` | Cgroup freezer | Implemented with completion checks, kernel-derived paused state, identity protection, and Linux workload tests against runc |
 | `update` | Resources file or stdin; individual resource flags; memory check-before-update | Missing |
 | `events` | Stats snapshot or interval stream, OOM events, termination on deletion | Missing |
-| `ps` | Table/JSON output and verbatim trailing host `ps` arguments | Missing |
+| `ps` | Table/JSON output and verbatim trailing host `ps` arguments | Implemented, including descendant/threaded groups, lifecycle states, empty JSON null, and host-table filtering; compared with runc |
 | `exec` | Command or process JSON; detach, terminal, console/PID/pidfd; cwd, env, user/groups, capabilities, preserved FDs, sub-cgroup, ignore-paused | Missing |
 | `spec` | Generate default `config.json`; bundle and rootless options | Missing |
 | `features` | OCI feature JSON matching actual runtime support | Missing |

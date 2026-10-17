@@ -92,6 +92,29 @@ public struct ContainerLifecycle: Sendable {
         #endif
     }
 
+    /// A snapshot of host PIDs in the recorded cgroup and its descendants.
+    /// The state lock is released before invoking the external ps program.
+    public func processIDs(id: ContainerID) throws -> [Int32] {
+        #if os(Linux)
+        let container = try lock(id)
+        guard let record = try container.readRecord(), let identity = record.cgroup else {
+            throw RuntimeError("container has no recorded cgroup")
+        }
+        return try CgroupLeaf.processes(identity)
+        #else
+        throw Self.unsupported
+        #endif
+    }
+
+    public func processTable(id: ContainerID, arguments: [String] = []) throws -> String {
+        #if os(Linux)
+        let pids = try processIDs(id: id)
+        return try ProcessTable.filter(hostProcessTable(arguments: arguments), pids: pids)
+        #else
+        throw Self.unsupported
+        #endif
+    }
+
     public func state(id: ContainerID) throws -> ContainerStateReport {
         #if os(Linux)
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }

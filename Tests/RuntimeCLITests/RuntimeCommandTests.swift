@@ -44,7 +44,7 @@ func rejectsInvalidInvocation(_ arguments: [String]) {
     }
 }
 
-@Test(arguments: [["--help"], ["namespace-run", "--help"]])
+@Test(arguments: [["--help"], ["namespace-run", "--help"], ["ps", "--help"]])
 func helpExitsSuccessfully(_ arguments: [String]) {
     do {
         var command = try RuntimeCommand.parseAsRoot(arguments)
@@ -53,7 +53,7 @@ func helpExitsSuccessfully(_ arguments: [String]) {
     } catch {
         #expect(RuntimeCommand.exitCode(for: error) == .success)
         let help = RuntimeCommand.fullMessage(for: error)
-        #expect(help.contains("namespace-run"))
+        #expect(help.contains(arguments.first == "ps" ? "host ps" : "namespace-run"))
         if arguments.first == "namespace-run" {
             #expect(help.contains("--hostname"))
             #expect(help.contains("privileges"))
@@ -144,6 +144,9 @@ func rejectsInvalidRunInvocation(_ arguments: [String]) {
     ["kill", "box", "NOPE"],
     ["kill", "box", "TERM", "extra"],
     ["delete"],
+    ["ps"],
+    ["ps", "--bad-option"],
+    ["ps", "--format", "xml", "box"],
     ["pause"],
     ["resume", "bad/id"],
     ["list", "--format", "xml"],
@@ -191,4 +194,16 @@ func rejectsInvalidLifecycleInvocation(_ arguments: [String]) {
 @Test func parsesSignalZeroAsAProbe() throws {
     let command = try #require(RuntimeCommand.parseAsRoot(["kill", "box", "0"]) as? Kill)
     #expect(command.signal == "0")
+}
+
+@Test func psForwardsOptionsAfterContainerId() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["ps", "--root", "/tmp/state", "box", "-e", "-o", "pid,args", "--sort=-pid"]) as? Ps)
+    #expect(command.id == "box")
+    #expect(command.globals.root == "/tmp/state")
+    #expect(command.psArguments == ["-e", "-o", "pid,args", "--sort=-pid"])
+    let json = try #require(RuntimeCommand.parseAsRoot(["ps", "--format", "json", "box"]) as? Ps)
+    #expect(json.format == .json)
+    let before = try #require(RuntimeCommand.parseAsRoot(["--root", "/tmp/parent", "ps", "box", "--root", "is-a-ps-argument"]) as? Ps)
+    #expect(before.globals.root == "/tmp/parent")
+    #expect(before.psArguments == ["--root", "is-a-ps-argument"])
 }

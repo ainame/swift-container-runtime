@@ -9,7 +9,7 @@ struct RuntimeCommand: ParsableCommand {
         abstract: "An educational Linux container runtime.",
         discussion: "Educational subset of an OCI runtime; not a security sandbox.",
         subcommands: [
-            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Run.self, NamespaceRun.self,
+            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Run.self, NamespaceRun.self,
         ]
     )
 
@@ -228,6 +228,56 @@ struct Delete: ParsableCommand {
 
 enum ListFormat: String, ExpressibleByArgument, CaseIterable {
     case table, json
+}
+
+struct Ps: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "ps", abstract: "List host processes belonging to a container.",
+        discussion: "Options after the container ID are passed verbatim to host ps. The default is ps -ef."
+    )
+    // A passthrough child must decode its own root option: reusing the
+    // parent's OptionGroup would reuse an already-decoded default and
+    // leave --root after the subcommand unconsumed.
+    @ParentCommand var parent: RuntimeCommand
+    @Option(name: .customLong("root"), help: "Directory holding container state.")
+    var stateRoot: String?
+    var globals: GlobalOptions {
+        var result = parent.globals
+        if let stateRoot { result.root = stateRoot }
+        return result
+    }
+    @Option(name: [.customShort("f"), .long], help: "Output format: table or json.")
+    var format: ListFormat = .table
+    // Capture the ID and trailing options together: the first positional
+    // value stops option parsing, just as runc's StopOnNthArg does.
+    @Argument(parsing: .captureForPassthrough, help: "Container ID followed by host ps options.")
+    var operands: [String] = []
+    private var positionals: ArraySlice<String> {
+        operands.first == "--" ? operands.dropFirst() : operands[...]
+    }
+    var id: String { positionals.first ?? "" }
+    var psArguments: [String] { Array(positionals.dropFirst()) }
+
+    mutating func validate() throws {
+        if operands.first != "--" {
+            if id == "--help" || id == "-h" { throw CleanExit.helpRequest(Self.self) }
+            if id.hasPrefix("-") { throw ValidationError("unknown option \(id) before container ID") }
+        }
+        try globals.validate()
+        _ = try validatedID(id)
+    }
+
+    mutating func run() throws {
+        do {
+            let lifecycle = try globals.lifecycle()
+            if format == .json {
+                let pids = try lifecycle.processIDs(id: ContainerID(id))
+                print(pids.isEmpty ? "null" : "[" + pids.map(String.init).joined(separator: ",") + "]")
+            } else {
+                print(try lifecycle.processTable(id: ContainerID(id), arguments: psArguments), terminator: "")
+            }
+        } catch { throw failure(error) }
+    }
 }
 
 struct List: ParsableCommand {
