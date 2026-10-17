@@ -76,6 +76,7 @@ extension OCIRunPlan {
         // Configured capabilities must exist in the running kernel, whose
         // whole range the init then clears from the bounding set.
         let capabilities = self.capabilities
+        let resourceLimits = self.resourceLimits
         let lastCapability: Int32
         if let capabilities {
             let last = try kernelLastCapability()
@@ -95,6 +96,9 @@ extension OCIRunPlan {
                 return "\(stage.description) \(CapabilitySet.name(of: Int(detail))) (the runtime needs CAP_SETPCAP)"
             case .raiseAmbientCapability:
                 return "\(stage.description) \(CapabilitySet.name(of: Int(detail))) (refused by securebits or a missing permitted/inheritable capability)"
+            case .setResourceLimit:
+                guard resourceLimits.indices.contains(Int(detail)) else { return nil }
+                return "\(stage.description)[\(detail)] \(resourceLimits[Int(detail)]) (raising a hard limit needs CAP_SYS_RESOURCE; RLIMIT_NOFILE cannot exceed fs.nr_open)"
             default: return nil
             }
         }
@@ -104,7 +108,8 @@ extension OCIRunPlan {
                     unsafe initializeContainer(
                         strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
                         security: security, supplementaryGids: gidBuffer,
-                        capabilities: capabilities, lastCapability: lastCapability, foreground: !hooks.detached,
+                        capabilities: capabilities, lastCapability: lastCapability, resourceLimits: resourceLimits,
+                        foreground: !hooks.detached,
                         report: report, commit: commit, launcher: launcher, gate: gate
                     )
                 }
@@ -125,6 +130,7 @@ private func initializeContainer(
     supplementaryGids: UnsafeBufferPointer<gid_t>,
     capabilities: ProcessCapabilities?,
     lastCapability: Int32,
+    resourceLimits: [ResourceLimit],
     foreground: Bool,
     report: borrowing OwnedFileDescriptor,
     commit: borrowing OwnedFileDescriptor,
@@ -225,6 +231,16 @@ private func initializeContainer(
     if security.noNewPrivileges {
         guard linux_set_no_new_privileges() == 0 else { return failureStatus(report, .noNewPrivileges) }
     }
+    // process.rlimits at runc's point: its parent calls prlimit on the init
+    // at procReady, after no_new_privs and before finalizeNamespace changes
+    // capabilities and credentials. This init is that same process with the
+    // caller's credentials, so it sets every entry exactly, in input order,
+    // with the same privilege. The rest of setup, a created init's wait, and
+    // the start handshake then run under the limits, as runc's init does.
+    // A failure fails create or run before readiness.
+    if let index = applyResourceLimits(resourceLimits) {
+        return failureStatus(report, .setResourceLimit, detail: index)
+    }
     // An explicit process.capabilities follows runc's finalizeNamespace:
     // reduce the bounding set while the init still holds CAP_SETPCAP (the
     // kernel rejects drops later), then keep the permitted set across a
@@ -297,6 +313,11 @@ private func initializeContainer(
     // An explicit envp replaces the caller's environment entirely.
     let environment = unsafe group(Group.environment)
     if let gate {
+        // With every limit in force, a created init that could never accept
+        // start (for example under RLIMIT_NOFILE 3) fails create now
+        // instead of exiting right after readiness.
+        let capacity = gate.acceptCapacityError()
+        guard capacity == 0 else { return failureStatus(report, .startDescriptor, code: capacity) }
         guard writeRecord(report, LaunchRecord(.ready)) else { return 125 }
         // EOF instead of the commit: the creator failed or died before
         // recording this init, so nothing could ever start or delete it.
@@ -326,6 +347,19 @@ private func giveStdio(to uid: uid_t) -> Int32 {
         guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return errno }
     }
     return 0
+}
+
+/// runc's setupRlimits: one prlimit per entry, in order, stopping at the
+/// first the kernel refuses (EPERM for a raised hard limit without
+/// CAP_SYS_RESOURCE or RLIMIT_NOFILE above fs.nr_open). Iterating the
+/// prepared array does not allocate. Returns the failing entry's index.
+private func applyResourceLimits(_ limits: [ResourceLimit]) -> Int32? {
+    for (index, limit) in limits.enumerated() {
+        guard linux_set_resource_limit(limit.resource.number, limit.soft, limit.hard) == 0 else {
+            return Int32(index)
+        }
+    }
+    return nil
 }
 
 /// The highest capability number the running kernel supports.

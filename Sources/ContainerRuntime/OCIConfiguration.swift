@@ -57,6 +57,21 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
+    struct Rlimit: Decodable, Sendable {
+        var type: String
+        var soft: UInt64
+        var hard: UInt64
+
+        init(from decoder: any Decoder) throws {
+            // runc's Go decoding defaults a missing soft or hard to 0; both
+            // are required here instead of silently meaning "no resource".
+            let object = try StrictObject(decoder, allowed: ["type", "soft", "hard"])
+            type = try object.required("type")
+            soft = try object.requiredUInt64("soft")
+            hard = try object.requiredUInt64("hard")
+        }
+    }
+
     struct Process: Decodable, Sendable {
         var terminal: Bool?
         var user: User?
@@ -65,11 +80,13 @@ struct OCIConfiguration: Decodable, Sendable {
         var cwd: String
         var noNewPrivileges: Bool?
         var capabilities: Capabilities?
+        var rlimits: [Rlimit]?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
-                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities"]
+                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities", "rlimits"]
             )
+            rlimits = try object.optional("rlimits")
             terminal = try object.optional("terminal")
             user = try object.optional("user")
             args = try object.required("args")
@@ -189,6 +206,28 @@ private struct StrictObject {
 
     func required<Value: Decodable>(_ key: String) throws -> Value {
         try container.decode(Value.self, forKey: AnyKey(stringValue: key))
+    }
+
+    /// A required unsigned 64-bit integer. Missing-key, type-mismatch, and
+    /// null errors keep their own diagnostics. Foundation reports a negative,
+    /// fractional, or out-of-range JSON number with an internal (non-
+    /// DecodingError) error that JSONDecoder later wraps as "not valid JSON"
+    /// without a path, or on some versions as pathless corrupted data. This
+    /// call decodes only that number, so either is named with its field here.
+    func requiredUInt64(_ key: String) throws -> UInt64 {
+        do {
+            return try container.decode(UInt64.self, forKey: AnyKey(stringValue: key))
+        } catch let error as DecodingError {
+            guard case .dataCorrupted = error else { throw error }
+            throw invalidUInt64(key)
+        } catch {
+            throw invalidUInt64(key)
+        }
+    }
+
+    private func invalidUInt64(_ key: String) -> RuntimeError {
+        let field = fieldPath(container.codingPath + [AnyKey(stringValue: key)])
+        return RuntimeError("config.json: invalid value at \(field): expected an integer from 0 to \(UInt64.max)")
     }
 
     func optional<Value: Decodable>(_ key: String) throws -> Value? {

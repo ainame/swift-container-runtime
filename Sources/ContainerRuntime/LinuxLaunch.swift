@@ -14,6 +14,7 @@ enum LaunchStage: Int32 {
     case pinInit, commit, startRequest, startSocket
     case noNewPrivileges, stdioOwnership, supplementaryGroups, setGroupID, setUserID
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
+    case setResourceLimit, startDescriptor
 
     var description: String {
         switch self {
@@ -53,6 +54,9 @@ enum LaunchStage: Int32 {
             "set effective, permitted, and inheritable capabilities (the runtime must hold every permitted one, and each inheritable one must be in bounding or already inheritable)"
         case .clearAmbientCapabilities: "clear ambient capabilities (requires Linux 4.3+)"
         case .raiseAmbientCapability: "raise ambient capability"
+        case .setResourceLimit: "set process.rlimits"
+        case .startDescriptor:
+            "reserve a descriptor for the start connection (process.rlimits RLIMIT_NOFILE leaves no free descriptor for the created init)"
         }
     }
 }

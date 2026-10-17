@@ -128,6 +128,10 @@ final class StartGate {
             // Steps 1-2: a live client's request, acknowledged.
             let raw = (try? listener.withDescriptor { linux_accept_cloexec($0.rawValue) }) ?? -1
             guard raw >= 0 else {
+                // Anything else ends the init at once; its exit closes the
+                // queued connection, so start fails promptly. A configured
+                // RLIMIT_NOFILE with no free descriptor fails create instead
+                // (acceptCapacityError).
                 if errno == EINTR || errno == ECONNABORTED { continue }
                 return 125
             }
@@ -161,6 +165,21 @@ final class StartGate {
             _ = unsafe execve(arguments[0]!, arguments, environment)
             return failureStatus(connection, .execute, socket: true)
         }
+    }
+
+    /// Checks, before the init reports readiness, that `serve` can accept a
+    /// connection under the init's final RLIMIT_NOFILE. accept4 takes the
+    /// lowest free descriptor below the soft limit and fails with EMFILE at
+    /// once, even before a client connects, so this duplicates the listener
+    /// into that same lowest free slot and closes it again. The connection
+    /// later uses a real descriptor within the limit. One slot is enough: the
+    /// init opens no other descriptor before serving, and serve releases each
+    /// connection before its next accept. Returns 0 or errno.
+    func acceptCapacityError() -> Int32 {
+        guard let raw = try? listener.withDescriptor({ dup($0.rawValue) }) else { return EBADF }
+        guard raw >= 0 else { return errno }
+        _ = close(raw)
+        return 0
     }
 
     private func receiveRequest(_ connection: borrowing OwnedFileDescriptor) -> Bool {

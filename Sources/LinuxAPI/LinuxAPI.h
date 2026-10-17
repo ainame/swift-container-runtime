@@ -10,6 +10,7 @@
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -87,6 +88,27 @@ static inline int linux_set_capabilities(
         { (unsigned int)(effective >> 32), (unsigned int)(permitted >> 32), (unsigned int)(inheritable >> 32) },
     };
     return (int)syscall(SYS_capset, &header, data);
+}
+
+/* Resource limit adapters. Which limits are set, and when, is decided in
+ * Swift. prlimit64(2) on the calling process takes 64-bit values on every
+ * architecture, so neither libc's rlim_t width nor glibc's GNU-only prlimit
+ * prototype matters; ~0ULL is RLIM64_INFINITY. The resource numbers are
+ * Swift's ResourceLimit.Resource.number values, checked here against the
+ * target headers. */
+_Static_assert(RLIMIT_CPU == 0 && RLIMIT_FSIZE == 1 && RLIMIT_DATA == 2 && RLIMIT_STACK == 3,
+               "ResourceLimit.Resource.number assumes the generic Linux rlimit numbers");
+_Static_assert(RLIMIT_CORE == 4 && RLIMIT_RSS == 5 && RLIMIT_NPROC == 6 && RLIMIT_NOFILE == 7,
+               "ResourceLimit.Resource.number assumes the generic Linux rlimit numbers");
+_Static_assert(RLIMIT_MEMLOCK == 8 && RLIMIT_AS == 9 && RLIMIT_LOCKS == 10 && RLIMIT_SIGPENDING == 11,
+               "ResourceLimit.Resource.number assumes the generic Linux rlimit numbers");
+_Static_assert(RLIMIT_MSGQUEUE == 12 && RLIMIT_NICE == 13 && RLIMIT_RTPRIO == 14 && RLIMIT_RTTIME == 15,
+               "ResourceLimit.Resource.number assumes the generic Linux rlimit numbers");
+
+/* Sets the calling process's limit; 0 or -1 with errno. */
+static inline int linux_set_resource_limit(int resource, unsigned long long soft, unsigned long long hard) {
+    struct { unsigned long long cur, max; } updated = { soft, hard };
+    return (int)syscall(SYS_prlimit64, 0, resource, &updated, NULL);
 }
 
 static inline int linux_pidfd_open(pid_t pid) {

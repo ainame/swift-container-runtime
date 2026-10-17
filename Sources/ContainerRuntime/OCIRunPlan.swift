@@ -94,6 +94,8 @@ public struct OCIRunPlan: Sendable {
     public let security: ProcessSecurity
     /// `process.capabilities`; nil leaves the inherited sets, as in runc.
     public let capabilities: ProcessCapabilities?
+    /// `process.rlimits` in input order, repeats included; empty inherits all.
+    public let resourceLimits: [ResourceLimit]
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
@@ -142,6 +144,7 @@ public struct OCIRunPlan: Sendable {
         }
         let security = try Self.security(process)
         let capabilities = try process.capabilities.map(ProcessCapabilities.init)
+        let resourceLimits = try Self.resourceLimits(process.rlimits ?? [])
         guard let executable = process.args.first, executable.hasPrefix("/") else {
             throw RuntimeError("config.json: process.args[0] must be an absolute path; PATH lookup is not implemented")
         }
@@ -195,6 +198,7 @@ public struct OCIRunPlan: Sendable {
         self.cwd = cwd
         self.security = security
         self.capabilities = capabilities
+        self.resourceLimits = resourceLimits
     }
 
     /// An absent `process.user` means uid and gid 0, as in runc. Values the
