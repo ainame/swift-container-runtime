@@ -103,6 +103,26 @@ private final class CgroupDirectory {
         }
     }
 
+    /// Like `read`, but keeps ENOTSUP as an `Errno`, which runc's stats
+    /// collection treats as "unavailable" for PSI and cgroup.procs.
+    func contents(_ file: String) throws -> String? {
+        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_RDONLY | O_NOFOLLOW, 0) }
+        guard raw >= 0 else {
+            let code = errno
+            if code == ENOENT { return nil }
+            if code == ENOTSUP { throw Errno.notSupported }
+            throw RuntimeError("open \(displayPath)/\(file): \(Errno(rawValue: code))")
+        }
+        let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        do {
+            return String(decoding: try owner.readAll(limit: 1 << 20), as: UTF8.self)
+        } catch let error as Errno where error == .notSupported {
+            throw error
+        } catch {
+            throw RuntimeError("read \(displayPath)/\(file): \(error)")
+        }
+    }
+
     /// Writes `text` to an interface file in one write(2), as the kernel
     /// parses each write separately. Returns 0 or errno.
     func write(_ file: String, _ text: String) -> Int32 {
@@ -549,6 +569,21 @@ final class CgroupLeaf {
         return pids
     }
 
+    /// runc's fs2 statistics for `events --stats`, read from this recorded
+    /// generation only.
+    static func stats(_ identity: CgroupIdentity) throws -> ContainerStats {
+        guard let directory = try recordedDirectory(identity) else {
+            throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
+        }
+        return try cgroupStats(directory)
+    }
+
+    /// Pins this recorded generation for an event stream; nil when the
+    /// cgroup is missing, replaced, or from another boot.
+    static func eventSource(_ identity: CgroupIdentity) throws -> CgroupEventSource? {
+        try recordedDirectory(identity).map(CgroupEventSource.init)
+    }
+
     private static func waitFrozen(_ directory: CgroupDirectory) throws {
         for _ in 0..<1000 {
             if try directory.keyedValue("cgroup.events", "frozen") == "1" { return }
@@ -565,6 +600,66 @@ final class CgroupLeaf {
             guard code == 0 else { throw RuntimeError("remove cgroup \(child.displayPath): \(Errno(rawValue: code))") }
         }
     }
+}
+
+/// One pinned cgroup generation observed by `events`. Every read goes
+/// through the directory descriptor verified when the stream began, so a
+/// cgroup recreated at the same path is never read.
+final class CgroupEventSource {
+    private let directory: CgroupDirectory
+
+    fileprivate init(_ directory: CgroupDirectory) {
+        self.directory = directory
+    }
+
+    func stats() throws -> ContainerStats { try cgroupStats(directory) }
+
+    /// memory.events oom_kill, or nil when memory.events does not exist
+    /// (the memory controller is not enabled for this cgroup).
+    func oomKillCount() -> UInt64? {
+        guard let text = try? directory.read("memory.events") else { return nil }
+        for line in text.split(separator: "\n") {
+            let fields = line.split(separator: " ")
+            if fields.count == 2, fields[0] == "oom_kill" { return UInt64(fields[1]) ?? 0 }
+        }
+        return 0
+    }
+
+    /// runc's notifier ends when cgroup.events cannot be read or reports
+    /// an empty cgroup, so both count as unpopulated.
+    func isPopulated() -> Bool {
+        (try? directory.isPopulated()) ?? false
+    }
+
+    /// A path naming `file` in the pinned directory through this process's
+    /// descriptor table, for inotify_add_watch(2). It names the pinned
+    /// generation only while this source is alive.
+    func watchPath(_ file: String) throws -> String {
+        try directory.descriptor.withDescriptor { "/proc/self/fd/\($0.rawValue)/\(file)" }
+    }
+}
+
+/// runc's fs2 Manager.Stats over one directory. Errors are tolerated when
+/// not running as root, as runc does for rootless containers.
+private func cgroupStats(_ directory: CgroupDirectory) throws -> ContainerStats {
+    try collectCgroupStats(
+        read: { try directory.contents($0) }, hugePageSizes: hugePageSizes(), tolerateErrors: geteuid() != 0
+    )
+}
+
+/// runc's HugePageSizes: names from /sys/kernel/mm/hugepages, or none when
+/// the directory cannot be read (no hugetlb support).
+private func hugePageSizes() -> [String] {
+    guard let stream = unsafe opendir("/sys/kernel/mm/hugepages") else { return [] }
+    defer { _ = unsafe closedir(stream) }
+    var sizes: [String] = []
+    while let entry = unsafe readdir(stream) {
+        let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
+            unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        if let size = hugePageSizeName(directoryEntry: name) { sizes.append(size) }
+    }
+    return sizes
 }
 
 extension String {

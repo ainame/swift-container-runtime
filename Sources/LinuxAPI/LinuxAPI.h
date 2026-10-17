@@ -8,6 +8,8 @@
 #include <signal.h>
 #include <stddef.h>
 #include <sys/file.h>
+/* inotify(7), which `events` uses to observe cgroup and state changes. */
+#include <sys/inotify.h>
 #include <sys/socket.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>

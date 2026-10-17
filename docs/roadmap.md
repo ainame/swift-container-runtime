@@ -11,7 +11,7 @@ The target is an understandable Linux runtime with roughly the features of konta
 | 3. Persistent OCI lifecycle | Implemented for the phase 2 subset: `create`, `start`, `state`, `kill`, `delete`, `list`, and foreground/detached `run` with a `--root` state directory (see README). Linux integration with runc comparison in `scripts/lifecycle-integration.sh`. macOS unit tests and Linux debug/release unit and integration gates pass; the gaps listed below remain. |
 | 4. Security and resource setup | In progress. Process credentials implemented: `process.user` uid/gid/additionalGids/umask and `noNewPrivileges`, for foreground `run`, detached `run`, and `create`/`start`, with the start gate moved to a host-side marker commit. Linux integration with runc comparison in `scripts/credentials-integration.sh`. Capabilities implemented: all five `process.capabilities` sets in runc's order around the credential switch, with `scripts/capabilities-integration.sh`. Rlimits implemented: all sixteen `process.rlimits` names, every entry applied exactly and in order at runc's procReady point (before capabilities and credentials change, and before create reports readiness), with `scripts/rlimits-integration.sh`. Readonly rootfs implemented: `root.readonly` remounts the container's root mount read-only after mounts, `/dev`, and cwd creation, before rlimits, capabilities, credentials, and readiness, keeping its `nosuid`/`nodev`/`noexec` flags and leaving child mounts writable, with `scripts/readonly-integration.sh`. `linux.readonlyPaths` and `linux.maskedPaths` implemented after the read-only root and before privilege changes, resolved in the container root without magic links and mounted through descriptors without `/proc`, with a verified `/dev/null`, a shared read-only directory mask, and visibility checks, in `scripts/path-controls-integration.sh`. A cgroup v2 memory/pids/CPU subset is implemented (see below), with `scripts/cgroup-integration.sh`, `scripts/cpu-integration.sh`, and `scripts/cpuset-integration.sh`; this is not full resource parity. CPU realtime, the other resources, seccomp, and hooks remain; update covers the supported resource subset. |
 | 5. Exec, rootless, terminal | Not started. |
-| 6. Broader parity | Pause/resume and ps implemented; remaining inventory below. |
+| 6. Broader parity | Pause/resume, ps, events, spec generation, features, and version reporting implemented; remaining inventory below. |
 
 The phase 4 cgroup v2 subset covers:
 
@@ -86,7 +86,7 @@ The remaining inventory is deliberately explicit so that a working minimal runti
 
 | Area | Features to add and verify |
 | --- | --- |
-| Lifecycle and observability | events/stats/OOM, updates for unimplemented resources, pid-file/pidfd socket, retained state |
+| Lifecycle and observability | updates for unimplemented resources, pid-file/pidfd socket, retained state |
 | Mounts | bind/rbind option semantics, propagation, recursive attributes, idmapped mounts, safe path resolution, no-pivot mode |
 | Namespaces | joining supplied namespace paths, cgroup and time namespaces, time offsets, shared/host namespace combinations |
 | Resources | CPU realtime runtime/period, the remaining memory fields, unified cgroup v2 controls, hugepages, block I/O, network/RDMA, device BPF rules, updates for those controls, cleanup of created ancestor cgroups (memory limit/reservation/swap, pids limit, and CPU shares/quota/period/burst/idle and cpusets are implemented) |

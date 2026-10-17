@@ -155,6 +155,21 @@ public struct ContainerLifecycle: Sendable {
         #endif
     }
 
+    /// runc's `events`: with `statsOnly`, one statistics event; otherwise
+    /// statistics every `interval` nanoseconds and OOM events as they
+    /// happen, until the container's cgroup empties or its state is deleted
+    /// or recreated. Holds no container lock while waiting.
+    @available(*, noasync, message: "events blocks the calling thread while it waits")
+    public func events(
+        id: ContainerID, interval: Int64, statsOnly: Bool, emit: (ContainerEvent) throws -> Void
+    ) throws {
+        #if os(Linux)
+        try eventsOnLinux(id: id, interval: interval, statsOnly: statsOnly, emit: emit)
+        #else
+        throw Self.unsupported
+        #endif
+    }
+
     /// Signals the verified init of a created or running container.
     public func kill(id: ContainerID, signal: Int32) throws {
         #if os(Linux)

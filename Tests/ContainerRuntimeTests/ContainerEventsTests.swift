@@ -1,0 +1,233 @@
+import SystemPackage
+import Testing
+@testable import ContainerRuntime
+
+// MARK: - Go durations
+
+@Test(arguments: [
+    ("5s", Int64(5_000_000_000)),
+    ("0", 0),
+    ("+2s", 2_000_000_000),
+    ("-1.5s", -1_500_000_000),
+    ("1m30s", 90_000_000_000),
+    ("1.5h", 5_400_000_000_000),
+    (".5s", 500_000_000),
+    ("1.s", 1_000_000_000),
+    ("300ms", 300_000_000),
+    ("2us", 2_000),
+    ("2\u{00B5}s", 2_000),
+    ("2\u{03BC}s", 2_000),
+    ("10ns", 10),
+    ("9223372036854775807ns", Int64.max),
+    ("-9223372036854775808ns", Int64.min),
+])
+func parsesGoDurations(text: String, nanoseconds: Int64) throws {
+    #expect(try parseGoDuration(text) == nanoseconds)
+}
+
+@Test(arguments: [
+    ("", "time: invalid duration \"\""),
+    ("-", "time: invalid duration \"-\""),
+    ("s", "time: invalid duration \"s\""),
+    (".s", "time: invalid duration \".s\""),
+    ("5", "time: missing unit in duration \"5\""),
+    ("1s5", "time: missing unit in duration \"1s5\""),
+    ("5x", "time: unknown unit \"x\" in duration \"5x\""),
+    ("5 s", "time: unknown unit \" s\" in duration \"5 s\""),
+    ("9223372036854775808ns", "time: invalid duration \"9223372036854775808ns\""),
+    ("3000000h", "time: invalid duration \"3000000h\""),
+    // Each component is accepted alone; their sum must not wrap UInt64.
+    ("-9223372036854775808ns9223372036854775808ns", "time: invalid duration \"-9223372036854775808ns9223372036854775808ns\""),
+    ("9223372036854775807ns1ns", "time: invalid duration \"9223372036854775807ns1ns\""),
+])
+func rejectsMalformedGoDurations(text: String, message: String) {
+    #expect(throws: (any Error).self) { try parseGoDuration(text) }
+    do {
+        _ = try parseGoDuration(text)
+    } catch {
+        #expect("\(error)" == message)
+    }
+}
+
+// MARK: - Stream ticks
+
+@Test func skipsMissedTicksInConstantTime() {
+    #expect(nextTickOffset(elapsed: 0, interval: 5) == 5)
+    #expect(nextTickOffset(elapsed: 4, interval: 5) == 5)
+    #expect(nextTickOffset(elapsed: 5, interval: 5) == 10)
+    #expect(nextTickOffset(elapsed: 23, interval: 5) == 25)
+    // A 1ns interval far behind the clock lands just after it, without looping.
+    #expect(nextTickOffset(elapsed: 3_600_000_000_000, interval: 1) == 3_600_000_000_001)
+    #expect(nextTickOffset(elapsed: Int64.max - 1, interval: 1) == Int64.max)
+    #expect(nextTickOffset(elapsed: Int64.max, interval: 1) == Int64.max)
+    #expect(nextTickOffset(elapsed: 10, interval: Int64.max) == Int64.max)
+    #expect(nextTickOffset(elapsed: -1, interval: 3) == 3)
+}
+
+@Test func convertsElapsedDurations() {
+    #expect(elapsedNanoseconds(.milliseconds(1500)) == 1_500_000_000)
+    #expect(elapsedNanoseconds(.nanoseconds(7)) == 7)
+    #expect(elapsedNanoseconds(.seconds(-1)) == 0)
+    #expect(elapsedNanoseconds(.seconds(Int64.max)) == Int64.max)
+}
+
+// MARK: - JSON encoding
+
+/// What runc prints for a cgroup with no readable statistics.
+private let emptyStatsJSON = #"{"cpu":{},"cpuset":{"cpu_exclusive":0,"mem_hardwall":0,"mem_exclusive":0,"memory_migrate":0,"#
+    + #""memory_spread_page":0,"memory_spread_slab":0,"memory_pressure":0,"sched_load_balance":0,"sched_relax_domain_level":0},"#
+    + #""memory":{},"pids":{},"blkio":{},"hugetlb":{},"intel_rdt":{},"network_interfaces":null}"#
+
+@Test func encodesEventsWithRuncOmissions() {
+    #expect(ContainerEvent.oom.json(id: "box") == #"{"type":"oom","id":"box"}"#)
+    #expect(ContainerEvent.stats(ContainerStats()).json(id: "box") == #"{"type":"stats","id":"box","data":"# + emptyStatsJSON + "}")
+}
+
+@Test func encodesGoFloatsAndEscapes() {
+    #expect(JSONObject.float(0) == "0")
+    #expect(JSONObject.float(12) == "12")
+    #expect(JSONObject.float(0.23) == "0.23")
+    #expect(JSONObject.float(1.5) == "1.5")
+    // Go's encoding/json escapes HTML characters by default (EscapeHTML).
+    #expect(JSONObject.quote("a\"<b>&\u{1}") == #""a\"\u003cb\u003e\u0026\u0001""#)
+    #expect(JSONObject.quote("tab\tline\n\\") == #""tab\tline\n\\""#)
+}
+
+// MARK: - Collection from cgroup v2 files
+
+private struct FakeCgroup {
+    var files: [String: String]
+    var unsupported: Set<String> = []
+
+    func read(_ file: String) throws -> String? {
+        if unsupported.contains(file) { throw Errno.notSupported }
+        return files[file]
+    }
+}
+
+private let populatedCgroup = FakeCgroup(files: [
+    "pids.current": "3\n",
+    "pids.max": "max\n",
+    "memory.stat": "anon 4096\nfile 8192\nkernel 512\n",
+    "memory.current": "16384\n",
+    "memory.max": "1048576\n",
+    "memory.peak": "20480\n",
+    "memory.swap.current": "100\n",
+    "memory.swap.max": "max\n",
+    "memory.events": "low 0\nhigh 0\nmax 2\noom 1\noom_kill 1\n",
+    "io.stat": "8:0 rbytes=10 wbytes=20 rios=1 wios=2 dbytes=0 dios=0\n",
+    "cpu.stat": "usage_usec 7\nuser_usec 5\nsystem_usec 2\nnr_periods 4\nnr_throttled 1\nthrottled_usec 3\n",
+    "cpu.pressure": "some avg10=0.23 avg60=0.00 avg300=1.50 total=99\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=7\n",
+    "memory.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+    "hugetlb.2MB.current": "0\n",
+    "hugetlb.2MB.events": "max 4\n",
+])
+
+@Test func collectsRuncFieldsAndUnits() throws {
+    let cgroup = populatedCgroup
+    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: ["2MB"], tolerateErrors: false)
+
+    // cpu.stat microseconds become nanoseconds; periods stay counts.
+    #expect(stats.cpuTotal == 7_000)
+    #expect(stats.cpuUser == 5_000)
+    #expect(stats.cpuKernel == 2_000)
+    #expect(stats.throttlingPeriods == 4)
+    #expect(stats.throttledPeriods == 1)
+    #expect(stats.throttledTime == 3_000)
+    #expect(stats.cpuPSI?.some == PSIData(avg10: 0.23, avg60: 0, avg300: 1.5, total: 99))
+    #expect(stats.cpuPSI?.full.total == 7)
+
+    // pids.max "max" is reported as no limit (0).
+    #expect(stats.pidsCurrent == 3)
+    #expect(stats.pidsLimit == 0)
+
+    // Swap is reported as memory+swap; unlimited swap keeps UInt64.max.
+    #expect(stats.memoryCache == 8192)
+    #expect(stats.memoryRaw == ["anon": 4096, "file": 8192, "kernel": 512])
+    #expect(stats.memoryUsage == MemoryEntry(limit: 1_048_576, usage: 16_384, max: 20_480, failcnt: 0))
+    #expect(stats.swapUsage == MemoryEntry(limit: .max, usage: 16_484, max: 0, failcnt: 0))
+
+    #expect(stats.ioServiceBytes == [
+        BlkioEntry(major: 8, minor: 0, op: "Read", value: 10), BlkioEntry(major: 8, minor: 0, op: "Write", value: 20),
+    ])
+    #expect(stats.ioServiced == [
+        BlkioEntry(major: 8, minor: 0, op: "Read", value: 1), BlkioEntry(major: 8, minor: 0, op: "Write", value: 2),
+    ])
+    // io.pressure is missing, so blkio has no psi.
+    #expect(stats.ioPSI == nil)
+
+    // Without hugetlb.*.rsvd.current, usage falls back to .current.
+    #expect(stats.hugetlb == ["2MB": HugetlbEntry(usage: 0, max: 0, failcnt: 4)])
+
+    let json = stats.json
+    #expect(json.contains(#""cpu":{"usage":{"total":7000,"kernel":2000,"user":5000},"throttling":{"periods":4,"throttledPeriods":1,"throttledTime":3000},"psi":{"some":{"avg10":0.23,"avg60":0,"avg300":1.5,"total":99}"#))
+    #expect(json.contains(#""swap":{"limit":18446744073709551615,"usage":16484,"failcnt":0}"#))
+    #expect(json.contains(#""pids":{"current":3}"#))
+    #expect(json.contains(#""hugetlb":{"2MB":{"failcnt":4}}"#))
+}
+
+@Test func addsSwapLimitToMemoryLimitWhenSwapIsLimited() throws {
+    var cgroup = populatedCgroup
+    cgroup.files["memory.swap.max"] = "1000\n"
+    cgroup.files["memory.swap.peak"] = "50\n"
+    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: false)
+    #expect(stats.swapUsage == MemoryEntry(limit: 1_049_576, usage: 16_484, max: 0, failcnt: 0))
+}
+
+@Test func toleratesMissingControllersAsRuncDoes() throws {
+    // Only cgroup.procs and cpu.stat: no pids, memory, io, PSI or hugetlb.
+    let cgroup = FakeCgroup(
+        files: ["cgroup.procs": "10\n11\n", "cpu.stat": "usage_usec 1\nuser_usec 1\nsystem_usec 0\n"],
+        unsupported: ["memory.pressure"]
+    )
+    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: ["2MB"], tolerateErrors: false)
+    #expect(stats.pidsCurrent == 2)
+    #expect(stats.pidsLimit == 0)
+    #expect(stats.memoryRaw.isEmpty)
+    #expect(stats.memoryUsage == MemoryEntry())
+    #expect(stats.cpuPSI == nil && stats.memoryPSI == nil && stats.ioPSI == nil)
+    #expect(stats.hugetlb.isEmpty)
+    #expect(stats.json.contains(#""memory":{}"#))
+    #expect(stats.json.contains(#""cpu":{"usage":{"total":1000,"kernel":0,"user":1000}}"#))
+}
+
+@Test func keepsMemoryStatWhenUsageFilesAreMissing() throws {
+    let cgroup = FakeCgroup(files: ["pids.current": "1\n", "pids.max": "5\n", "memory.stat": "file 3\n"])
+    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: false)
+    #expect(stats.memoryCache == 3)
+    #expect(stats.memoryUsage == MemoryEntry())
+    #expect(stats.pidsLimit == 5)
+}
+
+@Test func reportsMalformedFilesUnlessTolerated() throws {
+    var cgroup = populatedCgroup
+    cgroup.files["cpu.stat"] = "usage_usec x\n"
+    #expect(throws: (any Error).self) {
+        try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: false)
+    }
+    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: true)
+    #expect(stats.pidsCurrent == 3)
+    #expect(stats.cpuTotal == 0)
+
+    // A missing pids.max beside pids.current is an error in runc too.
+    var noLimit = populatedCgroup
+    noLimit.files["pids.max"] = nil
+    #expect(throws: (any Error).self) {
+        try collectCgroupStats(read: noLimit.read, hugePageSizes: [], tolerateErrors: false)
+    }
+}
+
+@Test func parsesCgroupValues() throws {
+    #expect(try parseCgroupUint("max\n", file: "f") == .max)
+    #expect(try parseCgroupUint("-1\n", file: "f") == 0)
+    #expect(try parseCgroupUint("42\n", file: "f") == 42)
+    #expect(throws: (any Error).self) { try parseCgroupUint("x", file: "f") }
+}
+
+@Test func namesHugePageSizesLikeRunc() {
+    #expect(hugePageSizeName(directoryEntry: "hugepages-2048kB") == "2MB")
+    #expect(hugePageSizeName(directoryEntry: "hugepages-1048576kB") == "1GB")
+    #expect(hugePageSizeName(directoryEntry: "hugepages-64kB") == "64KB")
+    #expect(hugePageSizeName(directoryEntry: "hugepages-1536kB") == "1.5MB")
+    #expect(hugePageSizeName(directoryEntry: "other") == nil)
+}
