@@ -29,6 +29,10 @@ static inline int linux_set_parent_death_signal(int signal_number) {
     return prctl(PR_SET_PDEATHSIG, (unsigned long)signal_number, 0UL, 0UL, 0UL);
 }
 
+static inline int linux_set_no_new_privileges(void) {
+    return prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL);
+}
+
 static inline int linux_pidfd_open(pid_t pid) {
     return (int)syscall(SYS_pidfd_open, pid, 0U);
 }

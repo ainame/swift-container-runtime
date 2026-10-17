@@ -25,11 +25,16 @@ struct OCIConfiguration: Decodable, Sendable {
     struct User: Decodable, Sendable {
         var uid: UInt32
         var gid: UInt32
+        var umask: UInt32?
+        var additionalGids: [UInt32]?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["uid", "gid"])
+            // `username` is Windows-only in the OCI specification.
+            let object = try StrictObject(decoder, allowed: ["uid", "gid", "umask", "additionalGids"])
             uid = try object.required("uid")
             gid = try object.required("gid")
+            umask = try object.optional("umask")
+            additionalGids = try object.optional("additionalGids")
         }
     }
 
@@ -39,14 +44,18 @@ struct OCIConfiguration: Decodable, Sendable {
         var args: [String]
         var env: [String]?
         var cwd: String
+        var noNewPrivileges: Bool?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["terminal", "user", "args", "env", "cwd"])
+            let object = try StrictObject(
+                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges"]
+            )
             terminal = try object.optional("terminal")
             user = try object.optional("user")
             args = try object.required("args")
             env = try object.optional("env")
             cwd = try object.required("cwd")
+            noNewPrivileges = try object.optional("noNewPrivileges")
         }
     }
 

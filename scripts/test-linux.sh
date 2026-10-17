@@ -15,8 +15,10 @@ container run --rm --cpus 4 --memory 4G \
         sh scripts/integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         sh scripts/oci-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/lifecycle-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         swift test -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         sh scripts/integration.sh .build/linux-6.4.1/release/swift-container-runtime
         sh scripts/oci-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/lifecycle-integration.sh .build/linux-6.4.1/release/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/linux-6.4.1/release/swift-container-runtime
     '

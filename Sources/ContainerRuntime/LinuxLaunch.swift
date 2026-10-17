@@ -10,8 +10,9 @@ import SystemPackage
 enum LaunchStage: Int32 {
     case pipe = 1, forkLauncher, namespaces, propagation, forkInit, procMount
     case hostname, execute, wait, protocolRead, parentLifetime, inspectThreads
-    case bindRootfs, openRootfs, resolveMount, mount, devices, pivotRoot, cwd, identity, verifyRootfs, markDescriptors
+    case bindRootfs, openRootfs, resolveMount, mount, devices, pivotRoot, cwd, verifyRootfs, markDescriptors
     case pinInit, commit, startRequest, startSocket
+    case noNewPrivileges, stdioOwnership, supplementaryGroups, setGroupID, setUserID
 
     var description: String {
         switch self {
@@ -34,13 +35,17 @@ enum LaunchStage: Int32 {
         case .devices: "create /dev entries"
         case .pivotRoot: "pivot_root"
         case .cwd: "change to process.cwd"
-        case .identity: "set uid/gid 0 and clear supplementary groups"
         case .verifyRootfs: "verify rootfs was not replaced during setup"
         case .markDescriptors: "mark inherited descriptors close-on-exec (requires Linux 5.11+)"
         case .pinInit: "pin container init with a pidfd"
         case .commit: "release prepared container init"
         case .startRequest: "accept start request"
         case .startSocket: "consume start socket"
+        case .noNewPrivileges: "set no_new_privs"
+        case .stdioOwnership: "give stdio to process.user.uid"
+        case .supplementaryGroups: "set process.user.additionalGids"
+        case .setGroupID: "set process.user.gid"
+        case .setUserID: "set process.user.uid"
         }
     }
 }
@@ -50,7 +55,9 @@ enum LaunchStage: Int32 {
 /// smaller than PIPE_BUF, so each pipe write is atomic.
 struct LaunchRecord {
     enum Kind: Int32 {
-        case failure = 1, initProcess, ready
+        /// `accepted`: a created init took a start request and waits for
+        /// the start command to commit it (see `StartGate`).
+        case failure = 1, initProcess, ready, accepted
     }
 
     var kind: Int32 = 0
@@ -183,6 +190,24 @@ private func shellStatus(_ status: Int32) -> Int32 {
     return signal == 0 ? (status >> 8) & 0xff : 128 + signal
 }
 
+/// Arms SIGKILL as the parent-death signal of a foreground init, then checks
+/// the launcher through its pidfd. Linux clears the signal whenever uid or
+/// gid change, so the init calls this again after setting credentials, as
+/// runc restores it after finalizeNamespace. The pidfd check closes the race
+/// with a launcher that died while no signal was armed: PID 1 of a new PID
+/// namespace cannot use getppid. Returns false when the launcher has exited,
+/// nil when either step fails.
+func restoreParentDeathSignal(_ launcher: borrowing OwnedFileDescriptor) -> Bool? {
+    guard linux_set_parent_death_signal(SIGKILL) == 0 else { return nil }
+    guard let ready = try? launcher.withDescriptor({ descriptor in
+        var parent = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
+        var result: Int32
+        repeat { result = unsafe poll(&parent, 1, 0) } while result < 0 && errno == EINTR
+        return result
+    }), ready >= 0 else { return nil }
+    return ready == 0
+}
+
 /// Supervisor-side configuration of a launch. Every closure runs in the
 /// calling process except `closeInChildren`.
 struct LaunchHooks {
@@ -204,8 +229,9 @@ struct LaunchHooks {
 
 /// Forks a launcher that unshares `namespaceFlags` with private mount
 /// propagation, then forks the namespace init. The init runs `initialize`
-/// with the report pipe and the commit socket; it must exec or return a
-/// status from `failureStatus`.
+/// with the report pipe, the commit socket, and (in the foreground only) a
+/// pidfd for the launcher, which `restoreParentDeathSignal` needs after a
+/// credential change; it must exec or return a status from `failureStatus`.
 ///
 /// The launcher reports the init PID and waits until the supervisor has
 /// pinned it with a pidfd. In the foreground the launcher then waits for the
@@ -221,7 +247,10 @@ func runLaunch(
     namespaceFlags: Int32,
     hooks: LaunchHooks = LaunchHooks(),
     context: (LaunchStage, Int32) -> String? = { _, _ in nil },
-    initialize: (_ report: borrowing OwnedFileDescriptor, _ commit: borrowing OwnedFileDescriptor) -> Int32
+    initialize: (
+        _ report: borrowing OwnedFileDescriptor, _ commit: borrowing OwnedFileDescriptor,
+        _ launcher: borrowing OwnedFileDescriptor
+    ) -> Int32
 ) throws -> Int32 {
     func makePipe() throws -> (readEnd: FileDescriptor, writeEnd: FileDescriptor) {
         do {
@@ -277,19 +306,17 @@ func runLaunch(
                 // committing. Like runc's init, leave the caller's session so
                 // its terminal job control does not reach the container.
                 guard setsid() >= 0 else { _exit(failureStatus(reportWrite, .parentLifetime)) }
+                try? parentOwner.close()
             } else {
-                guard linux_set_parent_death_signal(SIGKILL) == 0 else { _exit(failureStatus(reportWrite, .parentLifetime)) }
-                guard let ready = try? parentOwner.withDescriptor({ descriptor in
-                    var parent = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
-                    var result: Int32
-                    repeat { result = unsafe poll(&parent, 1, 0) } while result < 0 && errno == EINTR
-                    return result
-                }) else { _exit(failureStatus(reportWrite, .parentLifetime)) }
-                guard ready >= 0 else { _exit(failureStatus(reportWrite, .parentLifetime)) }
-                guard ready == 0 else { _exit(125) }
+                // Keep the launcher pidfd (close-on-exec, like every pidfd)
+                // for the rearm after credentials change.
+                switch restoreParentDeathSignal(parentOwner) {
+                case true?: break
+                case false?: _exit(125)
+                case nil: _exit(failureStatus(reportWrite, .parentLifetime))
+                }
             }
-            try? parentOwner.close()
-            _exit(initialize(reportWrite, commitRead))
+            _exit(initialize(reportWrite, commitRead, parentOwner))
         }
         try? parentOwner.close(); try? commitRead.close()
         // Report the init while it is an unreaped child of this launcher: its
@@ -347,7 +374,8 @@ func runLaunch(
                 }
                 ready = true
                 if initPID != 0 { break reading }
-            case nil:
+            case .accepted?, nil:
+                // `accepted` belongs only to the start connection.
                 thrown = launchError(.protocolRead, EPROTO)
             }
         }
@@ -420,7 +448,7 @@ func runNamespaceProcess(
     arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>
 ) throws -> Int32 {
     let hostnameLength = unsafe strlen(hostname)
-    return unsafe try runLaunch(namespaceFlags: Int32(CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS)) { report, _ in
+    return unsafe try runLaunch(namespaceFlags: Int32(CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS)) { report, _, _ in
         guard unsafe mount("proc", "/proc", "proc", UInt(MS_NOSUID | MS_NODEV | MS_NOEXEC), nil) == 0 else {
             return failureStatus(report, .procMount)
         }

@@ -354,11 +354,30 @@ $ours kill disconnected STOP
 $ours kill disconnected CONT
 test "$(status_of "$ours" disconnected)" = created
 test ! -e "$out/loop.starts"
+# A peer that dies after the init accepted, but before consuming start.sock
+# (the commit point), also leaves it created and startable.
+"$scratch/start-client" "$state_root/disconnected/start.sock" --await-accept
+test "$(status_of "$ours" disconnected)" = created
+"$scratch/start-client" "$state_root/disconnected/start.sock" --await-accept
+test "$(status_of "$ours" disconnected)" = created
+test ! -e "$out/loop.starts"
 $ours start disconnected
 wait_until "disconnected peer retry to run" test -e "$out/loop.starts"
 test "$(wc -l < "$out/loop.starts")" = 1
 $ours delete --force disconnected
 reset_out
+
+# A peer that consumes start.sock and dies before committing: the init exits
+# without executing, so the container is stopped and never runs.
+$ours create --bundle "$bundles/loop" uncommitted < /dev/null > /dev/null 2>&1
+uncommitted_pid=$(pid_of "$ours" uncommitted)
+"$scratch/start-client" "$state_root/uncommitted/start.sock" --unlink-without-commit
+wait_dead "$uncommitted_pid"
+test "$(status_of "$ours" uncommitted)" = stopped
+expect_failure "cannot start container uncommitted in the stopped state" $ours start uncommitted
+sleep 0.2
+test ! -e "$out/loop.starts"
+$ours delete uncommitted
 
 # Concurrent starts: exactly one succeeds and the workload runs once.
 for n in 1 2 3 4; do

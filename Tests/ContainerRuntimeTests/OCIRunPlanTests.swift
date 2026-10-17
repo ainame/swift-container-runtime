@@ -69,6 +69,37 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     #expect(plan.cwd.isEmpty)
     #expect(plan.hostname == nil)
     #expect(!plan.populatesDev)
+    // Without process.user: root, no supplementary groups, runc's umask.
+    #expect(plan.security == OCIRunPlan.ProcessSecurity(
+        uid: 0, gid: 0, additionalGids: [], umask: 0o022, noNewPrivileges: false
+    ))
+}
+
+@Test func buildsProcessSecurity() throws {
+    let configured = try plan(config(process: """
+    {"user": {"uid": 1000, "gid": 1001, "umask": 63, "additionalGids": [5, 1001, 5]},
+     "noNewPrivileges": true, "args": ["/bin/id"], "cwd": "/"}
+    """))
+    // Groups keep their order and duplicates, as setgroups receives them.
+    #expect(configured.security == OCIRunPlan.ProcessSecurity(
+        uid: 1000, gid: 1001, additionalGids: [5, 1001, 5], umask: 0o077, noNewPrivileges: true
+    ))
+    let explicit = try plan(config(process: """
+    {"user": {"uid": 0, "gid": 0, "umask": 0, "additionalGids": []}, "noNewPrivileges": false,
+     "args": ["/bin/id"], "cwd": "/"}
+    """))
+    #expect(explicit.security.umask == 0)
+    #expect(explicit.security.additionalGids.isEmpty)
+    #expect(!explicit.security.noNewPrivileges)
+}
+
+@Test func limitsSupplementaryGroups() throws {
+    func process(groups count: Int) -> String {
+        let groups = Array(repeating: "7", count: count).joined(separator: ",")
+        return #"{"user": {"uid": 1, "gid": 1, "additionalGids": ["# + groups + #"]}, "args": ["/bin/id"], "cwd": "/"}"#
+    }
+    #expect(try plan(config(process: process(groups: 65_536))).security.additionalGids.count == 65_536)
+    #expect(throws: RuntimeError.self) { try plan(config(process: process(groups: 65_537))) }
 }
 
 @Test(arguments: [
@@ -77,8 +108,8 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     (config(extra: #""futureField": 1"#), "futureField"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "capabilities": {}}"#), "process.capabilities"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "rlimits": []}"#), "process.rlimits"),
-    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "noNewPrivileges": false}"#), "process.noNewPrivileges"),
-    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "additionalGids": [1]}}"#), "additionalGids"),
+    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
+    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "apparmorProfile": "x"}"#), "process.apparmorProfile"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "maskedPaths": ["/proc/kcore"]}"#), "linux.maskedPaths"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "resources": {}}"#), "linux.resources"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "seccomp": {}}"#), "linux.seccomp"),
@@ -86,7 +117,12 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "uidMappings": []}]"#), "uidMappings"),
     // Known fields with unimplemented values.
     (config(process: #"{"terminal": true, "args": ["/bin/sh"], "cwd": "/"}"#), "terminal"),
-    (config(process: #"{"user": {"uid": 1000, "gid": 1000}, "args": ["/bin/sh"], "cwd": "/"}"#), "uid 0"),
+    (config(process: #"{"user": {"uid": 4294967295, "gid": 0}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),
+    (config(process: #"{"user": {"uid": 0, "gid": 4294967295}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),
+    (config(process: #"{"user": {"uid": 0, "gid": 0, "additionalGids": [4294967295]}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),
+    (config(process: #"{"user": {"uid": 0}, "args": ["/bin/sh"], "cwd": "/"}"#), "process.user.gid"),
+    (config(process: #"{"user": {"uid": 0, "gid": 0, "umask": 512}, "args": ["/bin/sh"], "cwd": "/"}"#), "umask 01000"),
+    (config(process: #"{"args": ["/bin/sh"], "cwd": "/", "noNewPrivileges": 1}"#), "process.noNewPrivileges"),
     (config(process: #"{"args": ["sh"], "cwd": "/"}"#), "absolute"),
     (config(process: #"{"args": [], "cwd": "/"}"#), "absolute"),
     (config(process: #"{"args": ["/bin/sh"], "env": ["NOEQUALS"], "cwd": "/"}"#), "NAME=value"),

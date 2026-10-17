@@ -58,6 +58,23 @@ public struct OCIRunPlan: Sendable {
         public var destinationPath: String { "/" + destination.joined(separator: "/") }
     }
 
+    /// `process.user` and `process.noNewPrivileges`, applied in the init
+    /// before the workload can execute.
+    public struct ProcessSecurity: Sendable, Equatable {
+        public let uid: UInt32
+        public let gid: UInt32
+        /// Replaces the caller's supplementary groups; empty clears them.
+        public let additionalGids: [UInt32]
+        /// Defaults to 0o022 as in runc, not to the caller's mask.
+        public let umask: UInt32
+        public let noNewPrivileges: Bool
+
+        /// Linux's NGROUPS_MAX.
+        static let maximumAdditionalGids = 65_536
+        /// `(uid_t)-1` means "unchanged" to the kernel's set*id calls.
+        static let unchangedID = UInt32.max
+    }
+
     public let ociVersion: String
     public let bundle: FilePath
     public let rootfs: FilePath
@@ -74,6 +91,7 @@ public struct OCIRunPlan: Sendable {
     public let environment: [String]
     /// Components of process.cwd below the container root.
     public let cwd: [String]
+    public let security: ProcessSecurity
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
@@ -120,9 +138,7 @@ public struct OCIRunPlan: Sendable {
         guard process.terminal != true else {
             throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
         }
-        if let user = process.user, user.uid != 0 || user.gid != 0 {
-            throw RuntimeError("config.json: only process.user uid 0 and gid 0 are implemented")
-        }
+        let security = try Self.security(process)
         guard let executable = process.args.first, executable.hasPrefix("/") else {
             throw RuntimeError("config.json: process.args[0] must be an absolute path; PATH lookup is not implemented")
         }
@@ -174,6 +190,30 @@ public struct OCIRunPlan: Sendable {
         self.arguments = process.args
         self.environment = environment
         self.cwd = cwd
+        self.security = security
+    }
+
+    /// An absent `process.user` means uid and gid 0, as in runc. Values the
+    /// kernel would treat specially or silently truncate are rejected.
+    static func security(_ process: OCIConfiguration.Process) throws -> ProcessSecurity {
+        let user = process.user
+        let uid = user?.uid ?? 0, gid = user?.gid ?? 0
+        let additionalGids = user?.additionalGids ?? []
+        let unchanged = ProcessSecurity.unchangedID
+        guard uid != unchanged, gid != unchanged, !additionalGids.contains(unchanged) else {
+            throw RuntimeError("config.json: process.user IDs must be below \(unchanged), which means 'unchanged' to Linux")
+        }
+        guard additionalGids.count <= ProcessSecurity.maximumAdditionalGids else {
+            throw RuntimeError("config.json: process.user.additionalGids exceeds \(ProcessSecurity.maximumAdditionalGids) entries")
+        }
+        let umask = user?.umask ?? 0o022
+        guard umask <= 0o777 else {
+            throw RuntimeError("config.json: process.user.umask 0\(String(umask, radix: 8)) has bits outside 0777")
+        }
+        return ProcessSecurity(
+            uid: uid, gid: gid, additionalGids: additionalGids, umask: umask,
+            noNewPrivileges: process.noNewPrivileges ?? false
+        )
     }
 
     /// Validates every entry, then keeps the last occurrence of each name in

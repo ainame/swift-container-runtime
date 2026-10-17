@@ -70,16 +70,28 @@ extension OCIRunPlan {
         let flags = namespaces.reduce(Int32(0)) { $0 | $1.cloneFlag }
         let mounts = self.mounts
         let populatesDev = self.populatesDev
+        let security = self.security
+        // Converted before the fork so the init only borrows the buffer.
+        let supplementaryGids = security.additionalGids.map { gid_t($0) }
         let context: (LaunchStage, Int32) -> String? = { stage, detail in
-            guard stage == .resolveMount || stage == .mount, mounts.indices.contains(Int(detail)) else { return nil }
-            return "\(stage.description) \(mounts[Int(detail)].destinationPath)"
+            switch stage {
+            case .resolveMount, .mount:
+                guard mounts.indices.contains(Int(detail)) else { return nil }
+                return "\(stage.description) \(mounts[Int(detail)].destinationPath)"
+            case .setUserID: return "\(stage.description) \(security.uid)"
+            case .setGroupID: return "\(stage.description) \(security.gid)"
+            default: return nil
+            }
         }
         return unsafe try strings.withPointers { pointers in
-            unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit in
-                unsafe initializeContainer(
-                    strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
-                    report: report, commit: commit, gate: gate
-                )
+            try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
+                unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
+                    unsafe initializeContainer(
+                        strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
+                        security: security, supplementaryGids: gidBuffer, foreground: !hooks.detached,
+                        report: report, commit: commit, launcher: launcher, gate: gate
+                    )
+                }
             }
         }
     }
@@ -93,8 +105,12 @@ private func initializeContainer(
     starts: [Int],
     mounts: [OCIRunPlan.Mount],
     populatesDev: Bool,
+    security: OCIRunPlan.ProcessSecurity,
+    supplementaryGids: UnsafeBufferPointer<gid_t>,
+    foreground: Bool,
     report: borrowing OwnedFileDescriptor,
     commit: borrowing OwnedFileDescriptor,
+    launcher: borrowing OwnedFileDescriptor,
     gate: StartGate?
 ) -> Int32 {
     func group(_ index: Int) -> UnsafePointer<UnsafeMutablePointer<CChar>?> {
@@ -176,21 +192,56 @@ private func initializeContainer(
         unsafe directory = path
         unsafe prefix += 1
     }
-    if let directory = unsafe directory {
+    // As runc does, enter the cwd with the caller's credentials first and
+    // retry after the switch only if they were denied it.
+    var enterCwdAsUser = false
+    if let directory = unsafe directory, unsafe chdir(directory) != 0 {
+        guard errno == EACCES || errno == EPERM else { return failureStatus(report, .cwd) }
+        enterCwdAsUser = true
+    }
+
+    // runc's order from here: umask (0o022 unless configured), then
+    // no_new_privs, then the user (stdio ownership, groups, gid, uid). Every
+    // setting is in force before the workload can execute, in either mode.
+    _ = umask(mode_t(security.umask))
+    if security.noNewPrivileges {
+        guard linux_set_no_new_privileges() == 0 else { return failureStatus(report, .noNewPrivileges) }
+    }
+    let stdioCode = giveStdio(to: uid_t(security.uid))
+    guard stdioCode == 0 else { return failureStatus(report, .stdioOwnership, code: stdioCode) }
+    // setgroups always runs, so an empty list clears the caller's groups;
+    // setgid must precede setuid, which gives up the right to change groups.
+    // Without PR_SET_KEEPCAPS a non-zero uid also loses every capability.
+    guard unsafe setgroups(supplementaryGids.count, supplementaryGids.baseAddress) == 0 else {
+        return failureStatus(report, .supplementaryGroups)
+    }
+    guard setgid(gid_t(security.gid)) == 0 else { return failureStatus(report, .setGroupID) }
+    guard setuid(uid_t(security.uid)) == 0 else { return failureStatus(report, .setUserID) }
+    if enterCwdAsUser, let directory = unsafe directory {
         guard unsafe chdir(directory) == 0 else { return failureStatus(report, .cwd) }
     }
 
-    guard setgroups(0, nil) == 0, setgid(0) == 0, setuid(0) == 0 else {
-        return failureStatus(report, .identity)
+    // The credential change cleared the foreground init's parent-death
+    // signal; rearm it and recheck the launcher before going further.
+    // A detached init has neither, and stays independent of this process.
+    if foreground {
+        switch restoreParentDeathSignal(launcher) {
+        case true?: break
+        case false?: return 125
+        case nil: return failureStatus(report, .parentLifetime)
+        }
     }
 
-    // An explicit envp replaces the caller's environment entirely.
+    // Like runc's create-time lookup, and with the workload's credentials, a
+    // missing or non-executable program fails create (or run) rather than
+    // start. Exec can still fail later if the rootfs changes.
     let argv = unsafe group(Group.arguments)
+    let lookup = unsafe executableError(argv[0]!)
+    guard lookup == 0 else { return failureStatus(report, .execute, code: lookup) }
+
+    // An explicit envp replaces the caller's environment entirely.
     let environment = unsafe group(Group.environment)
     if let gate {
-        // Like runc's create-time lookup, a missing executable fails create
-        // rather than start. Exec can still fail later if the rootfs changes.
-        guard unsafe access(argv[0]!, X_OK) == 0 else { return failureStatus(report, .execute) }
         guard writeRecord(report, LaunchRecord(.ready)) else { return 125 }
         // EOF instead of the commit: the creator failed or died before
         // recording this init, so nothing could ever start or delete it.
@@ -199,6 +250,39 @@ private func initializeContainer(
     }
     _ = unsafe execve(argv[0]!, argv, environment)
     return failureStatus(report, .execute)
+}
+
+/// runc's fixStdioPermissions: stdio inherited from the caller is chowned to
+/// the workload uid (the group is kept) so that the workload can reopen it,
+/// for example through /dev/stdout. Like runc, this changes the host object
+/// (a pipe or terminal); /dev/null and stdio the uid already owns are left
+/// alone, and EPERM and EROFS are ignored. Unlike runc, a closed descriptor
+/// is skipped. Returns 0 or errno.
+private func giveStdio(to uid: uid_t) -> Int32 {
+    for descriptor: Int32 in 0...2 {
+        var status = stat()
+        guard unsafe fstat(descriptor, &status) == 0 else {
+            if errno == EBADF { continue }
+            return errno
+        }
+        let isDevNull = status.st_mode & mode_t(LinuxAPI.S_IFMT) == mode_t(LinuxAPI.S_IFCHR)
+            && status.st_rdev == deviceNumber(1, 3)
+        if status.st_uid == uid || isDevNull { continue }
+        guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return errno }
+    }
+    return 0
+}
+
+/// Go's exec.LookPath for an absolute path, as runc uses it: the file must
+/// exist, must not be a directory, and must be executable with the current
+/// (already switched) credentials. Returns 0 or errno.
+@unsafe
+private func executableError(_ path: UnsafePointer<CChar>) -> Int32 {
+    var status = stat()
+    guard unsafe stat(path, &status) == 0 else { return errno }
+    guard status.st_mode & mode_t(LinuxAPI.S_IFMT) != mode_t(LinuxAPI.S_IFDIR) else { return EISDIR }
+    guard unsafe access(path, X_OK) == 0 else { return errno }
+    return 0
 }
 
 /// Mounts a filesystem on a destination resolved beneath `root`.

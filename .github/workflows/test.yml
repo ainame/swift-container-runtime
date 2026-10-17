@@ -32,9 +32,11 @@ jobs:
           sh scripts/integration.sh .build/debug/swift-container-runtime
           sh scripts/oci-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/lifecycle-integration.sh .build/debug/swift-container-runtime
+          RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/debug/swift-container-runtime
       - name: Optimized namespace, OCI, and lifecycle integration
         run: |
           swift test -c release --disable-automatic-resolution
           sh scripts/integration.sh .build/release/swift-container-runtime
           sh scripts/oci-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/lifecycle-integration.sh .build/release/swift-container-runtime
+          RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/release/swift-container-runtime

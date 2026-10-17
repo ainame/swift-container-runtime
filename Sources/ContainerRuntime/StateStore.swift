@@ -12,7 +12,8 @@ enum StateFile {
     static let record = "state.json"
     static let pendingRecord = "state.json.new"
     /// The created init's listening socket. Its presence distinguishes
-    /// created from running; the init removes it just before `execve`.
+    /// created from running; `start` removes it once the init has accepted
+    /// the request, as the commit point (see `StartGate`).
     static let startSocket = "start.sock"
 }
 
@@ -354,15 +355,19 @@ func directoryEntries(_ directory: borrowing OwnedFileDescriptor) throws -> [Str
     }
     defer { _ = unsafe closedir(stream) }
     var names: [String] = []
-    errno = 0
-    while let entry = unsafe readdir(stream) {
+    while true {
+        // readdir signals an error only through errno, and the String work
+        // below may change errno, so clear it before every call.
+        errno = 0
+        guard let entry = unsafe readdir(stream) else {
+            guard errno == 0 else { throw stateError("list state directory") }
+            return names
+        }
         let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
             unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
         }
         if name != "." && name != ".." { names.append(name) }
     }
-    guard errno == 0 else { throw stateError("list state directory") }
-    return names
 }
 
 /// The state directory owner's user name, or `#uid` as in runc.

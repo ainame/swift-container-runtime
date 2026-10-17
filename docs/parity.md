@@ -24,18 +24,18 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 
 | Area | Remaining target behavior |
 | --- | --- |
-| Process setup | PATH lookup; HOME resolution; empty/omitted-process behavior; UID/GID/additional groups/umask; rlimits; OOM score; scheduling, I/O priority, CPU affinity |
+| Process setup | PATH lookup; HOME resolution; empty/omitted-process behavior; rlimits; OOM score; scheduling, I/O priority, CPU affinity |
 | Namespaces | Join supplied namespace paths; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
 | Rootfs and mounts | Readonly root; no-pivot; sysfs, mqueue, shm and cgroup mounts; bind/rbind/remount and propagation; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; masked/readonly paths; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
 | Cgroup v2 | Path management and cleanup; memory limit/reservation/swap; CPU shares/quota/period/burst/idle; cpusets; pids; hugepages; unified controls; block-I/O weight/throttles; device BPF; update and check-before-update |
-| Security | Five capability sets; no-new-privileges; AppArmor/SELinux execution-context staging and availability behavior; session keyrings; sealed executable handoff |
+| Security | Five capability sets; AppArmor/SELinux execution-context staging and availability behavior; session keyrings; sealed executable handoff |
 | Seccomp | Actions, architectures, argument comparisons, conditional rules, flags, notification listener handoff |
 | Hooks | All six phases, environment, state on stdin, timeout and failure semantics |
 | Foreground and descriptors | Signal forwarding, terminal I/O/resizing, console handoff, socket activation, explicit preserved descriptors. OCI foreground execution already marks inherited non-stdio descriptors close-on-exec |
 | Portability and integration | arm64 and x86_64 Linux; real musl/static build and execution; applicable runc compatibility tests; containerd/go-runc interactions |
 
-The current foreground and persistent lifecycle subset has real Linux debug/release evidence for PID 1, pivoted rootfs, proc/tmpfs/devpts, standard devices, hostname, cwd, explicit environment, stdio, status propagation, rejected configurations, descriptor cleanup, lifecycle transitions, concurrent create/start, signal delivery, stale process identity protection, and failure cleanup. It does not establish the remaining behavior above.
+The current foreground and persistent lifecycle subset has real Linux debug/release evidence for PID 1, pivoted rootfs, proc/tmpfs/devpts, standard devices, hostname, cwd, explicit environment, stdio, status propagation, rejected configurations, descriptor cleanup, lifecycle transitions, concurrent create/start, signal delivery, stale process identity protection, and failure cleanup. Process credentials (uid, gid, additional groups including clearing, umask with runc's default, and no-new-privileges) are compared with runc from inside the workload in foreground, detached, and create/start modes; credentials with `exec`, user-namespace mappings, and `/proc/self/setgroups` deny handling remain. It does not establish the remaining behavior above.
 
 Evidence paths in the target, relative to `src/nativeMain/kotlin/`:
 

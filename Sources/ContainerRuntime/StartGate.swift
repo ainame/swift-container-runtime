@@ -10,22 +10,34 @@ import SystemPackage
 /// The start handshake between `start` and a created init.
 ///
 /// `create` binds a SOCK_SEQPACKET listener at `start.sock` in the state
-/// directory before forking, so the init inherits it. After setup the init
-/// accepts connections. For a valid request from a peer that is still
-/// connected, it unlinks `start.sock` (the created-to-running marker) and
-/// calls `execve`. The connection is close-on-exec: the client sees EOF when
-/// the exec succeeded, or a `LaunchRecord` failure when it did not. A client
-/// that disconnects before the init checks it never starts the workload; one
-/// that dies after that check cannot stop the exec that is already underway.
+/// directory before forking, so the init inherits it. The socket file is the
+/// created-to-running marker. The init has already switched to the workload
+/// credentials when it serves the gate, so it cannot write to the private,
+/// root-owned state directory; the marker is consumed by `start`, which runs
+/// on the host with the container lock held:
 ///
-/// Unlike runc's exec FIFO (one byte written before exec), this confirms the
-/// exec itself, and a start client that dies before sending its request does
-/// not consume the start.
+/// 1. `start` connects and sends `request`.
+/// 2. The init checks that the peer is still connected and sends an
+///    `accepted` record. The marker is untouched, so a client that dies
+///    before or during this step leaves the container created.
+/// 3. `start` unlinks `start.sock` (the commit point) and sends `commit`.
+/// 4. When the commit arrives or the connection ends, the init decides by the
+///    marker's link count, read through an O_PATH handle on the socket inode
+///    that it inherited: still linked, it serves the next connection
+///    (created); unlinked with the commit, it calls `execve` (running);
+///    unlinked without it, because the client died between steps 3 and 4,
+///    it exits without executing anything (stopped).
+///
+/// The connection is close-on-exec: `start` sees EOF when the exec succeeded,
+/// or a `LaunchRecord` failure when it did not. Unlike runc's exec FIFO (one
+/// byte written before exec), this confirms the exec itself, and a start
+/// client that dies before step 3 does not consume the start.
 enum StartProtocol {
-    static let request: [UInt8] = Array("start-v1".utf8)
+    static let request: [UInt8] = Array("start-v2".utf8)
+    static let commit: [UInt8] = Array("commit-v2".utf8)
     /// A connected client gets this long to send its request.
     static let requestTimeoutMilliseconds: Int32 = 5_000
-    /// Bound on the exec result wait in `start`.
+    /// Bound on each wait for the init in `start`.
     static let resultTimeoutMilliseconds: Int32 = 30_000
 }
 
@@ -49,42 +61,71 @@ private func unixAddressCall(_ socket: FileDescriptor, path: String, connecting:
     }
 }
 
+/// Sends one whole packet without raising SIGPIPE on a vanished peer.
+private func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) -> Bool {
+    (try? owner.withDescriptor { descriptor in
+        packet.withUnsafeBytes { bytes in
+            var result: Int
+            repeat { result = unsafe send(descriptor.rawValue, bytes.baseAddress!, bytes.count, Int32(MSG_NOSIGNAL)) }
+            while result < 0 && errno == EINTR
+            return result == bytes.count
+        }
+    }) ?? false
+}
+
+/// Reads one packet of at most 16 bytes; nil on EOF or error.
+private func receivePacket(_ owner: borrowing OwnedFileDescriptor) -> [UInt8]? {
+    var buffer = [UInt8](repeating: 0, count: 16)
+    let count = (try? owner.withDescriptor { descriptor in
+        try buffer.withUnsafeMutableBytes { bytes in unsafe try descriptor.read(into: bytes) }
+    }) ?? 0
+    return count > 0 ? Array(buffer[..<count]) : nil
+}
+
 /// Descriptors a created init inherits for the start handshake. They are
-/// close-on-exec and opened before the fork, from the supervisor's mount
-/// namespace.
+/// close-on-exec, opened before the fork from the supervisor's mount
+/// namespace, and closed explicitly before the workload executes. Neither is
+/// a directory, so the init holds no handle on the host filesystem tree
+/// after it has dropped privileges.
 final class StartGate {
-    let listener: OwnedFileDescriptor
-    /// An O_PATH handle on the state directory. It is a separate open file
-    /// description, so it never carries the container lock.
-    let directory: OwnedFileDescriptor
+    private(set) var listener: OwnedFileDescriptor
+    /// An O_PATH handle on the `start.sock` inode created by the bind, used
+    /// only to read its link count.
+    private(set) var marker: OwnedFileDescriptor
 
     init(_ container: LockedContainer) throws {
-        let directoryRaw = try container.directory.withDescriptor { unsafe linux_open_path($0.rawValue, ".", O_DIRECTORY) }
-        guard directoryRaw >= 0 else { throw launchError(.startSocket) }
-        let directory = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: directoryRaw))
         let socketRaw = linux_unix_seqpacket_socket()
         guard socketRaw >= 0 else { throw launchError(.startSocket) }
         let listener = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: socketRaw))
         // sun_path is short; address the socket through the directory handle
-        // so long --root paths and IDs work.
-        let bound = try directory.withDescriptor { directoryDescriptor in
+        // so long --root paths and IDs work. The new socket file and the
+        // handle on it are made under the container lock, in the private
+        // directory, so both name the same inode.
+        let bound = try container.directory.withDescriptor { directoryDescriptor in
             try listener.withDescriptor { socket in
                 unixAddressCall(socket, path: "/proc/self/fd/\(directoryDescriptor.rawValue)/\(StateFile.startSocket)", connecting: false)
             }
         }
         guard bound == 0 else { throw launchError(.startSocket) }
+        let markerRaw = try container.directory.withDescriptor {
+            unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
+        }
+        guard markerRaw >= 0 else { throw launchError(.startSocket) }
+        let marker = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: markerRaw))
         guard try listener.withDescriptor({ listen($0.rawValue, 16) }) == 0 else { throw launchError(.startSocket) }
         self.listener = listener
-        self.directory = directory
+        self.marker = marker
     }
 
-    /// Runs in the created init after the commit. Returns only on failure.
+    /// Runs in the created init after the commit. Returns only on failure,
+    /// or after a start that was committed but whose client then vanished.
     @unsafe
     func serve(
         arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>,
         environment: UnsafePointer<UnsafeMutablePointer<CChar>?>
     ) -> Int32 {
         while true {
+            // Steps 1-2: a live client's request, acknowledged.
             let raw = (try? listener.withDescriptor { linux_accept_cloexec($0.rawValue) }) ?? -1
             guard raw >= 0 else {
                 if errno == EINTR || errno == ECONNABORTED { continue }
@@ -92,11 +133,31 @@ final class StartGate {
             }
             let connection = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
             guard receiveRequest(connection), peerIsConnected(connection) else { continue }
-            // This gate currently runs as root. Future credential/capability
-            // setup must preserve the ability to unlink this root-owned socket
-            // or move marker consumption to the host-side control protocol.
-            let unlinked = (try? directory.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }) ?? -1
-            guard unlinked == 0 else { return failureStatus(connection, .startSocket, socket: true) }
+            guard writeRecord(connection, LaunchRecord(.accepted), socket: true) else { continue }
+
+            // Step 4: wait without a deadline. Only the locked start command
+            // can unlink the marker, and only before it sends the commit or
+            // closes, so the link count read afterwards is final. A timeout
+            // here could race with that unlink and leave a running status
+            // with nothing executed.
+            let committed = receivePacket(connection) == StartProtocol.commit
+            var status = stat()
+            let inspected = (try? marker.withDescriptor { unsafe fstat($0.rawValue, &status) }) ?? -1
+            guard inspected == 0 else { return failureStatus(connection, .startSocket, socket: true) }
+            if status.st_nlink > 0 {
+                // Not consumed: still created. A commit without the unlink
+                // is a protocol error reported to that client.
+                if committed { _ = failureStatus(connection, .startSocket, code: EPROTO, socket: true) }
+                continue
+            }
+            // Consumed without a commit: the start was abandoned after its
+            // commit point. Exit rather than run a workload nobody started.
+            guard committed else { return 125 }
+
+            // Close every gate descriptor except the connection, whose
+            // close-on-exec lifetime reports the outcome.
+            try? marker.close()
+            try? listener.close()
             _ = unsafe execve(arguments[0]!, arguments, environment)
             return failureStatus(connection, .execute, socket: true)
         }
@@ -104,11 +165,7 @@ final class StartGate {
 
     private func receiveRequest(_ connection: borrowing OwnedFileDescriptor) -> Bool {
         guard waitReadable(connection, milliseconds: StartProtocol.requestTimeoutMilliseconds) else { return false }
-        var buffer = [UInt8](repeating: 0, count: 16)
-        let count = (try? connection.withDescriptor { descriptor in
-            try buffer.withUnsafeMutableBytes { bytes in unsafe try descriptor.read(into: bytes) }
-        }) ?? -1
-        return count == StartProtocol.request.count && Array(buffer[..<count]) == StartProtocol.request
+        return receivePacket(connection) == StartProtocol.request
     }
 
     /// False once the client has hung up, so a start whose caller died
@@ -132,8 +189,9 @@ private func waitReadable(_ owner: borrowing OwnedFileDescriptor, milliseconds: 
 /// The caller holds the container lock and has checked the status.
 func requestStart(_ container: LockedContainer) throws {
     let id = container.id.rawValue
-    // Open the socket file itself without following a symlink, then
-    // connect through that handle.
+    // Step 1: open the socket file itself without following a symlink, then
+    // connect through that handle with a separate, close-on-exec connection
+    // whose lifetime in the init reports the exec result.
     let socketFileRaw = try container.directory.withDescriptor {
         unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
     }
@@ -141,7 +199,6 @@ func requestStart(_ container: LockedContainer) throws {
         throw RuntimeError("container \(id) init is not waiting for start: \(Errno(rawValue: errno))")
     }
     let socketFile = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: socketFileRaw))
-    // Use a separate connection whose close-on-exec lifetime reports the exec result.
     let connectionRaw = linux_unix_seqpacket_socket()
     guard connectionRaw >= 0 else { throw launchError(.startRequest) }
     let connection = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: connectionRaw))
@@ -153,31 +210,50 @@ func requestStart(_ container: LockedContainer) throws {
     guard connected == 0 else {
         throw RuntimeError("connect to container \(id) init: \(Errno(rawValue: errno))")
     }
-    // Send one complete packet; a lost peer must not raise SIGPIPE in the CLI.
-    let sent = try connection.withDescriptor { descriptor in
-        StartProtocol.request.withUnsafeBytes { bytes in
-            var result: Int
-            repeat { result = unsafe send(descriptor.rawValue, bytes.baseAddress!, bytes.count, Int32(MSG_NOSIGNAL)) }
-            while result < 0 && errno == EINTR
-            return result
-        }
-    }
-    guard sent == StartProtocol.request.count else {
+    guard sendPacket(connection, StartProtocol.request) else {
         throw RuntimeError("send start request to container \(id): \(Errno(rawValue: errno))")
     }
-    // Bound the acknowledgement wait, then distinguish an exec error from normal EOF.
+
+    // Step 2: until the acknowledgement, any failure leaves the marker and
+    // therefore the created state intact.
+    try awaitInit(connection, id: id, expecting: .accepted)
+
+    // Step 3: consume the marker this command connected through, then commit.
+    // A failed unlink closes the connection, which the init treats as a
+    // start that never happened.
+    var current = stat()
+    let inspected = try container.directory.withDescriptor {
+        unsafe fstatat($0.rawValue, StateFile.startSocket, &current, AT_SYMLINK_NOFOLLOW)
+    }
+    guard inspected == 0, let connectedIdentity = fileIdentity(socketFile),
+          connectedIdentity.device == current.st_dev, connectedIdentity.inode == current.st_ino else {
+        throw RuntimeError("container \(id) start socket changed during start")
+    }
+    let unlinked = try container.directory.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }
+    guard unlinked == 0 else { throw launchError(.startSocket) }
+    guard sendPacket(connection, StartProtocol.commit) else {
+        throw RuntimeError("container \(id) init vanished before the start commit: \(Errno(rawValue: errno))")
+    }
+
+    // Step 4: EOF means execve closed the connection.
+    try awaitInit(connection, id: id, expecting: nil)
+}
+
+/// Waits a bounded time for the init's next record: `expected`, or EOF when
+/// `expected` is nil. A failure record becomes its launch error.
+private func awaitInit(_ connection: borrowing OwnedFileDescriptor, id: String, expecting expected: LaunchRecord.Kind?) throws {
     guard waitReadable(connection, milliseconds: StartProtocol.resultTimeoutMilliseconds) else {
-        throw RuntimeError("container \(id) init did not report its exec result within 30 seconds")
+        throw RuntimeError("container \(id) init did not answer the start request within 30 seconds")
     }
     switch readRecord(connection) {
     case let .record(record):
-        guard LaunchRecord.Kind(rawValue: record.kind) == .failure else { throw launchError(.startRequest, EPROTO) }
-        let stage = LaunchStage(rawValue: record.stage) ?? .startRequest
-        throw launchError(stage, record.code)
+        let kind = LaunchRecord.Kind(rawValue: record.kind)
+        if kind == .failure {
+            throw launchError(LaunchStage(rawValue: record.stage) ?? .startRequest, record.code)
+        }
+        guard let expected, kind == expected else { throw launchError(.startRequest, EPROTO) }
     case .end:
-        // EOF: execve closed the connection, unless the init gave up
-        // without consuming the start socket.
-        guard try !entryExists(container.directory, StateFile.startSocket) else {
+        guard expected == nil else {
             throw RuntimeError("container \(id) init closed the start connection without starting")
         }
     case let .failed(code):

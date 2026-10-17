@@ -50,6 +50,29 @@ private func sampleRecord() throws -> ContainerRecord {
     }
 }
 
+/// Enough long names that readdir refills its buffer several times while
+/// Swift allocates between calls; every entry must be listed without a
+/// stale-errno failure.
+@Test func directoryEntriesListsLargeDirectory() throws {
+    try withTemporaryRoot { path in
+        let directory = OwnedFileDescriptor(
+            takingOwnershipOf: try FileDescriptor.open(path, .readOnly, options: [.directory, .closeOnExec])
+        )
+        let expected = (0..<600).map { "entry-\($0)-" + String(repeating: "x", count: 200) }
+        defer {
+            for name in expected { _ = try? directory.withDescriptor { unsafe unlinkat($0.rawValue, name, 0) } }
+        }
+        for name in expected {
+            var file = OwnedFileDescriptor(takingOwnershipOf: try FileDescriptor.open(
+                path.appending(name), .writeOnly, options: [.create, .exclusiveCreate, .closeOnExec],
+                permissions: .ownerReadWrite
+            ))
+            try file.close()
+        }
+        #expect(try directoryEntries(directory).sorted() == expected.sorted())
+    }
+}
+
 @Test func oldGenerationCannotLockOrRemoveReplacement() throws {
     try withTemporaryRoot { path in
         let root = try #require(try StateRoot.open(path, create: true))

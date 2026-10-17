@@ -2,7 +2,7 @@
 
 An educational Linux container runtime in Swift. [runc](https://github.com/opencontainers/runc) is the behavioral reference; [kontainer-runtime](https://github.com/ternbusty/kontainer-runtime) is a companion implementation and the initial feature target.
 
-> **Educational status.** This is a learning project, not a production runtime. It implements a narrow subset of the OCI runtime specification and **is not a security boundary**: there are no capability, seccomp, no_new_privs, cgroup, user-namespace, masked-path, or read-only controls yet. Workloads run as root with the caller's privileges.
+> **Educational status.** This is a learning project, not a production runtime. It implements a narrow subset of the OCI runtime specification and **is not a security boundary**: there are no capability, seccomp, cgroup, user-namespace, masked-path, or read-only controls yet. Workloads may run as a configured uid/gid with `no_new_privs`, but a root workload keeps the caller's full capabilities.
 
 Commands:
 
@@ -42,9 +42,16 @@ The semantics follow runc:
 
 ### Lifecycle design
 
-There is no monitor process. `create` forks the usual launcher and init. The launcher reports the init's PID while it is still an unreaped child, the CLI pins it with a pidfd, records its start time and boot ID, and only then lets the launcher exit. The init completes the whole setup (namespaces, mounts, `pivot_root`, hostname, cwd, identity, and a check that the executable exists), reports readiness, and waits. The CLI writes `state.json` and sends a commit byte; if the CLI fails or dies before that, the init sees EOF and exits, and the failed create kills it through the pidfd and removes the state directory. A detached init has no parent-death signal, starts a new session, and is reparented to the nearest subreaper or PID 1, which reaps it.
+There is no monitor process. `create` forks the usual launcher and init. The launcher reports the init's PID while it is still an unreaped child, the CLI pins it with a pidfd, records its start time and boot ID, and only then lets the launcher exit. The init completes the whole setup (namespaces, mounts, `pivot_root`, hostname, cwd, umask, `no_new_privs`, the configured user and groups, and a check that the executable exists and is executable by that user), reports readiness, and waits with those credentials already in force. The CLI writes `state.json` and sends a commit byte; if the CLI fails or dies before that, the init sees EOF and exits, and the failed create kills it through the pidfd and removes the state directory. A detached init has no parent-death signal, starts a new session, and is reparented to the nearest subreaper or PID 1, which reaps it.
 
-The created init listens on `start.sock` in the state directory (bound by the CLI before forking). `start` connects and sends a request. The init ignores a client that has already hung up, so a `start` that dies before that check leaves the container created. Otherwise the init unlinks `start.sock`, which marks the container running, and calls `execve`. The connection is close-on-exec: `start` sees EOF after a successful exec, or the exec error, which it reports. Unlike runc's exec FIFO, `start` therefore confirms the exec itself.
+The created init listens on `start.sock` in the state directory (bound by the CLI before forking). Its presence marks the container created. Because the init already runs as the workload user, it cannot modify the private, root-owned state directory, so `start` consumes the marker on the host while holding the container lock:
+
+1. `start` connects and sends a request.
+2. The init ignores a client that has already hung up; otherwise it replies `accepted`.
+3. `start` checks that `start.sock` is still the socket it connected through, unlinks it (the commit point: the container now reads as running), and sends a commit.
+4. The init reads the marker's link count through an O_PATH handle on the socket inode, which it inherited (it holds no directory handle). If the marker is still linked, the start never happened and it serves the next client. If it was unlinked and the commit arrived, it closes its gate descriptors and calls `execve`. If it was unlinked but the client died before committing, it exits without running anything, so the container reads as stopped.
+
+A `start` that dies before step 3 therefore leaves the container created and startable. The init waits for the commit without a deadline: a timeout could race with the unlink and leave a running status with no workload. The connection is close-on-exec: `start` sees EOF after a successful exec, or the exec error, which it reports. Unlike runc's exec FIFO, `start` therefore confirms the exec itself; an init killed from outside between the commit and `execve` is not distinguished from a quick exit.
 
 Signals and deletion go through `pidfd_send_signal` on a pidfd that is verified after it is opened: the PID must still have the recorded start time and boot ID, must not be PID 1 or the caller, and for a container with a PID namespace must be outside the caller's PID namespace. A reused PID or tampered state therefore cannot direct a signal to an unrelated process; such a container reads as stopped.
 
@@ -87,7 +94,8 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `process.env` | `NAME=value` entries without NUL; all are validated, then, as in runc, the last occurrence of a name wins (kept in the order of those last occurrences). This is the **entire** environment: nothing is inherited from the caller and, unlike runc, no `HOME` is added. |
 | `process.cwd` | Absolute, without `.`/`..`; created if missing (as in runc). |
 | Container paths | `process.cwd` and mount destinations are limited to 128 components and 4095 bytes. |
-| `process.user` | Only `uid: 0, gid: 0`. Supplementary groups are cleared. |
+| `process.user` | `uid`, `gid`, `additionalGids`, `umask` (absent: uid/gid 0). IDs must be below 4294967295, at most 65536 groups, `umask` at most `0777` (default `0022` as in runc, not the caller's mask). Supplementary groups are always replaced, so an absent or empty list clears the caller's. `username` is rejected. |
+| `process.noNewPrivileges` | Sets `PR_SET_NO_NEW_PRIVS` before the user switch. |
 | `process.terminal` | Absent or `false`; stdio is inherited directly. |
 | `hostname` | Requires a `uts` namespace. |
 | `linux.namespaces` | New `mount` (required), `pid`, `uts`, `ipc`, `network` namespaces. No `path` joins. The network namespace is left unconfigured; even loopback is down. |
@@ -96,7 +104,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `/dev` | With a tmpfs at `/dev`, creates `null`, `zero`, `full`, `random`, `urandom`, `tty` (via `mknod`) and the `fd`, `stdin`, `stdout`, `stderr` links, plus `ptmx` when devpts is mounted. Without a `/dev` tmpfs, `/dev` is left as the rootfs provides it. |
 | `annotations` | Accepted and ignored. They do not affect behavior. |
 
-Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.capabilities`. This includes hooks, capabilities, rlimits, `noNewPrivileges`, `apparmorProfile`, seccomp, cgroups/resources, devices, masked/read-only paths, sysctl, user/cgroup/time namespaces, ID mappings, bind mounts, other filesystem types, `ro`, and propagation options.
+Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.capabilities`. This includes hooks, capabilities, rlimits, `apparmorProfile`, seccomp, cgroups/resources, devices, masked/read-only paths, sysctl, user/cgroup/time namespaces, ID mappings, bind mounts, other filesystem types, `ro`, and propagation options.
 
 ### Setup sequence
 
@@ -108,7 +116,10 @@ Validation builds an immutable plan before any process is created. The launch th
 4. Resolve each mount destination from that descriptor one component at a time with `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)`, creating missing directories with `mkdirat`. A symlink component fails setup, whether it is absolute or relative and whether it points inside or outside the rootfs. Runc instead resolves such links within the rootfs. The mount itself targets `/proc/self/fd/N`, so no path is re-walked between check and use. `proc` is mounted from inside the new PID namespace.
 5. Populate `/dev`.
 6. Call `pivot_root(".", ".")` as runc does. Then `fchdir` to the old root, detach it with `umount2(MNT_DETACH)`, and close both root descriptors.
-7. Set the hostname, create and enter the cwd, clear supplementary groups, set uid/gid 0, and call `execve` with the configured environment.
+7. Set the hostname and create and enter the cwd (retrying after step 8 if the caller is denied it, as runc does).
+8. In runc's order: set the umask, then `no_new_privs` if requested, then chown inherited stdio (other than `/dev/null`) to the workload uid as runc does, then `setgroups` (always, so an empty list clears), `setgid`, and `setuid`. No `PR_SET_KEEPCAPS` is used and capabilities are not configurable, so a non-root uid ends with empty permitted and effective sets, which is what runc's workload has after `execve` when `process.capabilities` is absent. A root workload keeps every capability.
+9. In the foreground, rearm the parent-death signal that the credential change cleared, then recheck the launcher through its pidfd. A detached init has neither.
+10. Look up the executable with the workload credentials, as runc's create-time lookup does: missing, directory, and not-executable programs fail `create` or `run`. Then call `execve` with the configured environment, or for `create` report readiness and serve the start gate.
 
 The runtime forwards the workload's exit status (or 128+signal). A setup failure after namespace creation needs no explicit unwinding: the mounts exist only in the dying mount namespace.
 
@@ -132,7 +143,7 @@ swiftbox
 1
 ```
 
-The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The runtime waits for it and forwards its exit status. For ordinary workloads retaining their parent-death signal setting, terminating the foreground runtime also terminates its launcher and namespace init. Credential changes, setuid/setgid or file-capability executables, and explicit changes to that signal setting can defeat this cleanup; stronger external supervision is a later milestone. Terminal relaying and graceful signal forwarding are not implemented yet. An outer container can restrict namespace or mount operations even when its user is root.
+The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The runtime waits for it and forwards its exit status. For ordinary workloads retaining their parent-death signal setting, terminating the foreground runtime also terminates its launcher and namespace init. (The OCI `run` rearms the signal after its own credential switch.) Workload credential changes, setuid/setgid or file-capability executables, and explicit changes to that signal setting can defeat this cleanup; stronger external supervision is a later milestone. Terminal relaying and graceful signal forwarding are not implemented yet. An outer container can restrict namespace or mount operations even when its user is root.
 
 ## Toolchain and checks
 
@@ -142,7 +153,7 @@ The package requires Swift tools 6.4. `.swift-version` selects the macOS 6.4.0 r
 swift test
 ```
 
-Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace, OCI, and lifecycle checks in the pinned Swift 6.4.1 Linux image.
+Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace, OCI, lifecycle, and credential checks in the pinned Swift 6.4.1 Linux image.
 
 ## Development on macOS
 
@@ -159,7 +170,9 @@ The script uses a disposable VM-backed `swift:6.4.1` container and stores Linux 
 
 Inside the VM it also installs `busybox-static` and `runc` and runs `scripts/oci-integration.sh`. That script builds a static BusyBox rootfs and runs the same bundles through this runtime and runc. Both must satisfy the shared checks: PID 1, rootfs contents and isolation from host files, hostname, cwd, environment replacement, device nodes, separate stdout/stderr, exit 42, and missing executables. Runtime-specific checks cover exit 125 diagnostics, rejected configurations, symlink escapes from mount destinations (absolute and relative), and setup failures after partial mounting. Those failures must not run the workload or change host mounts and hostname. Set `RUNC_COMPARE=0` to skip runc, or `RUNC_COMPARE=1` to require it.
 
-`scripts/lifecycle-integration.sh` then runs the lifecycle against both runtimes (`RUNC_COMPARE=1` in the VM and CI): a created init is PID 1 in the prepared rootfs and has not run the workload; created, running, and stopped transitions; a single start; TERM reaching a handler and KILL; real exits; invalid transitions; `delete --force` leaving no process of the PID namespace; duplicate IDs; detached and foreground `run`; and renamed or removed bundles. Runtime-specific checks cover exact messages, concurrent starts and creates, `list` formats, create-time and start-time exec failures, descriptor isolation, foreground parent-death cleanup, and stale or tampered state that must not signal an unrelated process. Failed create and foreground run clean up their state and processes. An exec failure during `start` leaves stopped state for inspection and deletion; abrupt CLI termination can also leave stopped metadata.
+`scripts/lifecycle-integration.sh` then runs the lifecycle against both runtimes (`RUNC_COMPARE=1` in the VM and CI): a created init is PID 1 in the prepared rootfs and has not run the workload; created, running, and stopped transitions; a single start; TERM reaching a handler and KILL; real exits; invalid transitions; `delete --force` leaving no process of the PID namespace; duplicate IDs; detached and foreground `run`; and renamed or removed bundles. Runtime-specific checks cover exact messages, concurrent starts and creates, `list` formats, create-time and start-time exec failures, descriptor isolation, foreground parent-death cleanup, and stale or tampered state that must not signal an unrelated process. Failed create and foreground run clean up their state and processes. An exec failure during `start` leaves stopped state for inspection and deletion; abrupt CLI termination can also leave stopped metadata. A fixture start client dies at each handshake step: before its request, after it, after acceptance (all leave the container created), and after unlinking `start.sock` without committing (stopped, nothing runs).
+
+`scripts/credentials-integration.sh` runs probes as uid 1000 with groups, umask `0077`, and `no_new_privs`; as uid 1000 without groups or umask; and as root with an empty group list. Each runs in foreground `run`, detached `run`, and `create`/`start` under both runtimes, from a caller that has its own supplementary groups and umask `0077`. The workload records its own `/proc` credentials, umask, `NoNewPrivs`, and capability sets, the owner and mode of a file it creates, whether group membership grants a group-only file, the effective uid gained through a setuid-root executable, and whether it can reopen `/dev/stdout`. The records must match the expected values, including empty permitted, effective, and ambient capability sets for non-root users. The credential, umask, `NoNewPrivs`, group-access, and setuid fields, and the created file's owner and mode, must also match runc's. Capability lines are excluded from that comparison until `process.capabilities` is implemented. A created init must already hold the credentials when `create` returns. A root-only executable must fail non-root `create` and `run` under both runtimes. Runtime-specific checks cover the exact permission error, non-root foreground parent-death cleanup, a detached non-root container outliving its CLI, and descriptor isolation.
 
 The local development environment has Apple `container` 0.9.0 and a cached `swift:6.4.1` image. That installation has no `container machine` subcommand. A successful Swift build inside an Apple container checks Linux compilation; a namespace smoke test must separately demonstrate that its guest environment grants the required kernel capabilities.
 
@@ -176,4 +189,4 @@ The local development environment has Apple `container` 0.9.0 and a cached `swif
 
 ## Not yet implemented
 
-The lifecycle lacks runc's `pause`/`resume`, `ps`, `events`, `update`, `--pid-file`, `--console-socket`, `--pidfd-socket`, `--preserve-fds`, `run --keep`, `NOTIFY_SOCKET`, and hooks. Credentials other than root, capabilities, no_new_privs, rlimits, seccomp, cgroups, masked/read-only paths, read-only rootfs, and hooks are planned for phase 4. Terminals, signal forwarding, `exec`, user namespaces, and rootless operation are planned for phase 5. Bind mounts, other filesystem types, PATH lookup, `HOME` defaulting, network setup, and the rest of the phase 6 inventory are also missing. musl builds have not been verified. See the [implementation roadmap](docs/roadmap.md) for the path toward kontainer-runtime feature parity.
+The lifecycle lacks runc's `pause`/`resume`, `ps`, `events`, `update`, `--pid-file`, `--console-socket`, `--pidfd-socket`, `--preserve-fds`, `run --keep`, `NOTIFY_SOCKET`, and hooks. Capabilities, rlimits, seccomp, cgroups, masked/read-only paths, read-only rootfs, and hooks are planned for phase 4. Terminals, signal forwarding, `exec`, user namespaces, and rootless operation are planned for phase 5. Bind mounts, other filesystem types, PATH lookup, `HOME` defaulting, network setup, and the rest of the phase 6 inventory are also missing. musl builds have not been verified. See the [implementation roadmap](docs/roadmap.md) for the path toward kontainer-runtime feature parity.
