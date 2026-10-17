@@ -193,14 +193,6 @@ func readRecord(_ owner: borrowing OwnedFileDescriptor) -> RecordRead {
     }
 }
 
-/// Blocks until every write end of a pipe is closed.
-private func waitForClose(_ owner: borrowing OwnedFileDescriptor) {
-    _ = try? owner.withDescriptor { descriptor in
-        var byte: UInt8 = 0
-        while try withUnsafeMutableBytes(of: &byte, { buffer in unsafe try descriptor.read(into: buffer) }) > 0 {}
-    }
-}
-
 private func waitStatus(_ pid: pid_t) -> Int32? {
     var status: Int32 = 0
     var result: pid_t
@@ -246,14 +238,15 @@ struct LaunchHooks {
     var closeInChildren: () -> Void = {}
     /// Places the blocked init (by PID) in its cgroup before it may run any
     /// setup. Its PID cannot be reused meanwhile: it is still an unreaped
-    /// child of the launcher, which waits on the release pipe.
+    /// child of the launcher, which waits on the release socket.
     var placeInit: (pid_t) throws -> Void = { _ in }
     /// The init is pinned by a pidfd while it is still an unreaped child, so
     /// this identity names it rather than a reused PID.
     var initStarted: (InitIdentity) throws -> Void = { _ in }
     /// Detached only: setup finished; runs before the commit releases the init.
     var ready: () throws -> Void = {}
-    /// Foreground only: the workload `execve` succeeded.
+    /// Foreground launches and detached exec (no start gate): the workload
+    /// `execve` succeeded; runs before the launch verdict.
     var executed: () throws -> Void = {}
 }
 
@@ -266,8 +259,10 @@ struct LaunchHooks {
 /// The launcher reports the init PID and waits until the supervisor has
 /// pinned it with a pidfd. In the foreground the launcher then waits for the
 /// init, and both die with their parent (PR_SET_PDEATHSIG). Detached, the
-/// launcher exits and the init is reparented to the nearest subreaper; until
-/// the supervisor commits, EOF on the commit socket tells it to exit.
+/// launcher remains the init's parent until the supervisor's verdict: after
+/// success it exits and, as with runc, the init is reparented to the
+/// caller's nearest subreaper; after a failure it reaps the killed init.
+/// Until the supervisor commits, EOF on the commit socket tells it to exit.
 /// Every failure after the init exists kills it through the pidfd.
 ///
 /// `initialize` runs in a forked child of a single-threaded process. Any
@@ -293,11 +288,12 @@ func runLaunch(
     let report = try makePipe()
     var reportRead = OwnedFileDescriptor(takingOwnershipOf: report.readEnd)
     var reportWrite = OwnedFileDescriptor(takingOwnershipOf: report.writeEnd)
-    let release = try makePipe()
-    var releaseRead = OwnedFileDescriptor(takingOwnershipOf: release.readEnd)
-    var releaseWrite = OwnedFileDescriptor(takingOwnershipOf: release.writeEnd)
-    // A socket rather than a pipe: the commit is sent with MSG_NOSIGNAL, so a
-    // vanished init cannot raise SIGPIPE in the supervisor.
+    // Sockets rather than pipes: controls are sent with MSG_NOSIGNAL, so a
+    // vanished launcher or init cannot raise SIGPIPE in the supervisor.
+    var releasePair: [Int32] = [-1, -1]
+    guard unsafe linux_unix_stream_socketpair(&releasePair) == 0 else { throw launchError(.pipe) }
+    var releaseWrite = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: releasePair[0]))
+    var releaseRead = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: releasePair[1]))
     var commitPair: [Int32] = [-1, -1]
     guard unsafe linux_unix_stream_socketpair(&commitPair) == 0 else { throw launchError(.pipe) }
     var commitWrite = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: commitPair[0]))
@@ -361,12 +357,22 @@ func runLaunch(
         try? parentOwner.close(); try? commitRead.close()
         // Report the init while it is an unreaped child of this launcher: its
         // PID cannot be reused until the supervisor has pinned it with a
-        // pidfd and closed the release pipe.
+        // pidfd and released this launcher.
         guard writeRecord(reportWrite, LaunchRecord(.initProcess, value: Int64(child))) else { _exit(125) }
         try? reportWrite.close()
-        waitForClose(releaseRead)
+        var control = receiveControl(releaseRead)
+        if hooks.detached {
+            // Stay the parent until the supervisor's verdict, as runc stays
+            // the parent of its init. EOF after the release: the launch
+            // succeeded and, like runc, leaves the child to the caller's
+            // nearest subreaper. An abandon: the supervisor killed the child
+            // through its pidfd, so reap it here rather than leave a zombie.
+            if control == .proceed { control = receiveControl(releaseRead) }
+            guard control == .abandon else { _exit(0) }
+            _ = waitStatus(child)
+            _exit(125)
+        }
         try? releaseRead.close()
-        if hooks.detached { _exit(0) }
         guard let status = waitStatus(child) else { _exit(125) }
         _exit(shellStatus(status))
     }
@@ -402,7 +408,7 @@ func runLaunch(
                     // Join the cgroup while the PID is still held by the
                     // blocked launcher, then let the launcher continue.
                     try hooks.placeInit(initPID)
-                    try? releaseWrite.close()
+                    try sendControl(releaseWrite, .proceed)
                     try hooks.initStarted(identity)
                     try sendControl(commitWrite, .proceed)
                 } catch {
@@ -424,8 +430,7 @@ func runLaunch(
             }
         }
     }
-    // Never leave the launcher blocked, whatever happened above.
-    try? releaseWrite.close()
+    // The release socket stays open for the launch verdict below.
     try? reportRead.close()
 
     var succeeded = thrown == nil && failure == nil
@@ -452,6 +457,10 @@ func runLaunch(
         _ = try? pinned.withDescriptor { linux_pidfd_send_signal($0.rawValue, SIGKILL) }
         _ = waitForExit(pinned, milliseconds: 10_000)
     }
+    // A detached launcher still parents the child: after a failure it reaps
+    // it, after success it exits on EOF. Never leave the launcher blocked.
+    if !succeeded { try? sendControl(releaseWrite, .abandon) }
+    try? releaseWrite.close()
     // A detached init that has not received the commit byte sees EOF and exits.
     try? commitWrite.close()
     guard let status = waitStatus(launcher) else { throw launchError(.wait) }
@@ -467,8 +476,12 @@ func runLaunch(
 enum LaunchControl: UInt8 {
     /// A detached init may leave setup (see `receiveCommit`).
     case commit = 1
-    /// The init is in its cgroup and may start setup.
+    /// The init is in its cgroup and may start setup. On the release socket:
+    /// the init is pinned and placed, so the launcher may continue.
     case proceed = 2
+    /// Release socket only: the launch failed, so a detached launcher reaps
+    /// its child instead of leaving it to the caller's subreaper.
+    case abandon = 3
 }
 
 /// Sends the one-byte commit that lets a detached init leave setup.

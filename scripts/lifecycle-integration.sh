@@ -28,6 +28,8 @@ cleanup() {
         for id in $($theirs list -q 2>/dev/null); do $theirs delete --force "$id" >/dev/null 2>&1 || :; done
     fi
     [ -z "${victim:-}" ] || kill "$victim" 2>/dev/null || :
+    # unshare --kill-child takes the nested PID namespace and all of it down.
+    [ -z "${nested_job:-}" ] || kill -KILL "$nested_job" 2>/dev/null || :
     rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -245,16 +247,10 @@ shared_checks() {
     expect_failure "" $rt exec "loop-$tag" /does/not/exist
     test "$(status_of "$rt" "loop-$tag")" = running
     test "$($rt exec "loop-$tag" /bin/sh -c 'test ! -e /proc/self/fd/9; echo clean' 9< "$scratch")" = clean
-    $rt exec -d --pid-file "$scratch/exec-$tag.pid" "loop-$tag" /bin/sleep 1000
-    exec_pid=$(cat "$scratch/exec-$tag.pid")
-    test "$exec_pid" -gt 1
-    alive "$exec_pid"
-    test "$(readlink /proc/$exec_pid/ns/pid)" = "$(readlink /proc/$pid/ns/pid)"
-    test "$(cat /proc/$exec_pid/cgroup)" = "$(cat /proc/$pid/cgroup)"
-    kill -KILL "$exec_pid"
-    wait_dead "$exec_pid"
-    expect_failure "" $rt exec -d --pid-file "$scratch/no-parent/exec.pid" "loop-$tag" /bin/sleep 1000
-    test "$(status_of "$rt" "loop-$tag")" = running
+    # Detached exec is checked below in a nested PID namespace with a fixed,
+    # non-reaping PID 1: here an exited detached process is left to whatever
+    # PID 1 this suite runs under, and a zombie of a non-reaping one would
+    # keep this container's PID namespace from tearing down.
 
     # A paused container refuses exec until resumed, and the foreground
     # wait releases the state lock so other lifecycle commands remain responsive.
@@ -424,6 +420,46 @@ test "$(stat -c %a "$state_root")" = 700
 if [ "$compare" = 1 ]; then
     shared_checks runc "$theirs"
 fi
+
+# Detached exec, as in runc, leaves its process to the caller's nearest
+# subreaper: the launcher outside the container's PID namespace exits. Check
+# it in a nested PID namespace whose PID 1 (sleep) never reaps, like a hosted
+# container whose PID 1 is tail: with the subreaper caller runc documents,
+# and without one, where failure cleanup must still leave no zombie.
+cc=${CC:-clang}
+"$cc" -O2 -Wall -Wextra -Werror -o "$scratch/subreaper" "$source_root/scripts/fixtures/subreaper.c"
+unshare --pid --fork --mount --mount-proc --kill-child sleep 1000 &
+nested_job=$!
+ppid_of() { stat_line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1; set -- ${stat_line##*) }; echo "$2"; }
+find_nested_init() {
+    for entry in /proc/[0-9]*; do
+        if [ "$(ppid_of "${entry#/proc/}")" = "$nested_job" ] && [ "$(cat "$entry/comm" 2>/dev/null)" = sleep ]; then
+            nested_init=${entry#/proc/}
+            return 0
+        fi
+    done
+    return 1
+}
+wait_until "the nested PID namespace" find_nested_init
+nested_check() { # TAG "RUNTIME --root DIR": both modes, each bounded.
+    reset_out
+    timeout -k 2 120 nsenter --target "$nested_init" --pid --mount -- \
+        "$scratch/subreaper" sh "$source_root/scripts/fixtures/detached-exec.sh" \
+        subreaper "$1" "$2" "$bundles/loop" "$scratch" \
+        || fail "detached exec under a subreaper failed for $1"
+    reset_out
+    timeout -k 2 120 nsenter --target "$nested_init" --pid --mount -- \
+        sh "$source_root/scripts/fixtures/detached-exec.sh" \
+        plain "$1" "$2" "$bundles/loop" "$scratch" \
+        || fail "detached exec without a subreaper failed for $1"
+}
+nested_check swift "timeout -k 2 30 $runtime --root $scratch/nested-state"
+if [ "$compare" = 1 ]; then
+    nested_check runc "timeout -k 2 30 runc --root $scratch/nested-runc-state"
+fi
+kill -KILL "$nested_job"
+wait "$nested_job" 2>/dev/null || :
+nested_job=
 
 # Runtime-specific behavior: exact messages, races, handshake failures,
 # identity checks, and descriptor hygiene.
@@ -669,4 +705,4 @@ no_runtime_processes
 
 comparison=skipped
 test "$compare" = 1 && comparison=runc
-printf '%s\n' "Lifecycle integration checks passed (comparison: $comparison): create without exec, PID 1 and prepared rootfs, start once (also concurrently), state transitions, kill TERM/KILL, delete and --force cleanup, duplicate IDs (also concurrently), detached and foreground run, retained state and PID files, basic exec namespaces/credentials/environment/status/detach, bundle rename/removal, create/start failure cleanup, descriptor isolation, parent-death cleanup, PID-reuse and tampered-state protection."
+printf '%s\n' "Lifecycle integration checks passed (comparison: $comparison): create without exec, PID 1 and prepared rootfs, start once (also concurrently), state transitions, kill TERM/KILL, delete and --force cleanup, duplicate IDs (also concurrently), detached and foreground run, retained state and PID files, basic exec namespaces/credentials/environment/status/detach, detached exec reaping under a non-reaping PID 1 (with and without a subreaper caller), bundle rename/removal, create/start failure cleanup, descriptor isolation, parent-death cleanup, PID-reuse and tampered-state protection."
