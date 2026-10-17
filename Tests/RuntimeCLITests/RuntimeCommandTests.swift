@@ -207,3 +207,22 @@ func rejectsInvalidLifecycleInvocation(_ arguments: [String]) {
     #expect(before.globals.root == "/tmp/parent")
     #expect(before.psArguments == ["--root", "is-a-ps-argument"])
 }
+
+@Test(arguments: [("1m", Int64(1048576)), ("1.5 MiB", 1572864), ("2KB", 2048), ("4096", 4096), ("-1", -1), ("0.5b", 0)])
+func memoryUnitsMatchRunc(_ input: String, _ bytes: Int64) throws {
+    #expect(try parseRAMBytes(input) == bytes)
+}
+
+@Test(arguments: ["-2", "10XB", "18446744073709551615", "nan", "infinity", "1mbad"])
+func rejectsInvalidMemoryUnits(_ input: String) {
+    #expect(throws: ValidationError.self) { try parseRAMBytes(input) }
+}
+
+@Test func updateParsesSignedAndUnsignedResourceFlags() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["update", "--memory", "-1", "--cpu-quota", "-1", "--cpu-share", "1024", "--pids-limit", "-1", "box"]) as? Update)
+    #expect(command.memory == "-1")
+    #expect(command.cpuQuota == "-1")
+    #expect(command.cpuShares == "1024")
+    #expect(command.pidsLimit == -1)
+    _ = try command.request()
+}

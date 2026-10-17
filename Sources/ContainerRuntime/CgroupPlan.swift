@@ -121,16 +121,18 @@ public struct CgroupResources: Sendable, Equatable {
     /// `cpu.idle`, `cpu.weight`, `cpu.max.burst`, and `cpu.max`.
     public let cpu: CgroupCPU
     public let cpuset: CgroupCpuset
+    let memoryCheck: MemoryUsageCheck?
 
     public static let none = CgroupResources(memoryMax: nil, memoryLow: nil, swapMax: nil, pidsMax: nil)
 
-    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none, cpuset: CgroupCpuset = .none) {
+    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none, cpuset: CgroupCpuset = .none, memoryCheck: MemoryUsageCheck? = nil) {
         self.memoryMax = memoryMax
         self.memoryLow = memoryLow
         self.swapMax = swapMax
         self.pidsMax = pidsMax
         self.cpu = cpu
         self.cpuset = cpuset
+        self.memoryCheck = memoryCheck
     }
 
     /// Writes in runc's Set order: pids, then memory.swap.max, memory.max,
@@ -177,14 +179,19 @@ public struct CgroupResources: Sendable, Equatable {
     /// errno, and throws at the first refusal. A deferred burst (see
     /// `CgroupWrite.retriedAfterCPUMax`) is written once more right after
     /// `cpu.max` succeeds, and its second refusal is the error.
-    func apply(in displayPath: String, write: (_ file: String, _ text: String) -> Int32) throws {
+    func apply(in displayPath: String, checkMemory: () throws -> Void = {}, write: (_ file: String, _ text: String) -> Int32) throws {
         func failure(_ item: CgroupWrite, _ code: Int32) -> RuntimeError {
             let hint = code == Errno.noSuchFileOrDirectory.rawValue
                 ? " (the controller file does not exist in this kernel or cgroup)" : ""
             return RuntimeError("set \(displayPath)/\(item.file) to \(item.value): \(Errno(rawValue: code))\(hint)")
         }
         var deferred: (item: CgroupWrite, code: Int32)?
+        var checkedMemory = false
         for item in writes {
+            if !checkedMemory && item.file.hasPrefix("memory.") {
+                try checkMemory()
+                checkedMemory = true
+            }
             let code = write(item.file, item.value.description)
             if code == 0 {
                 if item.file == "cpu.max", let retry = deferred {
@@ -323,7 +330,9 @@ public struct CgroupPlan: Sendable, Equatable {
             cpus: cpu?.cpus.flatMap { $0.isEmpty ? nil : $0 },
             mems: cpu?.mems.flatMap { $0.isEmpty ? nil : $0 }
         )
-        return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax, cpu: cpuValues, cpuset: cpuset)
+        return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax, cpu: cpuValues, cpuset: cpuset,
+            memoryCheck: memory?.checkBeforeUpdate == true && (limit > 0 || swap > 0) ? MemoryUsageCheck(limit: limit, swap: swap) : nil
+        )
     }
 
     /// runc's ConvertCPUSharesToCgroupV2Value: a quadratic in log2(shares)

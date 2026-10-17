@@ -9,7 +9,7 @@ struct RuntimeCommand: ParsableCommand {
         abstract: "An educational Linux container runtime.",
         discussion: "Educational subset of an OCI runtime; not a security sandbox.",
         subcommands: [
-            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Run.self, NamespaceRun.self,
+            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Update.self, Run.self, NamespaceRun.self,
         ]
     )
 
@@ -32,7 +32,7 @@ struct GlobalOptions: ParsableArguments {
     }
 }
 
-private func validatedID(_ id: String) throws -> ContainerID {
+func validatedID(_ id: String) throws -> ContainerID {
     do {
         return try ContainerID(id)
     } catch {
@@ -48,7 +48,7 @@ private func validateBundle(_ bundle: String) throws {
 
 /// Prints a runtime failure and exits with `status`: 1 for lifecycle
 /// commands as in runc, 125 for `run` so it stays distinct from workload exits.
-private func failure(_ error: any Error, status: Int32 = 1) -> ExitCode {
+func failure(_ error: any Error, status: Int32 = 1) -> ExitCode {
     RuntimeDiagnostics.writeError("swift-container-runtime: \(error)")
     return ExitCode(status)
 }

@@ -166,7 +166,6 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
     (#"{"unified": {}}"#, "linux.resources.unified"),
     (#"{"memory": {"swappiness": 0}}"#, "linux.resources.memory.swappiness"),
     (#"{"memory": {"disableOOMKiller": true}}"#, "linux.resources.memory.disableOOMKiller"),
-    (#"{"memory": {"checkBeforeUpdate": true}}"#, "linux.resources.memory.checkBeforeUpdate"),
     (#"{"memory": {"kernel": 1}}"#, "linux.resources.memory.kernel"),
     (#"{"pids": {"limit": 1, "max": 2}}"#, "linux.resources.pids.max"),
 ])

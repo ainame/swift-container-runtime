@@ -301,7 +301,7 @@ final class CgroupLeaf {
 
             // Limits in runc's order; a refused value fails setup, except
             // for runc's ignorable swap and its burst retry after cpu.max.
-            try resources.apply(in: leaf.displayPath) { file, text in leaf.write(file, text) }
+            try apply(resources, to: leaf)
             guard let inode = leaf.inode, inode > 0 else {
                 throw RuntimeError("inspect cgroup \(leaf.displayPath): \(Errno(rawValue: errno))")
             }
@@ -498,6 +498,37 @@ final class CgroupLeaf {
             throw RuntimeError("cgroup.freeze did not retain requested state \(value)")
         }
         if frozen { try waitFrozen(directory) }
+    }
+
+    /// The leaf must match before controller enablement or limit writes.
+    /// Existing ancestors are traversed without creating a new generation.
+    static func update(_ identity: CgroupIdentity, resources: CgroupResources) throws {
+        guard let leaf = try recordedDirectory(identity) else {
+            throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
+        }
+        var directory = try CgroupDirectory.openRoot()
+        var ancestors: [CgroupDirectory] = []
+        for name in identity.components {
+            ancestors.append(directory)
+            guard let child = try directory.child(name) else { throw RuntimeError("container cgroup disappeared during update") }
+            directory = child
+        }
+        guard directory.inode == leaf.inode else { throw RuntimeError("container cgroup was replaced during update") }
+        for ancestor in ancestors {
+            try enable(resources.requiredControllers, optional: resources.optionalControllers, in: ancestor)
+        }
+        try checkType(leaf, domain: resources.needsDomainController)
+        try apply(resources, to: leaf)
+    }
+
+    private static func apply(_ resources: CgroupResources, to directory: CgroupDirectory) throws {
+        try resources.apply(in: directory.displayPath, checkMemory: {
+            // Checking usage is best effort, as in runc: an unavailable
+            // memory.current does not turn a valid limit into an error.
+            guard let check = resources.memoryCheck,
+                  let text = try? directory.read("memory.current"), let current = UInt64(text.trimmingSuffix("\n")) else { return }
+            try check.validate(current: current)
+        }) { file, text in directory.write(file, text) }
     }
 
     /// Includes descendant cgroups, as runc's GetAllPids does. A stale

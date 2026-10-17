@@ -92,6 +92,37 @@ public struct ContainerLifecycle: Sendable {
         #endif
     }
 
+    /// Updates limits under the per-container cross-process lock. Kernel
+    /// writes are not atomic; failure attempts runc's best-effort rollback.
+    public func update(id: ContainerID, resources: ResourceUpdate) throws {
+        #if os(Linux)
+        let container = try lock(id)
+        guard var record = try container.readRecord(), let identity = record.cgroup else {
+            throw RuntimeError("container has no recorded cgroup")
+        }
+        _ = try LifecycleOperation.update.action(for: try container.status(of: record), id: id)
+        guard let previous = record.resourceConfiguration else {
+            throw RuntimeError("container predates saved resource configuration; recreate it to update resources")
+        }
+        let merged = resources.merged(with: previous)
+        let converted = try CgroupPlan.converted(merged)
+        do {
+            try CgroupLeaf.update(identity, resources: converted)
+        } catch {
+            let original = error
+            do { try CgroupLeaf.update(identity, resources: CgroupPlan.converted(previous)) }
+            catch { RuntimeDiagnostics.writeError("swift-container-runtime: warning: resource rollback failed: \(error)") }
+            throw original
+        }
+        // Persist only after the kernel accepts the new settings. The
+        // source bundle may already have been removed or renamed.
+        record.resourceConfiguration = merged
+        try container.writeRecord(record)
+        #else
+        throw Self.unsupported
+        #endif
+    }
+
     /// A snapshot of host PIDs in the recorded cgroup and its descendants.
     /// The state lock is released before invoking the external ps program.
     public func processIDs(id: ContainerID) throws -> [Int32] {

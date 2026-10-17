@@ -123,19 +123,21 @@ struct OCIConfiguration: Decodable, Sendable {
     }
 
     /// `linux.resources.memory`. `kernel`, `kernelTCP`, `swappiness`,
-    /// `disableOOMKiller`, `useHierarchy`, and `checkBeforeUpdate` are not
+    /// `disableOOMKiller` and `useHierarchy` are not
     /// implemented and therefore rejected.
     struct Memory: Codable, Sendable, Equatable {
         init() {}
         var limit: Int64?
         var reservation: Int64?
         var swap: Int64?
+        var checkBeforeUpdate: Bool?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["limit", "reservation", "swap"])
+            let object = try StrictObject(decoder, allowed: ["limit", "reservation", "swap", "checkBeforeUpdate"])
             limit = try object.optionalInt64("limit")
             reservation = try object.optionalInt64("reservation")
             swap = try object.optionalInt64("swap")
+            checkBeforeUpdate = try object.optional("checkBeforeUpdate")
         }
     }
 

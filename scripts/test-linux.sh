@@ -35,6 +35,7 @@ container run --rm --cpus 4 --memory 4G \
         RUNC_COMPARE=1 sh scripts/cpuset-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/freezer-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/ps-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/update-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         swift test -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         sh scripts/integration.sh .build/linux-6.4.1/release/swift-container-runtime
         sh scripts/oci-integration.sh .build/linux-6.4.1/release/swift-container-runtime
@@ -49,4 +50,5 @@ container run --rm --cpus 4 --memory 4G \
         RUNC_COMPARE=1 sh scripts/cpuset-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/freezer-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/ps-integration.sh .build/linux-6.4.1/release/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/update-integration.sh .build/linux-6.4.1/release/swift-container-runtime
     '

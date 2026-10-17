@@ -16,6 +16,7 @@ public enum LifecycleOperation: Sendable, Equatable {
     case kill
     case pause
     case resume
+    case update
     case delete(force: Bool)
 
     /// What a permitted operation must do.
@@ -35,7 +36,8 @@ public enum LifecycleOperation: Sendable, Equatable {
     public func action(for status: ContainerStatus, id: ContainerID) throws -> Action {
         switch (self, status) {
         case (.start, .created), (.kill, .created), (.kill, .running), (.kill, .paused),
-             (.pause, .created), (.pause, .running), (.resume, .paused):
+             (.pause, .created), (.pause, .running), (.resume, .paused),
+             (.update, .created), (.update, .running), (.update, .paused):
             return .proceed
         case (.delete, .stopped):
             return .destroy
@@ -52,6 +54,7 @@ public enum LifecycleOperation: Sendable, Equatable {
         case .kill: "kill"
         case .pause: "pause"
         case .resume: "resume"
+        case .update: "update"
         case .delete: "delete"
         }
     }
