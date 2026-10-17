@@ -77,7 +77,7 @@ struct ExecNamespaceSet: ~Copyable {
     }
 }
 
-extension OCIRunPlan {
+extension OCIProcessPlan {
     /// The existing launch handshake pins and places the exec child before
     /// releasing it, and confirms exec by EOF on its close-on-exec pipe.
     func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks) throws -> Int32 {

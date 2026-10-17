@@ -35,6 +35,20 @@ trap 'exit 1' HUP INT TERM
 
 fail() {
     echo "lifecycle-integration: $*" >&2
+    # Preserve kernel evidence before cleanup removes a timed-out container.
+    $ours list --format json >&2 2>/dev/null || :
+    ps -eo pid,ppid,stat,wchan:30,args >&2 || :
+    for record in "$state_root"/*/state.json; do
+        [ -f "$record" ] || continue
+        cat "$record" >&2
+        recorded_pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$record")
+        case "$recorded_pid" in ''|*[!0-9]*) continue ;; esac
+        cat "/proc/$recorded_pid/status" "/proc/$recorded_pid/cgroup" >&2 2>/dev/null || :
+        group=$(sed -n 's/^0:://p' "/proc/$recorded_pid/cgroup" 2>/dev/null || :)
+        if [ -n "$group" ]; then
+            cat "/sys/fs/cgroup$group/cgroup.freeze" "/sys/fs/cgroup$group/cgroup.events" >&2 2>/dev/null || :
+        fi
+    done
     exit 1
 }
 
@@ -384,6 +398,19 @@ shared_checks() {
     expect_failure "" $rt run -d --pid-file "$scratch/no-parent/init.pid" -b "$bundles/loop" "pid-run-failed-$tag"
     expect_failure "" $rt state "pid-run-failed-$tag"
     test -z "$($rt list -q)"
+    # Standalone process JSON remains usable after its source bundle is gone
+    # and is authoritative over process-related CLI overrides, as in runc.
+    cp -R "$bundles/loop" "$bundles/json-$tag"
+    $rt run -d -b "$bundles/json-$tag" "json-$tag" < /dev/null > /dev/null 2>&1
+    rm -rf "$bundles/json-$tag"
+    cat > "$scratch/process-$tag.json" <<'JSON'
+{"terminal":false,"user":{"uid":1000,"gid":1001},"args":["/bin/sh","-c","printf '%s|%s|%s|%s' \"$VALUE\" \"$PWD\" \"$(id -u)\" \"$(id -g)\""],"env":["PATH=/bin","VALUE=json"],"cwd":"/tmp"}
+JSON
+    test "$($rt exec -p "$scratch/process-$tag.json" --cwd /missing -e VALUE=cli -u 999:999 "json-$tag" /does/not/exist)" = 'json|/tmp|1000|1001'
+    printf '{"terminal":true,"args":["/bin/true"],"cwd":"/"}' > "$scratch/bad-process-$tag.json"
+    expect_failure "" $rt exec -p "$scratch/bad-process-$tag.json" "json-$tag"
+    test "$(status_of "$rt" "json-$tag")" = running
+    $rt delete -f "json-$tag"
     echo "$tag: create/start/state/kill/delete/run lifecycle ok"
 }
 

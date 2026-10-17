@@ -259,3 +259,10 @@ func rejectsInvalidMemoryUnits(_ input: String) {
 func rejectsUnsupportedOrIncompleteExec(_ arguments: [String]) {
     #expect(throws: (any Error).self) { _ = try RuntimeCommand.parseAsRoot(arguments) }
 }
+
+
+@Test func execProcessJSONNeedsOnlyAnID() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["exec", "-p", "process.json", "box"]) as? Exec)
+    #expect(command.processFile == "process.json")
+    #expect(command.arguments.isEmpty)
+}

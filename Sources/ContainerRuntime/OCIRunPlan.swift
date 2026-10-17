@@ -126,7 +126,10 @@ public struct OCIRunPlan: Sendable {
 
     /// Like runc's command-based exec, reread the bundle's process settings.
     /// The live root and namespaces are pinned separately by the lifecycle.
-    static func loadExec(bundle: FilePath, rootfs: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?) throws -> OCIRunPlan {
+    static func loadExec(bundle: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?, processFile: FilePath? = nil) throws -> OCIProcessPlan {
+        if let processFile {
+            return try OCIProcessPlan(OCIConfiguration.decodeProcess(readConfiguration(processFile)))
+        }
         var configuration = try OCIConfiguration.decode(readConfiguration(bundle.appending("config.json")))
         configuration.process.args = arguments
         configuration.process.terminal = false
@@ -150,7 +153,7 @@ public struct OCIRunPlan: Sendable {
                 configuration.process.user?.gid = gid
             }
         }
-        return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs)
+        return try OCIProcessPlan(configuration.process)
     }
 
     /// Runs the workload in the foreground and returns its shell-style exit
@@ -198,21 +201,7 @@ public struct OCIRunPlan: Sendable {
         guard version.hasPrefix("1."), version.split(separator: ".").count >= 2 else {
             throw RuntimeError("config.json: unsupported ociVersion \(version); expected 1.x")
         }
-        let process = configuration.process
-        guard process.terminal != true else {
-            throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
-        }
-        let security = try Self.security(process)
-        let capabilities = try process.capabilities.map(ProcessCapabilities.init)
-        let resourceLimits = try Self.resourceLimits(process.rlimits ?? [])
-        guard let executable = process.args.first, executable.hasPrefix("/") else {
-            throw RuntimeError("config.json: process.args[0] must be an absolute path; PATH lookup is not implemented")
-        }
-        guard process.args.allSatisfy({ !$0.utf8.contains(0) }) else {
-            throw RuntimeError("config.json: process.args must not contain NUL")
-        }
-        let environment = try Self.environment(process.env ?? [])
-        let cwd = try Self.components(process.cwd, field: "process.cwd")
+        let process = try OCIProcessPlan(configuration.process)
 
         var namespaces = Set<Namespace>()
         for entry in configuration.linux.namespaces {
@@ -258,12 +247,12 @@ public struct OCIRunPlan: Sendable {
         self.hostname = configuration.hostname
         self.mounts = mounts
         self.populatesDev = mounts.contains { $0.type == .tmpfs && $0.destination == ["dev"] }
-        self.arguments = process.args
-        self.environment = environment
-        self.cwd = cwd
-        self.security = security
-        self.capabilities = capabilities
-        self.resourceLimits = resourceLimits
+        self.arguments = process.arguments
+        self.environment = process.environment
+        self.cwd = process.cwd
+        self.security = process.security
+        self.capabilities = process.capabilities
+        self.resourceLimits = process.resourceLimits
         self.pathControls = pathControls
         self.cgroup = cgroup
         resourceConfiguration = configuration.linux.resources ?? OCIConfiguration.Resources()

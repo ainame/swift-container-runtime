@@ -242,6 +242,11 @@ struct OCIConfiguration: Decodable, Sendable {
         annotations = try object.optional("annotations") ?? [:]
     }
 
+    static func decodeProcess(_ bytes: [UInt8]) throws -> Process {
+        do { return try JSONDecoder().decode(Process.self, from: Data(bytes)) }
+        catch { throw RuntimeError("process JSON: \(error)") }
+    }
+
     static func decode(_ bytes: [UInt8]) throws -> OCIConfiguration {
         do {
             return try JSONDecoder().decode(OCIConfiguration.self, from: Data(bytes))

@@ -361,17 +361,31 @@ private func removeFile(_ path: FilePath) throws {
 }
 
 
-@Test func execOverridesOnlyProcessSettingsAndUsesRecordedRootMetadata() throws {
+@Test func execOverridesProcessSettings() throws {
     try withTemporaryBundle { bundle in
         try write(config(), to: bundle.appending("config.json"))
         let command = try OCIRunPlan.loadExec(
-            bundle: bundle, rootfs: FilePath("/recorded-root"), arguments: ["/bin/echo", "--help"],
+            bundle: bundle, arguments: ["/bin/echo", "--help"],
             environment: ["GREETING=override"], cwd: "/tmp", user: "1000:1001")
         #expect(command.arguments == ["/bin/echo", "--help"])
         #expect(command.environment == ["PATH=/bin", "GREETING=override"])
         #expect(command.cwd == ["tmp"])
         #expect(command.security.uid == 1000)
         #expect(command.security.gid == 1001)
-        #expect(command.rootfs == FilePath("/recorded-root"))
+    }
+}
+
+
+@Test func standaloneExecProcessDoesNotReadTheBundle() throws {
+    try withTemporaryBundle { directory in
+        let file = directory.appending("config.json")
+        try write(defaultProcess, to: file)
+        let process = try OCIRunPlan.loadExec(
+            bundle: directory.appending("missing"), arguments: ["ignored"], environment: ["invalid"],
+            cwd: "ignored", user: "ignored", processFile: file)
+        #expect(process.arguments == ["/bin/sh", "-c", "echo hi"])
+        #expect(process.environment == ["PATH=/bin", "GREETING=a=b c"])
+        #expect(process.cwd == ["work", "dir"])
+        #expect(process.security.uid == 0)
     }
 }

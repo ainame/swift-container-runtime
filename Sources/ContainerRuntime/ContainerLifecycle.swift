@@ -64,7 +64,7 @@ public struct ContainerLifecycle: Sendable {
     @available(*, noasync, message: "exec processes before starting async work")
     public func exec(
         id: ContainerID, arguments: [String], environment: [String] = [],
-        cwd: String? = nil, user: String? = nil, detach: Bool = false, pidFile: String? = nil
+        cwd: String? = nil, user: String? = nil, detach: Bool = false, pidFile: String? = nil, processFile: String? = nil
     ) throws -> Int32 {
         #if os(Linux)
         // Serialize acquisition with delete/start, then pin the recorded init
@@ -76,8 +76,10 @@ public struct ContainerLifecycle: Sendable {
         guard status == .running || status == .created else {
             throw RuntimeError("cannot exec in a \(status.rawValue) container")
         }
+        guard processFile?.utf8.contains(0) != true else { throw RuntimeError("process file path contains NUL") }
         let plan = try OCIRunPlan.loadExec(
-            bundle: FilePath(record.bundle), rootfs: FilePath(record.rootfs), arguments: arguments, environment: environment, cwd: cwd, user: user)
+            bundle: FilePath(record.bundle), arguments: arguments, environment: environment, cwd: cwd, user: user,
+            processFile: processFile.map { FilePath($0) })
         let result = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { handle in
             let namespaces = try ExecNamespaceSet(process: handle)
             var hooks = LaunchHooks()
