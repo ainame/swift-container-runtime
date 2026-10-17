@@ -149,23 +149,26 @@ struct OCIConfiguration: Decodable, Sendable {
     }
 
     /// `linux.resources.cpu`, with the runtime-spec types: unsigned shares,
-    /// period, and burst, signed quota and idle. The cpusets (`cpus`,
-    /// `mems`) and the realtime fields are not implemented and therefore
-    /// rejected.
+    /// period, and burst, signed quota and idle, and CPU/node list strings.
+    /// Realtime fields remain unsupported.
     struct CPU: Decodable, Sendable {
         var shares: UInt64?
         var quota: Int64?
         var burst: UInt64?
         var period: UInt64?
         var idle: Int64?
+        var cpus: String?
+        var mems: String?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["shares", "quota", "burst", "period", "idle"])
+            let object = try StrictObject(decoder, allowed: ["shares", "quota", "burst", "period", "idle", "cpus", "mems"])
             shares = try object.optionalUInt64("shares")
             quota = try object.optionalInt64("quota")
             burst = try object.optionalUInt64("burst")
             period = try object.optionalUInt64("period")
             idle = try object.optionalInt64("idle")
+            cpus = try object.optional("cpus")
+            mems = try object.optional("mems")
         }
     }
 

@@ -31,7 +31,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc
       - name: Unit tests with strict memory diagnostics
         run: swift test --disable-automatic-resolution
-      - name: Debug namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, path control, cgroup, and CPU integration
+      - name: Debug namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, path control, cgroup, CPU, and cpuset integration
         run: |
           sh scripts/integration.sh .build/debug/swift-container-runtime
           sh scripts/oci-integration.sh .build/debug/swift-container-runtime
@@ -43,7 +43,8 @@ jobs:
           RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/cpu-integration.sh .build/debug/swift-container-runtime
-      - name: Optimized namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, path control, cgroup, and CPU integration
+          RUNC_COMPARE=1 sh scripts/cpuset-integration.sh .build/debug/swift-container-runtime
+      - name: Optimized namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, path control, cgroup, CPU, and cpuset integration
         run: |
           swift test -c release --disable-automatic-resolution
           sh scripts/integration.sh .build/release/swift-container-runtime
@@ -56,3 +57,4 @@ jobs:
           RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/cpu-integration.sh .build/release/swift-container-runtime
+          RUNC_COMPARE=1 sh scripts/cpuset-integration.sh .build/release/swift-container-runtime

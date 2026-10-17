@@ -11,7 +11,7 @@
 # quota enforcement is proved with real CPU work through the kernel's cpu.stat
 # throttling counters against an unthrottled control. This runtime alone is
 # also checked for: only the cpu controller is enabled for CPU-only groups,
-# cpusets and realtime fields are rejected, and an unrelated group is never
+# realtime fields are rejected, and an unrelated group is never
 # changed. The probe is scripts/fixtures/cpu-probe.c, linked statically into a
 # static BusyBox rootfs.
 #
@@ -33,7 +33,7 @@ busybox=${BUSYBOX:-/bin/busybox}
 cc=${CC:-clang}
 compare=${RUNC_COMPARE:-auto}
 cg=/sys/fs/cgroup
-fixture=sct-cpu-$$
+fixture=${CGROUP_FIXTURE_NAME:-sct-cpu-$$}
 fix=$cg/$fixture
 scratch=$(mktemp -d)
 scratch=$(cd "$scratch" && pwd -P)
@@ -251,6 +251,7 @@ member_of() { # TAG PID PATH
 # the cgroup and every process are gone.
 observe() {
     rt=$1 tag=$2 mode=$3 path=$4
+    observe_values=${5:-cpu_values}
     case "$mode" in
     foreground)
         step "$tag" $rt run --bundle "$bundles/$tag" "$tag" < /dev/null > "$results/$tag.stdout" 2> "$results/$tag.stderr"
@@ -265,7 +266,7 @@ observe() {
         created_status=$(status_of "$rt" "$tag")
         [ "$created_status" = created ] || { dump "$tag"; fail "$tag: status after create is '$created_status'"; }
         member_of "$tag" "$(pid_of "$rt" "$tag")" "$path"
-        cpu_values "$path" > "$results/$tag.values"
+        "$observe_values" "$path" > "$results/$tag.values"
         [ ! -s "$results/$tag.stdout" ] || { dump "$tag"; fail "$tag: workload ran before start"; }
         step "$tag" $rt start "$tag"
         wait_status "$rt" "$tag" stopped
@@ -436,6 +437,10 @@ throttle_check() {
     fi
     echo "$tag: cpu_us=$cpu_us wall_us=$wall_us usage_usec=$usage nr_periods=$periods nr_throttled=$throttles throttled_usec=$throttled_us"
 }
+
+# Related resource fixtures reuse the lifecycle/error/cleanup helpers above.
+# Sourcing in library mode sets up only a disposable rootfs and cgroup tree.
+if [ "${CGROUP_FIXTURE_LIBRARY:-0}" = 1 ]; then return 0; fi
 
 # An unrelated group with its own CPU settings and process, checked at the end.
 mkdir "$fix/bystander"
@@ -627,16 +632,16 @@ if [ "$compare" = 1 ]; then
     compare_records
 fi
 
-# This runtime only: cpusets and realtime fields are rejected, leaving nothing.
+# This runtime only: realtime fields are rejected, leaving nothing.
 base=/$fixture/swift
-for unsupported in '"cpus": "0"' '"mems": "0"' '"realtimeRuntime": 950000' '"realtimePeriod": 1000000'; do
+for unsupported in '"realtimeRuntime": 950000' '"realtimePeriod": 1000000'; do
     name=$(echo "$unsupported" | sed 's/^"\([A-Za-z]*\)".*/\1/')
     tag=unsupported-$name-swift
     write_config "$tag" "$root" "$(cgroup_fields "$base/$tag" "{\"shares\": 1024, $unsupported}")" "$true_args"
     expect_failure "$ours" "$tag" created "unsupported field(s): linux.resources.cpu.$name"
     gone "$tag" "$base/$tag"
 done
-echo "swift: only the cpu controller enabled; cpusets and realtime fields rejected"
+echo "swift: only the cpu controller enabled; realtime fields rejected"
 
 # The unrelated group is unchanged.
 [ "$(cat "$fix/bystander/cpu.weight")" = 50 ] || fail "bystander: cpu.weight changed"
@@ -646,4 +651,4 @@ alive "$bystander" && grep -qx "$bystander" "$fix/bystander/cgroup.procs" || fai
 test -z "$(ls -A "$state_root")" || { ls -A "$state_root" >&3; fail "state left behind"; }
 comparison=skipped
 test "$compare" = 1 && comparison=runc
-printf '%s\n' "CPU integration checks passed (comparison: $comparison): cpu.weight/cpu.max/cpu.max.burst/cpu.idle at create for root and uid 1000 in foreground, detached, and create/start; absent, zero, shares, quota, period, unlimited, minimum and maximum values; burst order and retry; idle and shares; refused values, unavailable controller, and threaded subtree; quota throttling proved by cpu.stat against an unthrottled control; cpusets and realtime fields rejected; unrelated group unchanged."
+printf '%s\n' "CPU integration checks passed (comparison: $comparison): cpu.weight/cpu.max/cpu.max.burst/cpu.idle at create for root and uid 1000 in foreground, detached, and create/start; absent, zero, shares, quota, period, unlimited, minimum and maximum values; burst order and retry; idle and shares; refused values, unavailable controller, and threaded subtree; quota throttling proved by cpu.stat against an unthrottled control; realtime fields rejected; unrelated group unchanged."

@@ -14,6 +14,8 @@ public enum CgroupValue: Sendable, Equatable, CustomStringConvertible {
     case number(UInt64)
     /// A signed decimal, such as `cpu.idle`.
     case signed(Int64)
+    /// A kernel-parsed CPU or NUMA-node list.
+    case list(String)
     /// `cpu.max`: "QUOTA PERIOD", with a nil quota written as `max`.
     case bandwidth(quota: Int64?, period: UInt64)
 
@@ -22,6 +24,7 @@ public enum CgroupValue: Sendable, Equatable, CustomStringConvertible {
         case .max: "max"
         case let .number(value): String(value)
         case let .signed(value): String(value)
+        case let .list(value): value
         case let .bandwidth(quota, period): "\(quota.map { String($0) } ?? "max") \(period)"
         }
     }
@@ -84,9 +87,27 @@ public struct CgroupCPU: Sendable, Equatable {
     }
 }
 
+/// CPU and NUMA-node lists. Empty strings leave the existing values alone;
+/// the kernel parses nonempty lists and determines the effective inherited set.
+public struct CgroupCpuset: Sendable, Equatable {
+    public let cpus: String?
+    public let mems: String?
+
+    public static let none = CgroupCpuset(cpus: nil, mems: nil)
+    public var isSet: Bool { cpus != nil || mems != nil }
+
+    /// runc writes CPUs before memory nodes, after the CPU bandwidth files.
+    var writes: [CgroupWrite] {
+        var result: [CgroupWrite] = []
+        if let cpus { result.append(CgroupWrite(file: "cpuset.cpus", value: .list(cpus))) }
+        if let mems { result.append(CgroupWrite(file: "cpuset.mems", value: .list(mems))) }
+        return result
+    }
+}
+
 /// The implemented subset of `linux.resources`, converted to cgroup v2 file
-/// values exactly as runc's fs2 driver does. Absent and zero values are
-/// "unset" (nothing is written), as in runc's Resources.
+/// values as runc's fs2 driver does. Each controller preserves its own
+/// absent, zero, and empty-value semantics.
 public struct CgroupResources: Sendable, Equatable {
     /// `memory.max`, from `memory.limit`.
     public let memoryMax: CgroupValue?
@@ -99,19 +120,21 @@ public struct CgroupResources: Sendable, Equatable {
     public let pidsMax: CgroupValue?
     /// `cpu.idle`, `cpu.weight`, `cpu.max.burst`, and `cpu.max`.
     public let cpu: CgroupCPU
+    public let cpuset: CgroupCpuset
 
     public static let none = CgroupResources(memoryMax: nil, memoryLow: nil, swapMax: nil, pidsMax: nil)
 
-    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none) {
+    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none, cpuset: CgroupCpuset = .none) {
         self.memoryMax = memoryMax
         self.memoryLow = memoryLow
         self.swapMax = swapMax
         self.pidsMax = pidsMax
         self.cpu = cpu
+        self.cpuset = cpuset
     }
 
     /// Writes in runc's Set order: pids, then memory.swap.max, memory.max,
-    /// and memory.low, then the CPU files in setCPU's order.
+    /// and memory.low, then CPU files in setCPU's order and cpuset lists.
     public var writes: [CgroupWrite] {
         var writes: [CgroupWrite] = []
         if let pidsMax { writes.append(CgroupWrite(file: "pids.max", value: pidsMax, ignoreMissing: false)) }
@@ -122,6 +145,7 @@ public struct CgroupResources: Sendable, Equatable {
         if let memoryMax { writes.append(CgroupWrite(file: "memory.max", value: memoryMax, ignoreMissing: false)) }
         if let memoryLow { writes.append(CgroupWrite(file: "memory.low", value: memoryLow, ignoreMissing: false)) }
         writes += cpu.writes
+        writes += cpuset.writes
         return writes
     }
 
@@ -134,6 +158,7 @@ public struct CgroupResources: Sendable, Equatable {
         if memoryMax != nil || memoryLow != nil || swapRequired { controllers.append("memory") }
         if pidsMax != nil { controllers.append("pids") }
         if cpu.isSet { controllers.append("cpu") }
+        if cpuset.isSet { controllers.append("cpuset") }
         return controllers
     }
 
@@ -292,7 +317,13 @@ public struct CgroupPlan: Sendable, Equatable {
         let cpuValues = CgroupCPU(
             idle: cpu?.idle, weight: weight == 0 ? nil : weight, burst: cpu?.burst, max: cpuMax, hasQuota: quota != 0
         )
-        return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax, cpu: cpuValues)
+        // runc leaves empty cpuset strings untouched; nonempty lists are
+        // passed through to the kernel, including its syntax/range checks.
+        let cpuset = CgroupCpuset(
+            cpus: cpu?.cpus.flatMap { $0.isEmpty ? nil : $0 },
+            mems: cpu?.mems.flatMap { $0.isEmpty ? nil : $0 }
+        )
+        return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax, cpu: cpuValues, cpuset: cpuset)
     }
 
     /// runc's ConvertCPUSharesToCgroupV2Value: a quadratic in log2(shares)

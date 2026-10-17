@@ -148,7 +148,7 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "apparmorProfile": "x"}"#), "process.apparmorProfile"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "sysctl": {"net.ipv4.ip_forward": "1"}}"#), "linux.sysctl"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}], "resources": {"cpu": {"cpus": "0-1"}}}"#), "linux.resources.cpu.cpus"),
+    (config(linux: #"{"namespaces": [{"type": "mount"}], "resources": {"cpu": {"realtimeRuntime": 950000}}}"#), "linux.resources.cpu.realtimeRuntime"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "seccomp": {}}"#), "linux.seccomp"),
     (config(linux: #"{"namespaces": [{"type": "mount", "path": "/proc/1/ns/mnt"}]}"#), "path"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "uidMappings": []}]"#), "uidMappings"),

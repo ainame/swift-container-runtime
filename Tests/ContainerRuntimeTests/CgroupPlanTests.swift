@@ -157,8 +157,6 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
     (#"{"memory": {"limit": "1g"}}"#, "linux.resources.memory.limit"),
     (#"{"pids": {"limit": -9223372036854775809}}"#, "invalid value at linux.resources.pids.limit"),
     // Unimplemented controls are rejected, never silently accepted.
-    (#"{"cpu": {"shares": 1024, "cpus": "0"}}"#, "unsupported field(s): linux.resources.cpu.cpus"),
-    (#"{"cpu": {"mems": "0"}}"#, "unsupported field(s): linux.resources.cpu.mems"),
     (#"{"cpu": {"realtimeRuntime": 950000}}"#, "unsupported field(s): linux.resources.cpu.realtimeRuntime"),
     (#"{"cpu": {"realtimePeriod": 1000000}}"#, "unsupported field(s): linux.resources.cpu.realtimePeriod"),
     (#"{"cpu": {"weight": 100}}"#, "unsupported field(s): linux.resources.cpu.weight"),
@@ -175,6 +173,26 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
 func rejectsInvalidAndUnsupportedResources(_ json: String, _ reason: String) {
     let message = rejection(#", "resources": "# + json)
     #expect(message?.contains(reason) == true, "\(message ?? "accepted")")
+}
+
+// MARK: Cpusets
+
+@Test(arguments: [#"{}"#, #"{"cpus": "", "mems": ""}"#, #"{"cpus": null, "mems": null}"#])
+func emptyCpusetLeavesExistingValues(_ cpu: String) throws {
+    let converted = try resources(#"{"cpu": "# + cpu + "}")
+    #expect(converted == .none)
+}
+
+@Test func cpusetWritesFollowCpuAndDoNotRequireCpuController() throws {
+    let cpuset = try resources(#"{"cpu": {"cpus": "0-2,5", "mems": "0"}}"#)
+    #expect(cpuset.writes.map { "\($0.file)=\($0.value)" } == ["cpuset.cpus=0-2,5", "cpuset.mems=0"])
+    #expect(cpuset.requiredControllers == ["cpuset"])
+    #expect(!cpuset.needsDomainController)
+    let combined = try resources(#"{"cpu": {"quota": 20000, "cpus": "1", "mems": "0"}, "pids": {"limit": 5}}"#)
+    #expect(combined.writes.map(\.file) == ["pids.max", "cpu.max", "cpuset.cpus", "cpuset.mems"])
+    #expect(combined.requiredControllers == ["pids", "cpu", "cpuset"])
+    // Bad list syntax belongs to the kernel, as in runc's setCpuset.
+    #expect(try resources(#"{"cpu": {"cpus": "not-a-list"}}"#).writes.first?.value == .list("not-a-list"))
 }
 
 // MARK: CPU
@@ -283,6 +301,8 @@ func cpuWritesFollowRunc(_ cpu: String, _ expected: [String]) throws {
     (#"{"quota": "max"}"#, "linux.resources.cpu.quota"),
     (#"{"idle": -9223372036854775809}"#, "invalid value at linux.resources.cpu.idle"),
     (#"{"idle": true}"#, "linux.resources.cpu.idle"),
+    (#"{"cpus": 1}"#, "linux.resources.cpu.cpus"),
+    (#"{"mems": []}"#, "linux.resources.cpu.mems"),
     (#"[]"#, "linux.resources.cpu"),
 ])
 func rejectsMalformedCpu(_ cpu: String, _ reason: String) {

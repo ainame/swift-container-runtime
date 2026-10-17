@@ -491,9 +491,9 @@ fi
 
 # This runtime only: unsupported resources and failed setup leave nothing.
 base=/$fixture/swift
-tag=cpuset-swift
-write_config "$tag" "$root" "$(cgroup_fields "$base/$tag" '{"cpu": {"shares": 1024, "cpus": "0"}}')" '["/bin/true"]'
-expect_failure "$ours" "$tag" created "linux.resources.cpu.cpus"
+tag=cpu-realtime-swift
+write_config "$tag" "$root" "$(cgroup_fields "$base/$tag" '{"cpu": {"shares": 1024, "realtimeRuntime": 950000}}')" '["/bin/true"]'
+expect_failure "$ours" "$tag" created "linux.resources.cpu.realtimeRuntime"
 gone "$tag" "$base/$tag"
 tag=missing-exec-swift
 write_config "$tag" "$root" "$(cgroup_fields "$base/$tag" "$pids16")" '["/bin/does-not-exist"]'
