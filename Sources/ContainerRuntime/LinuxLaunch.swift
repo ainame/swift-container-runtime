@@ -15,6 +15,7 @@ enum LaunchStage: Int32 {
     case noNewPrivileges, stdioOwnership, supplementaryGroups, setGroupID, setUserID
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
     case setResourceLimit, startDescriptor, readonlyRoot
+    case resolveReadonlyPath, readonlyPath, openDevNull, resolveMaskedPath, maskPath, verifyMaskedPath
 
     var description: String {
         switch self {
@@ -58,6 +59,15 @@ enum LaunchStage: Int32 {
         case .startDescriptor:
             "reserve a descriptor for the start connection (process.rlimits RLIMIT_NOFILE leaves no free descriptor for the created init)"
         case .readonlyRoot: "remount the container root read-only (root.readonly)"
+        case .resolveReadonlyPath:
+            "resolve linux.readonlyPaths entry in the container (symlinks stay within the root; magic links are refused)"
+        case .readonlyPath: "make linux.readonlyPaths entry read-only (requires Linux 5.12+)"
+        case .resolveMaskedPath:
+            "resolve linux.maskedPaths entry in the container (symlinks stay within the root; magic links are refused)"
+        case .openDevNull: "open the container's /dev/null for linux.maskedPaths (it must be the 1:3 character device)"
+        case .maskPath: "mask linux.maskedPaths entry"
+        case .verifyMaskedPath:
+            "verify linux.maskedPaths entry shows its mask (a mask on / is hidden beneath the container root)"
         }
     }
 }

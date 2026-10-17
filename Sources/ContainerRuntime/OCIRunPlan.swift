@@ -99,6 +99,9 @@ public struct OCIRunPlan: Sendable {
     public let capabilities: ProcessCapabilities?
     /// `process.rlimits` in input order, repeats included; empty inherits all.
     public let resourceLimits: [ResourceLimit]
+    /// `linux.readonlyPaths` and `linux.maskedPaths`, applied in that order
+    /// after the container root is final.
+    public let pathControls: PathControls
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
@@ -183,6 +186,9 @@ public struct OCIRunPlan: Sendable {
         let mounts = try configuration.mounts.enumerated().map { index, mount in
             try Self.mount(mount, index: index, namespaces: namespaces)
         }
+        let pathControls = try PathControls(
+            readonly: configuration.linux.readonlyPaths ?? [], masked: configuration.linux.maskedPaths ?? []
+        )
 
         self.ociVersion = version
         self.bundle = bundle
@@ -199,6 +205,7 @@ public struct OCIRunPlan: Sendable {
         self.security = security
         self.capabilities = capabilities
         self.resourceLimits = resourceLimits
+        self.pathControls = pathControls
     }
 
     /// An absent `process.user` means uid and gid 0, as in runc. Values the

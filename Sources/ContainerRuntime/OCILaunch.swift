@@ -78,6 +78,7 @@ extension OCIRunPlan {
         // whole range the init then clears from the bounding set.
         let capabilities = self.capabilities
         let resourceLimits = self.resourceLimits
+        let pathControls = self.pathControls
         let lastCapability: Int32
         if let capabilities {
             let last = try kernelLastCapability()
@@ -100,6 +101,11 @@ extension OCIRunPlan {
             case .setResourceLimit:
                 guard resourceLimits.indices.contains(Int(detail)) else { return nil }
                 return "\(stage.description)[\(detail)] \(resourceLimits[Int(detail)]) (raising a hard limit needs CAP_SYS_RESOURCE; RLIMIT_NOFILE cannot exceed fs.nr_open)"
+            case .resolveReadonlyPath, .readonlyPath, .resolveMaskedPath, .maskPath, .verifyMaskedPath:
+                let isMask = stage == .resolveMaskedPath || stage == .maskPath || stage == .verifyMaskedPath
+                let paths = isMask ? pathControls.masked : pathControls.readonly
+                guard paths.indices.contains(Int(detail)) else { return nil }
+                return "\(stage.description) \(paths[Int(detail)])"
             default: return nil
             }
         }
@@ -110,7 +116,7 @@ extension OCIRunPlan {
                         strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev, readonlyRoot: readonlyRoot,
                         security: security, supplementaryGids: gidBuffer,
                         capabilities: capabilities, lastCapability: lastCapability, resourceLimits: resourceLimits,
-                        foreground: !hooks.detached,
+                        pathControls: pathControls, foreground: !hooks.detached,
                         report: report, commit: commit, launcher: launcher, gate: gate
                     )
                 }
@@ -133,6 +139,7 @@ private func initializeContainer(
     capabilities: ProcessCapabilities?,
     lastCapability: Int32,
     resourceLimits: [ResourceLimit],
+    pathControls: PathControls,
     foreground: Bool,
     report: borrowing OwnedFileDescriptor,
     commit: borrowing OwnedFileDescriptor,
@@ -227,6 +234,13 @@ private func initializeContainer(
     if readonlyRoot {
         let code = remountRootReadonly()
         guard code == 0 else { return failureStatus(report, .readonlyRoot, code: code) }
+    }
+    // runc applies linux.readonlyPaths and then linux.maskedPaths right after
+    // finalizeRootfs, and only then enters the cwd and drops privileges, so a
+    // cwd below a masked directory is gone and the full privilege of the init
+    // performs the mounts.
+    if let failure = pathControls.apply() {
+        return failureStatus(report, failure.stage, code: failure.code, detail: failure.index)
     }
     // As runc does, enter the cwd with the caller's credentials first and
     // retry after the switch only if they were denied it.
@@ -492,7 +506,7 @@ private func populateDev(_ dev: FileDescriptor, linkPtmx: Bool) -> Int32 {
 }
 
 /// Linux's dev_t encoding (the glibc/musl `makedev` macro is not imported).
-private func deviceNumber(_ major: UInt32, _ minor: UInt32) -> dev_t {
+func deviceNumber(_ major: UInt32, _ minor: UInt32) -> dev_t {
     let major = UInt64(major), minor = UInt64(minor)
     let value = ((major & 0xffff_f000) << 32) | ((major & 0xfff) << 8) | ((minor & 0xffff_ff00) << 12) | (minor & 0xff)
     return dev_t(value)

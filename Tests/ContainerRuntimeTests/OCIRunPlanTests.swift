@@ -45,6 +45,30 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     return try OCIRunPlan(configuration, bundle: FilePath("/bundle"), rootfs: FilePath("/bundle/rootfs"))
 }
 
+private func pathControls(_ fields: String) -> String {
+    #"{"namespaces": [{"type": "pid"}, {"type": "mount"}, {"type": "uts"}], "# + fields + "}"
+}
+
+@Test func buildsPathControls() throws {
+    let controlled = try plan(config(linux: pathControls(#"""
+        "readonlyPaths": ["/proc/sys", "//proc//sys/", "/proc/sys/kernel", "/missing"],
+        "maskedPaths": ["/proc/kcore", "/proc/acpi", "/proc/kcore/", "/proc/acpi/x"]
+        """#)))
+    // Canonical spelling and input order. Read-only repeats are kept, as runc
+    // binds them again; a masked repeat is applied once, as in runc.
+    #expect(controlled.pathControls.readonly == ["/proc/sys", "/proc/sys", "/proc/sys/kernel", "/missing"])
+    #expect(controlled.pathControls.masked == ["/proc/kcore", "/proc/acpi", "/proc/acpi/x"])
+    let absent = try plan(config())
+    #expect(absent.pathControls.readonly.isEmpty && absent.pathControls.masked.isEmpty)
+    // Setup mounts through descriptors, so no proc mount is needed, and "/"
+    // is a valid entry whose effect runc's own lookup semantics decide.
+    let empty = try plan(config(mounts: "[]", linux: pathControls(#""readonlyPaths": [], "maskedPaths": []"#)))
+    #expect(empty.pathControls.readonly.isEmpty && empty.pathControls.masked.isEmpty)
+    let unmounted = try plan(config(mounts: "[]", linux: pathControls(#""readonlyPaths": ["/", "//"], "maskedPaths": ["/", "/etc/x"]"#)))
+    #expect(unmounted.pathControls.readonly == ["/", "/"])
+    #expect(unmounted.pathControls.masked == ["/", "/etc/x"])
+}
+
 @Test func buildsPlanFromSupportedSubset() throws {
     let plan = try plan(config())
     #expect(plan.arguments == ["/bin/sh", "-c", "echo hi"])
@@ -123,7 +147,7 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "oomScoreAdj": 100}"#), "process.oomScoreAdj"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "apparmorProfile": "x"}"#), "process.apparmorProfile"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}], "maskedPaths": ["/proc/kcore"]}"#), "linux.maskedPaths"),
+    (config(linux: #"{"namespaces": [{"type": "mount"}], "sysctl": {"net.ipv4.ip_forward": "1"}}"#), "linux.sysctl"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "resources": {}}"#), "linux.resources"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "seccomp": {}}"#), "linux.seccomp"),
     (config(linux: #"{"namespaces": [{"type": "mount", "path": "/proc/1/ns/mnt"}]}"#), "path"),
@@ -143,7 +167,15 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(process: #"{"args": ["/bin/sh"], "env": ["=value"], "cwd": "/"}"#), "NAME=value"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "relative"}"#), "process.cwd"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "/a/../b"}"#), "process.cwd"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}], "readonlyPaths": ["/proc/sys"]}"#), "linux.readonlyPaths"),
+    (config(linux: #"{"namespaces": [{"type": "mount"}], "devices": []}"#), "linux.devices"),
+    // Path controls: lexical checks and value types.
+    (config(linux: pathControls(#""readonlyPaths": ["proc/sys"]"#)), "linux.readonlyPaths[0]"),
+    (config(linux: pathControls(#""readonlyPaths": ["/proc/sys", "/proc/../etc"]"#)), "linux.readonlyPaths[1]"),
+    (config(linux: pathControls(#""maskedPaths": ["/proc/./kcore"]"#)), "linux.maskedPaths[0]"),
+    (config(linux: pathControls(#""maskedPaths": ["/a\u0000b"]"#)), "linux.maskedPaths[0]"),
+    (config(linux: pathControls(#""maskedPaths": "/proc/kcore""#)), "linux.maskedPaths"),
+    (config(linux: pathControls(#""readonlyPaths": [1]"#)), "linux.readonlyPaths[0]"),
+    (config(linux: pathControls(#""maskedPaths": null, "readonlyPath": []"#)), "linux.readonlyPath"),
     (config(version: "\"2.0.0\""), "ociVersion"),
     (config(hostname: "\"\""), "hostname"),
     (config(linux: #"{"namespaces": [{"type": "mount"}]}"#), "uts namespace"),

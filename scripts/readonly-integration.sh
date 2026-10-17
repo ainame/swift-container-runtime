@@ -106,9 +106,9 @@ for who in root user; do
     write_config "absent-$who" '' "$user" "$ops"
 done
 write_config readonly-missing ', "readonly": true' '{"uid": 0, "gid": 0}' '"/bin/missing"'
-mkdir -p "$bundles/readonly-paths"
-sed 's|"namespaces"|"readonlyPaths": ["/proc/sys"], "namespaces"|' "$bundles/readonly-root/config.json" \
-    > "$bundles/readonly-paths/config.json"
+mkdir -p "$bundles/readonly-sysctl"
+sed 's|"namespaces"|"sysctl": {"kernel.domainname": "x"}, "namespaces"|' "$bundles/readonly-root/config.json" \
+    > "$bundles/readonly-sysctl/config.json"
 
 field() { sed -n "s/^ *\"$1\" *: *\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p"; }
 status_of() { $1 state "$2" 2>/dev/null | field status; }
@@ -300,8 +300,8 @@ for mode in foreground created; do
     # A missing program fails after the remount, before readiness.
     expect_failure swift "$ours" readonly-missing "$mode" "exec workload"
     [ "$compare" = 1 ] && expect_failure runc "$theirs" readonly-missing "$mode" ""
-    # readonlyPaths remain unimplemented and are rejected before any setup.
-    expect_failure swift "$ours" readonly-paths "$mode" "linux.readonlyPaths"
+    # linux.sysctl remains unimplemented and is rejected before any setup.
+    expect_failure swift "$ours" readonly-sysctl "$mode" "unsupported field(s): linux.sysctl"
 done
 
 test -z "$(ls -A "$state_root")" || { ls -A "$state_root" >&2; fail "state left behind"; }

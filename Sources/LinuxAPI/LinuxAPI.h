@@ -20,6 +20,26 @@
 #define O_PATH __O_PATH
 #endif
 
+/* AT_EMPTY_PATH and AT_RECURSIVE are GNU extensions of libc's <fcntl.h>, and
+ * the kernel's <linux/fcntl.h> redefines libc's struct flock, so it cannot be
+ * included beside it. These AT_* bits are defined once for every architecture
+ * in the kernel's include/uapi/linux/fcntl.h and are used only when libc
+ * hides them. */
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+#ifndef AT_RECURSIVE
+#define AT_RECURSIVE 0x8000
+#endif
+
+#include <linux/openat2.h>
+#include <string.h>
+#if defined(__GLIBC__)
+#include <sys/mount.h>
+#else
+#include <linux/mount.h>
+#endif
+
 /* This GNU extension may be hidden by the libc overlay's feature selection.
  * It is also available in musl. */
 extern int unshare(int flags);
@@ -135,6 +155,70 @@ static inline int linux_mark_descriptors_cloexec(unsigned int first) {
 /* Opens a close-on-exec O_PATH handle relative to dirfd. openat is variadic. */
 static inline int linux_open_path(int dirfd, const char *path, int flags) {
     return openat(dirfd, path, flags | O_PATH | O_CLOEXEC);
+}
+
+/* openat2(2), Linux 5.6. SYS_openat2 comes from <sys/syscall.h> and struct
+ * open_how with the RESOLVE_* flags from the kernel's <linux/openat2.h>.
+ * Opens a close-on-exec O_PATH handle for path resolved as if dirfd were the
+ * root directory: absolute symlinks and ".." stay below it, and magic links
+ * such as /proc/self/fd/N fail with ELOOP. The final component is followed
+ * unless flags has O_NOFOLLOW. */
+static inline int linux_open_path_in_root(int dirfd, const char *path, int flags) {
+    struct open_how how;
+    memset(&how, 0, sizeof how);
+    how.flags = (__u64)(unsigned int)(flags | O_PATH | O_CLOEXEC);
+    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+    return (int)syscall(SYS_openat2, dirfd, path, &how, sizeof how);
+}
+
+/* The descriptor-based mount API (open_tree, move_mount, fsopen, fsconfig and
+ * fsmount from Linux 5.2; mount_setattr from 5.12) has no musl wrappers. Its
+ * constants and struct mount_attr come from glibc's <sys/mount.h> (2.36+) or,
+ * for other C libraries, the kernel's <linux/mount.h>. Each adapter is one
+ * fixed-signature system call on descriptors; no path is walked here. */
+
+/* A detached close-on-exec bind of the file or directory open at fd (with
+ * every mount below it when recursive), as open_tree(OPEN_TREE_CLONE). */
+static inline int linux_clone_mount(int fd, int recursive) {
+    unsigned int flags = OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC | AT_EMPTY_PATH | (recursive ? AT_RECURSIVE : 0);
+    return (int)syscall(SYS_open_tree, fd, "", flags);
+}
+
+/* Attaches the detached mount at mount_fd onto the file open at target_fd. */
+static inline int linux_attach_mount(int mount_fd, int target_fd) {
+    return (int)syscall(SYS_move_mount, mount_fd, "", target_fd, "", MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH);
+}
+
+/* Sets MOUNT_ATTR_RDONLY on the mount whose root is open at fd and changes no
+ * other mount attribute. */
+static inline int linux_set_mount_readonly(int fd) {
+    struct mount_attr attr;
+    memset(&attr, 0, sizeof attr);
+    attr.attr_set = MOUNT_ATTR_RDONLY;
+    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH, &attr, sizeof attr);
+}
+
+/* A close-on-exec filesystem context for type, as fsopen(FSOPEN_CLOEXEC). */
+static inline int linux_open_filesystem(const char *type) {
+    return (int)syscall(SYS_fsopen, type, FSOPEN_CLOEXEC);
+}
+
+static inline int linux_set_filesystem_string(int fs_fd, const char *key, const char *value) {
+    return (int)syscall(SYS_fsconfig, fs_fd, FSCONFIG_SET_STRING, key, value, 0);
+}
+
+static inline int linux_set_filesystem_flag(int fs_fd, const char *key) {
+    return (int)syscall(SYS_fsconfig, fs_fd, FSCONFIG_SET_FLAG, key, NULL, 0);
+}
+
+static inline int linux_create_filesystem(int fs_fd) {
+    return (int)syscall(SYS_fsconfig, fs_fd, FSCONFIG_CMD_CREATE, NULL, NULL, 0);
+}
+
+/* A detached close-on-exec mount of the created filesystem context, with
+ * MOUNT_ATTR_RDONLY when readonly is non-zero. */
+static inline int linux_mount_filesystem(int fs_fd, int readonly) {
+    return (int)syscall(SYS_fsmount, fs_fd, FSMOUNT_CLOEXEC, readonly ? MOUNT_ATTR_RDONLY : 0U);
 }
 
 /* Opens a close-on-exec descriptor relative to dirfd with an explicit mode. */

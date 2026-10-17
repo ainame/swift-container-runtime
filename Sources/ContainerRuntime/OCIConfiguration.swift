@@ -125,11 +125,17 @@ struct OCIConfiguration: Decodable, Sendable {
     struct Linux: Decodable, Sendable {
         var namespaces: [Namespace]
         var rootfsPropagation: String?
+        var maskedPaths: [String]?
+        var readonlyPaths: [String]?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["namespaces", "rootfsPropagation"])
+            let object = try StrictObject(
+                decoder, allowed: ["namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths"]
+            )
             namespaces = try object.required("namespaces")
             rootfsPropagation = try object.optional("rootfsPropagation")
+            maskedPaths = try object.optional("maskedPaths")
+            readonlyPaths = try object.optional("readonlyPaths")
         }
     }
 
