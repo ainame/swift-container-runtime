@@ -148,17 +148,40 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
-    /// `linux.resources`. Only the memory and pids controls are implemented;
-    /// CPU, block I/O, hugepages, devices, network, RDMA, and unified keys
-    /// are rejected rather than ignored.
+    /// `linux.resources.cpu`, with the runtime-spec types: unsigned shares,
+    /// period, and burst, signed quota and idle. The cpusets (`cpus`,
+    /// `mems`) and the realtime fields are not implemented and therefore
+    /// rejected.
+    struct CPU: Decodable, Sendable {
+        var shares: UInt64?
+        var quota: Int64?
+        var burst: UInt64?
+        var period: UInt64?
+        var idle: Int64?
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["shares", "quota", "burst", "period", "idle"])
+            shares = try object.optionalUInt64("shares")
+            quota = try object.optionalInt64("quota")
+            burst = try object.optionalUInt64("burst")
+            period = try object.optionalUInt64("period")
+            idle = try object.optionalInt64("idle")
+        }
+    }
+
+    /// `linux.resources`. Only the memory, pids, and CPU controls are
+    /// implemented; block I/O, hugepages, devices, network, RDMA, and unified
+    /// keys are rejected rather than ignored.
     struct Resources: Decodable, Sendable {
         var memory: Memory?
         var pids: Pids?
+        var cpu: CPU?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["memory", "pids"])
+            let object = try StrictObject(decoder, allowed: ["memory", "pids", "cpu"])
             memory = try object.optional("memory")
             pids = try object.optional("pids")
+            cpu = try object.optional("cpu")
         }
     }
 
@@ -268,6 +291,19 @@ private struct StrictObject {
     func requiredUInt64(_ key: String) throws -> UInt64 {
         do {
             return try container.decode(UInt64.self, forKey: AnyKey(stringValue: key))
+        } catch let error as DecodingError {
+            guard case .dataCorrupted = error else { throw error }
+            throw invalidUInt64(key)
+        } catch {
+            throw invalidUInt64(key)
+        }
+    }
+
+    /// An optional unsigned 64-bit integer, with the diagnostics of
+    /// `requiredUInt64`.
+    func optionalUInt64(_ key: String) throws -> UInt64? {
+        do {
+            return try container.decodeIfPresent(UInt64.self, forKey: AnyKey(stringValue: key))
         } catch let error as DecodingError {
             guard case .dataCorrupted = error else { throw error }
             throw invalidUInt64(key)

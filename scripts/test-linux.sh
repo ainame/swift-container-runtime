@@ -5,19 +5,19 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 container run --rm --cpus 4 --memory 4G \
     --volume "$root:/workspace" --workdir /workspace swift:6.4.1 \
     /bin/sh -eu -c '
-        # cgroup v2 delegation for scripts/cgroup-integration.sh, before any
+        # cgroup v2 delegation for the cgroup and CPU integration, before any
         # child starts: this top-level shell (and so every later gate) moves
         # into the /runner leaf, leaving the root without processes so that
-        # it may enable memory and pids for the test subtrees. The VM is
-        # discarded afterwards; no other process is moved.
+        # it may enable memory, pids, and cpu for the test subtrees. The VM
+        # is discarded afterwards; no other process is moved.
         mkdir /sys/fs/cgroup/runner
         echo $$ > /sys/fs/cgroup/runner/cgroup.procs
-        echo "+memory +pids" > /sys/fs/cgroup/cgroup.subtree_control \
+        echo "+memory +pids +cpu" > /sys/fs/cgroup/cgroup.subtree_control \
             || { echo "root cgroup still holds:"; cat /sys/fs/cgroup/cgroup.procs; exit 1; }
         swift --version
         swift --version | grep -q "Swift version 6.4.1 "
         # OCI fixtures: static BusyBox rootfs and runc for comparison, in the VM only.
-        # The rlimit, readonly and path probes are linked statically by the image clang against glibc.
+        # The rlimit, readonly, path and CPU probes are linked statically by the image clang against glibc.
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc > /dev/null
         swift test --disable-automatic-resolution --scratch-path .build/linux-6.4.1
@@ -31,6 +31,7 @@ container run --rm --cpus 4 --memory 4G \
         RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/cpu-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         swift test -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         sh scripts/integration.sh .build/linux-6.4.1/release/swift-container-runtime
         sh scripts/oci-integration.sh .build/linux-6.4.1/release/swift-container-runtime
@@ -41,4 +42,5 @@ container run --rm --cpus 4 --memory 4G \
         RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/linux-6.4.1/release/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/cpu-integration.sh .build/linux-6.4.1/release/swift-container-runtime
     '

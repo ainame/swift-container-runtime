@@ -295,13 +295,9 @@ final class CgroupLeaf {
                 throw RuntimeError("container's cgroup \(leaf.displayPath) is unexpectedly frozen")
             }
 
-            // Limits in runc's order; a refused value fails setup.
-            for write in resources.writes {
-                let code = leaf.write(write.file, write.value.description)
-                if code == 0 || (code == ENOENT && write.ignoreMissing) { continue }
-                let hint = code == ENOENT ? " (the controller file does not exist in this kernel or cgroup)" : ""
-                throw RuntimeError("set \(leaf.displayPath)/\(write.file) to \(write.value): \(Errno(rawValue: code))\(hint)")
-            }
+            // Limits in runc's order; a refused value fails setup, except
+            // for runc's ignorable swap and its burst retry after cpu.max.
+            try resources.apply(in: leaf.displayPath) { file, text in leaf.write(file, text) }
             guard let inode = leaf.inode, inode > 0 else {
                 throw RuntimeError("inspect cgroup \(leaf.displayPath): \(Errno(rawValue: errno))")
             }
@@ -377,7 +373,7 @@ final class CgroupLeaf {
     /// runc's fs2 type check. A "domain invalid" cgroup (a child of a
     /// threaded subtree) is switched to threaded when no domain controller
     /// is needed, and refused otherwise; domain controllers are refused in
-    /// threaded cgroups too.
+    /// threaded cgroups too. As in runc, CPU settings count as domain ones.
     private static func checkType(_ directory: CgroupDirectory, domain: Bool) throws {
         let type = (try directory.read("cgroup.type") ?? "domain").trimmingSuffix("\n")
         switch type {

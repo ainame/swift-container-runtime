@@ -1,12 +1,28 @@
-/// One value written to a cgroup v2 limit file: `max` or a decimal number.
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
+import Glibc
+#endif
+import SystemPackage
+
+/// One value written to a cgroup v2 interface file, formatted as runc
+/// formats it.
 public enum CgroupValue: Sendable, Equatable, CustomStringConvertible {
     case max
     case number(UInt64)
+    /// A signed decimal, such as `cpu.idle`.
+    case signed(Int64)
+    /// `cpu.max`: "QUOTA PERIOD", with a nil quota written as `max`.
+    case bandwidth(quota: Int64?, period: UInt64)
 
     public var description: String {
         switch self {
         case .max: "max"
         case let .number(value): String(value)
+        case let .signed(value): String(value)
+        case let .bandwidth(quota, period): "\(quota.map { String($0) } ?? "max") \(period)"
         }
     }
 }
@@ -18,6 +34,54 @@ public struct CgroupWrite: Sendable, Equatable {
     /// runc ignores a missing `memory.swap.max` (swap accounting disabled)
     /// when it would only write `max` or `0`.
     public let ignoreMissing: Bool
+    /// runc's setCPU defers an EINVAL from `cpu.max.burst` when a quota is
+    /// configured and writes the burst again right after `cpu.max`.
+    public let retriedAfterCPUMax: Bool
+
+    init(file: String, value: CgroupValue, ignoreMissing: Bool = false, retriedAfterCPUMax: Bool = false) {
+        self.file = file
+        self.value = value
+        self.ignoreMissing = ignoreMissing
+        self.retriedAfterCPUMax = retriedAfterCPUMax
+    }
+}
+
+/// The implemented `linux.resources.cpu` fields, as runc's spec conversion
+/// and fs2 setCPU turn them into cgroup v2 writes. Shares, quota, and period
+/// of 0 are unset, as absent ones are; a given `idle` or `burst` is always
+/// written, 0 included. Values are passed to the kernel unchecked, as runc
+/// does, so the kernel's range checks refuse them at create.
+public struct CgroupCPU: Sendable, Equatable {
+    /// `cpu.idle`.
+    public let idle: Int64?
+    /// `cpu.weight`, converted from `shares`.
+    public let weight: UInt64?
+    /// `cpu.max.burst`.
+    public let burst: UInt64?
+    /// `cpu.max`, whenever quota or period is nonzero: a negative quota is
+    /// `max`, and a zero period is the kernel's documented default 100000.
+    public let max: CgroupValue?
+    /// A nonzero quota, which allows the burst retry: the kernel checks a
+    /// new burst against the current quota, which `cpu.max` is about to
+    /// replace. A zero quota with a period writes `max` but does not retry.
+    public let hasQuota: Bool
+
+    public static let none = CgroupCPU(idle: nil, weight: nil, burst: nil, max: nil, hasQuota: false)
+
+    /// runc's isCPUSet.
+    public var isSet: Bool { idle != nil || weight != nil || burst != nil || max != nil }
+
+    /// setCPU's order: idle, weight, burst, then `cpu.max`.
+    var writes: [CgroupWrite] {
+        var writes: [CgroupWrite] = []
+        if let idle { writes.append(CgroupWrite(file: "cpu.idle", value: .signed(idle))) }
+        if let weight { writes.append(CgroupWrite(file: "cpu.weight", value: .number(weight))) }
+        if let burst {
+            writes.append(CgroupWrite(file: "cpu.max.burst", value: .number(burst), retriedAfterCPUMax: hasQuota))
+        }
+        if let max { writes.append(CgroupWrite(file: "cpu.max", value: max)) }
+        return writes
+    }
 }
 
 /// The implemented subset of `linux.resources`, converted to cgroup v2 file
@@ -33,11 +97,21 @@ public struct CgroupResources: Sendable, Equatable {
     public let swapMax: CgroupValue?
     /// `pids.max`, from `pids.limit`.
     public let pidsMax: CgroupValue?
+    /// `cpu.idle`, `cpu.weight`, `cpu.max.burst`, and `cpu.max`.
+    public let cpu: CgroupCPU
 
     public static let none = CgroupResources(memoryMax: nil, memoryLow: nil, swapMax: nil, pidsMax: nil)
 
+    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none) {
+        self.memoryMax = memoryMax
+        self.memoryLow = memoryLow
+        self.swapMax = swapMax
+        self.pidsMax = pidsMax
+        self.cpu = cpu
+    }
+
     /// Writes in runc's Set order: pids, then memory.swap.max, memory.max,
-    /// and memory.low.
+    /// and memory.low, then the CPU files in setCPU's order.
     public var writes: [CgroupWrite] {
         var writes: [CgroupWrite] = []
         if let pidsMax { writes.append(CgroupWrite(file: "pids.max", value: pidsMax, ignoreMissing: false)) }
@@ -47,6 +121,7 @@ public struct CgroupResources: Sendable, Equatable {
         }
         if let memoryMax { writes.append(CgroupWrite(file: "memory.max", value: memoryMax, ignoreMissing: false)) }
         if let memoryLow { writes.append(CgroupWrite(file: "memory.low", value: memoryLow, ignoreMissing: false)) }
+        writes += cpu.writes
         return writes
     }
 
@@ -58,6 +133,7 @@ public struct CgroupResources: Sendable, Equatable {
         let swapRequired = swapMax != nil && swapMax != .max && swapMax != .number(0)
         if memoryMax != nil || memoryLow != nil || swapRequired { controllers.append("memory") }
         if pidsMax != nil { controllers.append("pids") }
+        if cpu.isSet { controllers.append("cpu") }
         return controllers
     }
 
@@ -67,9 +143,42 @@ public struct CgroupResources: Sendable, Equatable {
         swapMax != nil && !requiredControllers.contains("memory") ? ["memory"] : []
     }
 
-    /// Whether any memory file is written. Memory is a domain controller,
-    /// so every cgroup on the path must then be a plain domain.
-    var needsDomainController: Bool { memoryMax != nil || memoryLow != nil || swapMax != nil }
+    /// Whether every cgroup on the path must be a plain domain: runc's
+    /// containsDomainController, which counts any memory file and, although
+    /// the kernel's cpu controller is threaded, any CPU setting.
+    var needsDomainController: Bool { memoryMax != nil || memoryLow != nil || swapMax != nil || cpu.isSet }
+
+    /// Performs `writes` in order through `write`, which returns 0 or an
+    /// errno, and throws at the first refusal. A deferred burst (see
+    /// `CgroupWrite.retriedAfterCPUMax`) is written once more right after
+    /// `cpu.max` succeeds, and its second refusal is the error.
+    func apply(in displayPath: String, write: (_ file: String, _ text: String) -> Int32) throws {
+        func failure(_ item: CgroupWrite, _ code: Int32) -> RuntimeError {
+            let hint = code == Errno.noSuchFileOrDirectory.rawValue
+                ? " (the controller file does not exist in this kernel or cgroup)" : ""
+            return RuntimeError("set \(displayPath)/\(item.file) to \(item.value): \(Errno(rawValue: code))\(hint)")
+        }
+        var deferred: (item: CgroupWrite, code: Int32)?
+        for item in writes {
+            let code = write(item.file, item.value.description)
+            if code == 0 {
+                if item.file == "cpu.max", let retry = deferred {
+                    deferred = nil
+                    let again = write(retry.item.file, retry.item.value.description)
+                    guard again == 0 else { throw failure(retry.item, again) }
+                }
+                continue
+            }
+            if code == Errno.noSuchFileOrDirectory.rawValue && item.ignoreMissing { continue }
+            if code == Errno.invalidArgument.rawValue && item.retriedAfterCPUMax && deferred == nil {
+                deferred = (item, code)
+                continue
+            }
+            throw failure(item, code)
+        }
+        // A retried burst always precedes a `cpu.max` write; never drop it.
+        if let deferred { throw failure(deferred.item, deferred.code) }
+    }
 }
 
 /// `linux.cgroupsPath` plus resources. A container always gets its own
@@ -141,8 +250,8 @@ public struct CgroupPlan: Sendable, Equatable {
         return path.hasPrefix("/") ? .absolute(parts) : .relative(parts)
     }
 
-    /// runc's value semantics. A value below -1 is rejected here; runc
-    /// passes it to the kernel, which refuses it at create.
+    /// runc's value semantics. A memory value below -1 is rejected here;
+    /// runc passes it to the kernel, which refuses it at create.
     static func converted(_ resources: OCIConfiguration.Resources?) throws -> CgroupResources {
         // Memory: 0 (or absent) is unset, -1 is "max", positive is bytes.
         func memoryValue(_ value: Int64, field: String) throws -> CgroupValue? {
@@ -169,7 +278,33 @@ public struct CgroupPlan: Sendable, Equatable {
         let pidsMax: CgroupValue? = resources?.pids?.limit.map { value in
             value > 0 ? .number(UInt64(value)) : value == 0 ? .number(1) : .max
         }
-        return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax)
+
+        // CPU: runc rejects no value. Shares become a weight (0 stays
+        // unset); any nonzero quota or period writes cpu.max, any negative
+        // quota as max and a zero period as 100000; idle and burst are
+        // written whenever given.
+        let cpu = resources?.cpu
+        let weight = cpuWeight(shares: cpu?.shares ?? 0)
+        let quota = cpu?.quota ?? 0
+        let period = cpu?.period ?? 0
+        let cpuMax: CgroupValue? = quota == 0 && period == 0
+            ? nil : .bandwidth(quota: quota > 0 ? quota : nil, period: period == 0 ? 100_000 : period)
+        let cpuValues = CgroupCPU(
+            idle: cpu?.idle, weight: weight == 0 ? nil : weight, burst: cpu?.burst, max: cpuMax, hasQuota: quota != 0
+        )
+        return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax, cpu: cpuValues)
+    }
+
+    /// runc's ConvertCPUSharesToCgroupV2Value: a quadratic in log2(shares)
+    /// through shares 2, 1024, and 262144 to weights 1, 100, and 10000,
+    /// rounded up. 0 means unset.
+    static func cpuWeight(shares: UInt64) -> UInt64 {
+        if shares == 0 { return 0 }
+        if shares <= 2 { return 1 }
+        if shares >= 262_144 { return 10_000 }
+        let l = log2(Double(shares))
+        let exponent = (l * l + 125 * l) / 612.0 - 7.0 / 34.0
+        return UInt64(pow(10, exponent).rounded(.up))
     }
 
     /// runc's ConvertMemorySwapToCgroupV2Value followed by its setMemory

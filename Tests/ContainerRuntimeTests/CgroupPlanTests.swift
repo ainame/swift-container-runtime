@@ -157,7 +157,11 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
     (#"{"memory": {"limit": "1g"}}"#, "linux.resources.memory.limit"),
     (#"{"pids": {"limit": -9223372036854775809}}"#, "invalid value at linux.resources.pids.limit"),
     // Unimplemented controls are rejected, never silently accepted.
-    (#"{"cpu": {"shares": 1024}}"#, "linux.resources.cpu"),
+    (#"{"cpu": {"shares": 1024, "cpus": "0"}}"#, "unsupported field(s): linux.resources.cpu.cpus"),
+    (#"{"cpu": {"mems": "0"}}"#, "unsupported field(s): linux.resources.cpu.mems"),
+    (#"{"cpu": {"realtimeRuntime": 950000}}"#, "unsupported field(s): linux.resources.cpu.realtimeRuntime"),
+    (#"{"cpu": {"realtimePeriod": 1000000}}"#, "unsupported field(s): linux.resources.cpu.realtimePeriod"),
+    (#"{"cpu": {"weight": 100}}"#, "unsupported field(s): linux.resources.cpu.weight"),
     (#"{"devices": [{"allow": false, "access": "rwm"}]}"#, "linux.resources.devices"),
     (#"{"blockIO": {}}"#, "linux.resources.blockIO"),
     (#"{"hugepageLimits": []}"#, "linux.resources.hugepageLimits"),
@@ -171,6 +175,192 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
 func rejectsInvalidAndUnsupportedResources(_ json: String, _ reason: String) {
     let message = rejection(#", "resources": "# + json)
     #expect(message?.contains(reason) == true, "\(message ?? "accepted")")
+}
+
+// MARK: CPU
+
+@Test(arguments: [
+    // Unset, the clamped ends, and runc's quadratic through 2, 1024 and 262144.
+    (UInt64(0), UInt64(0)), (1, 1), (2, 1), (3, 2), (4, 2), (512, 59), (1024, 100), (2048, 174),
+    (262_143, 10_000), (262_144, 10_000), (UInt64.max, 10_000),
+] as [(UInt64, UInt64)])
+func cpuSharesConvertAsRunc(_ shares: UInt64, _ weight: UInt64) {
+    #expect(CgroupPlan.cpuWeight(shares: shares) == weight)
+}
+
+@Test func cpuWeightIsMonotonicAndBounded() {
+    var previous: UInt64 = 1
+    var violations: [UInt64] = []
+    for shares in stride(from: UInt64(2), through: 262_144, by: 7) {
+        let weight = CgroupPlan.cpuWeight(shares: shares)
+        if weight < previous || weight > 10_000 { violations.append(shares) }
+        previous = weight
+    }
+    #expect(violations.isEmpty, "shares \(violations.prefix(10))")
+}
+
+@Test(arguments: [
+    // Absent, empty, and zero values write nothing and need no controller.
+    #"{"cpu": null}"#,
+    #"{"cpu": {}}"#,
+    #"{"cpu": {"shares": null, "quota": null, "period": null, "burst": null, "idle": null}}"#,
+    #"{"cpu": {"shares": 0, "quota": 0, "period": 0}}"#,
+])
+func unsetCpuWritesNothing(_ json: String) throws {
+    let converted = try resources(json)
+    #expect(converted == .none)
+    #expect(converted.cpu == .none && !converted.cpu.isSet)
+    #expect(converted.writes.isEmpty)
+    #expect(converted.requiredControllers.isEmpty)
+    #expect(!converted.needsDomainController)
+}
+
+@Test(arguments: [
+    // cpu JSON -> file=value writes in setCPU order.
+    (#"{"shares": 1024}"#, ["cpu.weight=100"]),
+    (#"{"shares": 2}"#, ["cpu.weight=1"]),
+    (#"{"shares": 18446744073709551615}"#, ["cpu.weight=10000"]),
+    // A quota alone uses the default period; a period alone is unlimited.
+    (#"{"quota": 50000}"#, ["cpu.max=50000 100000"]),
+    (#"{"period": 50000}"#, ["cpu.max=max 50000"]),
+    (#"{"quota": 0, "period": 250000}"#, ["cpu.max=max 250000"]),
+    // Any negative quota is max.
+    (#"{"quota": -1}"#, ["cpu.max=max 100000"]),
+    (#"{"quota": -9223372036854775808, "period": 250000}"#, ["cpu.max=max 250000"]),
+    // Extreme values are passed to the kernel unchanged, as runc does.
+    (#"{"quota": 9223372036854775807, "period": 18446744073709551615}"#, ["cpu.max=9223372036854775807 18446744073709551615"]),
+    (#"{"quota": 999, "period": 999}"#, ["cpu.max=999 999"]),
+    // idle and burst are written whenever given, 0 included.
+    (#"{"idle": 0}"#, ["cpu.idle=0"]),
+    (#"{"idle": 1}"#, ["cpu.idle=1"]),
+    (#"{"idle": -9223372036854775808}"#, ["cpu.idle=-9223372036854775808"]),
+    (#"{"burst": 0}"#, ["cpu.max.burst=0"]),
+    (#"{"burst": 18446744073709551615}"#, ["cpu.max.burst=18446744073709551615"]),
+    (#"{"idle": 1, "shares": 1024}"#, ["cpu.idle=1", "cpu.weight=100"]),
+    (
+        #"{"idle": 0, "shares": 512, "burst": 10000, "quota": 50000, "period": 200000}"#,
+        ["cpu.idle=0", "cpu.weight=59", "cpu.max.burst=10000", "cpu.max=50000 200000"]
+    ),
+])
+func cpuWritesFollowRunc(_ cpu: String, _ expected: [String]) throws {
+    let converted = try resources(#"{"cpu": "# + cpu + "}")
+    #expect(converted.writes.map { "\($0.file)=\($0.value)" } == expected)
+    #expect(converted.cpu.isSet)
+    // CPU alone needs the cpu controller only, and counts as a domain
+    // controller as in runc's containsDomainController.
+    #expect(converted.requiredControllers == ["cpu"])
+    #expect(converted.optionalControllers.isEmpty)
+    #expect(converted.needsDomainController)
+}
+
+@Test func burstRetryNeedsANonzeroQuota() throws {
+    func retried(_ cpu: String) throws -> Bool? {
+        try resources(#"{"cpu": "# + cpu + "}").writes.first { $0.file == "cpu.max.burst" }?.retriedAfterCPUMax
+    }
+    #expect(try retried(#"{"burst": 1000, "quota": 50000}"#) == true)
+    #expect(try retried(#"{"burst": 1000, "quota": -1}"#) == true)
+    #expect(try retried(#"{"burst": 1000}"#) == false)
+    // A period with a zero quota still writes cpu.max, but runc does not retry.
+    #expect(try retried(#"{"burst": 1000, "quota": 0, "period": 100000}"#) == false)
+    #expect(try resources(#"{"cpu": {"quota": 50000}}"#).writes.allSatisfy { !$0.retriedAfterCPUMax })
+}
+
+@Test func cpuFollowsPidsAndMemoryInRuncSetOrder() throws {
+    let converted = try resources(#"{"cpu": {"quota": 20000, "idle": 0}, "memory": {"limit": 8192}, "pids": {"limit": 5}}"#)
+    #expect(converted.writes.map(\.file) == ["pids.max", "memory.max", "cpu.idle", "cpu.max"])
+    #expect(converted.requiredControllers == ["memory", "pids", "cpu"])
+    #expect(try resources(#"{"cpu": {"shares": 1024}, "pids": {"limit": 5}}"#).requiredControllers == ["pids", "cpu"])
+}
+
+@Test(arguments: [
+    (#"{"shares": -1}"#, "invalid value at linux.resources.cpu.shares"),
+    (#"{"shares": 18446744073709551616}"#, "invalid value at linux.resources.cpu.shares"),
+    (#"{"shares": 1.5}"#, "linux.resources.cpu.shares"),
+    (#"{"shares": "1024"}"#, "linux.resources.cpu.shares"),
+    (#"{"period": -1}"#, "invalid value at linux.resources.cpu.period"),
+    (#"{"burst": -1}"#, "invalid value at linux.resources.cpu.burst"),
+    (#"{"quota": 9223372036854775808}"#, "invalid value at linux.resources.cpu.quota"),
+    (#"{"quota": "max"}"#, "linux.resources.cpu.quota"),
+    (#"{"idle": -9223372036854775809}"#, "invalid value at linux.resources.cpu.idle"),
+    (#"{"idle": true}"#, "linux.resources.cpu.idle"),
+    (#"[]"#, "linux.resources.cpu"),
+])
+func rejectsMalformedCpu(_ cpu: String, _ reason: String) {
+    let message = rejection(#", "resources": {"cpu": "# + cpu + "}")
+    #expect(message?.contains(reason) == true, "\(message ?? "accepted")")
+}
+
+/// Applies `json`'s writes through a fake cgroup whose files answer with
+/// the listed errno values in turn (then 0); returns every attempted write
+/// and the error, if any.
+private func applied(_ json: String, answers: [String: [Int32]]) throws -> (writes: [String], error: String?) {
+    let converted = try resources(json)
+    var remaining = answers
+    var writes: [String] = []
+    do {
+        try converted.apply(in: "/sys/fs/cgroup/test") { file, text in
+            writes.append("\(file)=\(text)")
+            guard var codes = remaining[file], !codes.isEmpty else { return 0 }
+            let code = codes.removeFirst()
+            remaining[file] = codes
+            return code
+        }
+        return (writes, nil)
+    } catch {
+        return (writes, "\(error)")
+    }
+}
+
+private let einval = Errno.invalidArgument.rawValue
+private let enoent = Errno.noSuchFileOrDirectory.rawValue
+
+@Test func appliesEveryWriteInOrder() throws {
+    let result = try applied(#"{"pids": {"limit": 5}, "cpu": {"idle": 0, "shares": 1024, "burst": 0, "quota": -1}}"#, answers: [:])
+    #expect(result.error == nil)
+    #expect(result.writes == ["pids.max=5", "cpu.idle=0", "cpu.weight=100", "cpu.max.burst=0", "cpu.max=max 100000"])
+}
+
+@Test func burstRefusedBeforeTheQuotaIsRetriedAfterCpuMax() throws {
+    let burst = #"{"cpu": {"burst": 20000, "quota": 50000}}"#
+    let retried = try applied(burst, answers: ["cpu.max.burst": [einval]])
+    #expect(retried.error == nil)
+    #expect(retried.writes == ["cpu.max.burst=20000", "cpu.max=50000 100000", "cpu.max.burst=20000"])
+    // A second refusal is the error.
+    let refused = try applied(burst, answers: ["cpu.max.burst": [einval, einval]])
+    #expect(refused.writes.count == 3)
+    #expect(refused.error?.contains("set /sys/fs/cgroup/test/cpu.max.burst to 20000") == true, "\(refused.error ?? "")")
+    // A refused cpu.max is reported as such, without the retry.
+    let quota = try applied(burst, answers: ["cpu.max.burst": [einval], "cpu.max": [einval]])
+    #expect(quota.writes == ["cpu.max.burst=20000", "cpu.max=50000 100000"])
+    #expect(quota.error?.contains("cpu.max to 50000 100000") == true, "\(quota.error ?? "")")
+}
+
+@Test(arguments: [
+    // Without a quota, with a period but zero quota, or another errno: no retry.
+    (#"{"cpu": {"burst": 20000}}"#, einval, ["cpu.max.burst=20000"]),
+    (#"{"cpu": {"burst": 20000, "period": 100000}}"#, einval, ["cpu.max.burst=20000"]),
+    (#"{"cpu": {"burst": 20000, "quota": 50000}}"#, enoent, ["cpu.max.burst=20000"]),
+    (#"{"cpu": {"burst": 20000, "quota": 50000}}"#, Errno.permissionDenied.rawValue, ["cpu.max.burst=20000"]),
+] as [(String, Int32, [String])])
+func burstRefusalWithoutRetryFailsAtOnce(_ json: String, _ code: Int32, _ writes: [String]) throws {
+    let result = try applied(json, answers: ["cpu.max.burst": [code]])
+    #expect(result.writes == writes)
+    #expect(result.error?.contains("cpu.max.burst") == true, "\(result.error ?? "accepted")")
+}
+
+@Test func missingCpuFilesAreErrors() throws {
+    // cpu.idle (Linux 5.15) and cpu.max.burst (5.14) are not optional.
+    let idle = try applied(#"{"cpu": {"idle": 0, "shares": 1024}}"#, answers: ["cpu.idle": [enoent]])
+    #expect(idle.writes == ["cpu.idle=0"])
+    #expect(idle.error?.contains("does not exist in this kernel or cgroup") == true, "\(idle.error ?? "accepted")")
+    // An idle group refuses a weight; nothing after it is written.
+    let weight = try applied(#"{"cpu": {"idle": 1, "shares": 1024, "quota": 1000}}"#, answers: ["cpu.weight": [einval]])
+    #expect(weight.writes == ["cpu.idle=1", "cpu.weight=100"])
+    #expect(weight.error?.contains("cpu.weight to 100") == true, "\(weight.error ?? "accepted")")
+    // The ignorable swap write still tolerates a missing file.
+    let swap = try applied(#"{"memory": {"swap": -1}, "cpu": {"quota": 1000}}"#, answers: ["memory.swap.max": [enoent]])
+    #expect(swap.error == nil)
+    #expect(swap.writes == ["memory.swap.max=max", "cpu.max=1000 100000"])
 }
 
 @Test func swapConversionMatchesRuncTable() throws {
