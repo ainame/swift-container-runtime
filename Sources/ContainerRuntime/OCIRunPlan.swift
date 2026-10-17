@@ -102,6 +102,9 @@ public struct OCIRunPlan: Sendable {
     /// `linux.readonlyPaths` and `linux.maskedPaths`, applied in that order
     /// after the container root is final.
     public let pathControls: PathControls
+    /// `linux.cgroupsPath` and the implemented `linux.resources` subset.
+    /// Every container gets its own cgroup v2 group, as in runc.
+    public let cgroup: CgroupPlan
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
@@ -120,10 +123,33 @@ public struct OCIRunPlan: Sendable {
 
     /// Runs the workload in the foreground and returns its shell-style exit
     /// status. Like `NamespaceCommand.run`, this rejects multithreaded callers.
+    /// Without a container ID or state, a default-path cgroup gets a name
+    /// unique to this run, and the cgroup is removed whenever the run ends.
     @available(*, noasync, message: "launch containers before starting async work")
     public func run() throws -> Int32 {
         #if os(Linux)
-        return try runOnLinux()
+        // A transient ID from this process and a monotonic timestamp, so a
+        // leftover group of an earlier run with a reused PID is not adopted.
+        var now = timespec()
+        _ = unsafe clock_gettime(CLOCK_MONOTONIC, &now)
+        let id = try ContainerID("transient-\(getpid())-\(now.tv_sec)-\(now.tv_nsec)")
+        let leaf = try CgroupLeaf.prepare(cgroup, id: id)
+
+        // The init has exited (or never started) when runOnLinux returns, so
+        // whatever remains in the cgroup belongs to this run.
+        var hooks = LaunchHooks()
+        hooks.placeInit = { try leaf.join($0) }
+        let status: Int32
+        do {
+            status = try runOnLinux(hooks: hooks)
+        } catch {
+            _ = try? CgroupLeaf.remove(leaf.identity, killRemaining: true)
+            throw leaf.oomKilledSincePrepare ? RuntimeError("container init was OOM-killed (memory limit too low?): \(error)") : error
+        }
+        if let warning = try CgroupLeaf.remove(leaf.identity, killRemaining: true) {
+            RuntimeDiagnostics.writeError("swift-container-runtime: warning: \(warning)")
+        }
+        return status
         #else
         throw RuntimeError("OCI run requires Linux")
         #endif
@@ -189,6 +215,7 @@ public struct OCIRunPlan: Sendable {
         let pathControls = try PathControls(
             readonly: configuration.linux.readonlyPaths ?? [], masked: configuration.linux.maskedPaths ?? []
         )
+        let cgroup = try CgroupPlan.validated(path: configuration.linux.cgroupsPath, resources: configuration.linux.resources)
 
         self.ociVersion = version
         self.bundle = bundle
@@ -206,6 +233,7 @@ public struct OCIRunPlan: Sendable {
         self.capabilities = capabilities
         self.resourceLimits = resourceLimits
         self.pathControls = pathControls
+        self.cgroup = cgroup
     }
 
     /// An absent `process.user` means uid and gid 0, as in runc. Values the

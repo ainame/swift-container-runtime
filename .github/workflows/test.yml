@@ -14,7 +14,11 @@ jobs:
     container:
       image: swift:6.4.1
       # Namespace, procfs, mount, and mknod integration tests require privileges.
-      options: --privileged
+      # The host cgroup namespace shows the runner VM's own root, where systemd
+      # already enables memory and pids; a private namespace's root would be
+      # this container's cgroup, which holds the job's processes and so cannot
+      # enable controllers for children (cgroup v2 no-internal-processes rule).
+      options: --privileged --cgroupns=host
     steps:
       - uses: actions/checkout@v4
       - name: Verify toolchain
@@ -27,7 +31,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc
       - name: Unit tests with strict memory diagnostics
         run: swift test --disable-automatic-resolution
-      - name: Debug namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, and path control integration
+      - name: Debug namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, path control, and cgroup integration
         run: |
           sh scripts/integration.sh .build/debug/swift-container-runtime
           sh scripts/oci-integration.sh .build/debug/swift-container-runtime
@@ -37,7 +41,8 @@ jobs:
           RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/debug/swift-container-runtime
-      - name: Optimized namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, and path control integration
+          RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/debug/swift-container-runtime
+      - name: Optimized namespace, OCI, lifecycle, credential, capability, rlimit, readonly root, path control, and cgroup integration
         run: |
           swift test -c release --disable-automatic-resolution
           sh scripts/integration.sh .build/release/swift-container-runtime
@@ -48,3 +53,4 @@ jobs:
           RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/release/swift-container-runtime
+          RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/release/swift-container-runtime

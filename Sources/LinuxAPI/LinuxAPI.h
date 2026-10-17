@@ -11,6 +11,8 @@
 #include <sys/socket.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+/* struct statfs and fstatfs, which identify the cgroup v2 mount. */
+#include <sys/statfs.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>

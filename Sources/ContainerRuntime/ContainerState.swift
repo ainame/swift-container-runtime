@@ -102,6 +102,10 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     var pidNamespace: Bool
     /// Absent while creating (or after an aborted create).
     var initProcess: InitIdentity?
+    /// The container's cgroup, recorded right after it is prepared and
+    /// before any init exists. Absent in records written before cgroup
+    /// support (which created none) and before preparation.
+    var cgroup: CgroupIdentity?
 
     init(id: ContainerID, plan: OCIRunPlan, created: String) {
         format = Self.currentFormat
@@ -113,6 +117,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         annotations = plan.annotations
         pidNamespace = plan.namespaces.contains(.pid)
         initProcess = nil
+        cgroup = nil
     }
 
     func encoded() throws -> [UInt8] {
@@ -147,6 +152,8 @@ struct ContainerRecord: Codable, Sendable, Equatable {
             guard process.startTime > 0 else { throw corrupt("invalid init start time") }
             guard isValidBootID(process.bootID) else { throw corrupt("invalid boot ID") }
         }
+        // A cgroup record must never name the mount root or leave it.
+        if let cgroup = record.cgroup, !cgroup.isValid { throw corrupt("invalid cgroup \(cgroup.path)") }
         return record
     }
 }

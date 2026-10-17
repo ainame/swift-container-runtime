@@ -104,6 +104,22 @@ private func record(initProcess: InitIdentity? = InitIdentity(pid: 4242, startTi
     #expect(try ContainerRecord.decode(try original.encoded(), expectedID: box) == original)
 }
 
+@Test func recordWithCgroupRoundTrips() throws {
+    var original = record()
+    original.cgroup = CgroupIdentity(path: "/swift-container-runtime/box", inode: 4242, bootID: bootID, created: true)
+    #expect(try ContainerRecord.decode(try original.encoded(), expectedID: box) == original)
+    let text = String(decoding: try original.encoded(), as: UTF8.self)
+    #expect(text.contains(#""cgroup":{"bootID":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","created":true,"inode":4242,"path":"/swift-container-runtime/box"}"#))
+}
+
+/// Records written before cgroup support have no `cgroup` key; they decode
+/// as containers without a cgroup to clean up.
+@Test func recordFromBeforeCgroupsDecodes() throws {
+    let text = String(decoding: try record().encoded(), as: UTF8.self)
+    #expect(!text.contains("cgroup"))
+    #expect(try ContainerRecord.decode(Array(text.utf8), expectedID: box).cgroup == nil)
+}
+
 private func mutated(_ change: (inout ContainerRecord) -> Void) throws -> [UInt8] {
     var value = record()
     change(&value)
@@ -120,6 +136,21 @@ private func mutated(_ change: (inout ContainerRecord) -> Void) throws -> [UInt8
     ("init PID -5", { @Sendable (record: inout ContainerRecord) in record.initProcess?.pid = -5 }),
     ("start time", { @Sendable (record: inout ContainerRecord) in record.initProcess?.startTime = 0 }),
     ("boot ID", { @Sendable (record: inout ContainerRecord) in record.initProcess?.bootID = "../../etc" }),
+    ("invalid cgroup", { @Sendable (record: inout ContainerRecord) in
+        record.cgroup = CgroupIdentity(path: "/", inode: 7, bootID: bootID, created: true)
+    }),
+    ("invalid cgroup", { @Sendable (record: inout ContainerRecord) in
+        record.cgroup = CgroupIdentity(path: "/a/../../etc", inode: 7, bootID: bootID, created: true)
+    }),
+    ("invalid cgroup", { @Sendable (record: inout ContainerRecord) in
+        record.cgroup = CgroupIdentity(path: "relative/box", inode: 7, bootID: bootID, created: true)
+    }),
+    ("invalid cgroup", { @Sendable (record: inout ContainerRecord) in
+        record.cgroup = CgroupIdentity(path: "/swift-container-runtime/box", inode: 0, bootID: bootID, created: true)
+    }),
+    ("invalid cgroup", { @Sendable (record: inout ContainerRecord) in
+        record.cgroup = CgroupIdentity(path: "/swift-container-runtime/box", inode: 7, bootID: "../../etc", created: true)
+    }),
 ] as [(String, @Sendable (inout ContainerRecord) -> Void)])
 func rejectsMalformedRecords(_ reason: String, _ change: @Sendable (inout ContainerRecord) -> Void) throws {
     let bytes = try mutated(change)

@@ -240,6 +240,10 @@ struct LaunchHooks {
     /// Runs first in the forked launcher to close inherited descriptors that
     /// must not outlive the supervisor, such as the container lock.
     var closeInChildren: () -> Void = {}
+    /// Places the blocked init (by PID) in its cgroup before it may run any
+    /// setup. Its PID cannot be reused meanwhile: it is still an unreaped
+    /// child of the launcher, which waits on the release pipe.
+    var placeInit: (pid_t) throws -> Void = { _ in }
     /// The init is pinned by a pidfd while it is still an unreaped child, so
     /// this identity names it rather than a reused PID.
     var initStarted: (InitIdentity) throws -> Void = { _ in }
@@ -338,6 +342,9 @@ func runLaunch(
                 case nil: _exit(failureStatus(reportWrite, .parentLifetime))
                 }
             }
+            // Run nothing (and fork nothing) before the supervisor has placed
+            // this init in the container's cgroup; EOF means it failed or died.
+            guard receiveControl(commitRead) == LaunchControl.proceed else { _exit(125) }
             _exit(initialize(reportWrite, commitRead, parentOwner))
         }
         try? parentOwner.close(); try? commitRead.close()
@@ -381,8 +388,12 @@ func runLaunch(
                 pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
                 do {
                     let identity = try processIdentity(of: initPID)
+                    // Join the cgroup while the PID is still held by the
+                    // blocked launcher, then let the launcher continue.
+                    try hooks.placeInit(initPID)
                     try? releaseWrite.close()
                     try hooks.initStarted(identity)
+                    try sendControl(commitWrite, .proceed)
                 } catch {
                     thrown = error
                 }
@@ -441,10 +452,22 @@ func runLaunch(
     return hooks.detached ? 0 : shellStatus(status)
 }
 
+/// Bytes the supervisor sends on the commit socket, in this order.
+enum LaunchControl: UInt8 {
+    /// A detached init may leave setup (see `receiveCommit`).
+    case commit = 1
+    /// The init is in its cgroup and may start setup.
+    case proceed = 2
+}
+
 /// Sends the one-byte commit that lets a detached init leave setup.
 private func sendCommit(_ owner: borrowing OwnedFileDescriptor) throws {
+    try sendControl(owner, .commit)
+}
+
+private func sendControl(_ owner: borrowing OwnedFileDescriptor, _ control: LaunchControl) throws {
     let sent = try owner.withDescriptor { descriptor in
-        var byte: UInt8 = 1
+        var byte: UInt8 = control.rawValue
         var result: Int
         repeat { result = unsafe send(descriptor.rawValue, &byte, 1, Int32(MSG_NOSIGNAL)) } while result < 0 && errno == EINTR
         return result
@@ -455,11 +478,17 @@ private func sendCommit(_ owner: borrowing OwnedFileDescriptor) throws {
 /// Waits in a detached init for the commit byte. EOF means the supervisor
 /// failed or died before recording the container, so the init must exit.
 func receiveCommit(_ owner: borrowing OwnedFileDescriptor) -> Bool {
-    (try? owner.withDescriptor { descriptor in
+    receiveControl(owner) == .commit
+}
+
+/// One control byte from the supervisor; nil on EOF or error.
+func receiveControl(_ owner: borrowing OwnedFileDescriptor) -> LaunchControl? {
+    let byte = try? owner.withDescriptor { descriptor -> UInt8? in
         var byte: UInt8 = 0
         let count = try withUnsafeMutableBytes(of: &byte) { buffer in unsafe try descriptor.read(into: buffer) }
-        return count == 1 && byte == 1
-    }) ?? false
+        return count == 1 ? byte : nil
+    }
+    return byte.flatMap { LaunchControl(rawValue: $0) }
 }
 
 /// All borrowed buffers remain alive until both launch branches finish. This

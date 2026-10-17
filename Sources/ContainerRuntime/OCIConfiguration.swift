@@ -122,20 +122,65 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
+    /// `linux.resources.memory`. `kernel`, `kernelTCP`, `swappiness`,
+    /// `disableOOMKiller`, `useHierarchy`, and `checkBeforeUpdate` are not
+    /// implemented and therefore rejected.
+    struct Memory: Decodable, Sendable {
+        var limit: Int64?
+        var reservation: Int64?
+        var swap: Int64?
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["limit", "reservation", "swap"])
+            limit = try object.optionalInt64("limit")
+            reservation = try object.optionalInt64("reservation")
+            swap = try object.optionalInt64("swap")
+        }
+    }
+
+    struct Pids: Decodable, Sendable {
+        /// Optional since runtime-spec 1.2.1; absent keeps the current value.
+        var limit: Int64?
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["limit"])
+            limit = try object.optionalInt64("limit")
+        }
+    }
+
+    /// `linux.resources`. Only the memory and pids controls are implemented;
+    /// CPU, block I/O, hugepages, devices, network, RDMA, and unified keys
+    /// are rejected rather than ignored.
+    struct Resources: Decodable, Sendable {
+        var memory: Memory?
+        var pids: Pids?
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["memory", "pids"])
+            memory = try object.optional("memory")
+            pids = try object.optional("pids")
+        }
+    }
+
     struct Linux: Decodable, Sendable {
         var namespaces: [Namespace]
         var rootfsPropagation: String?
         var maskedPaths: [String]?
         var readonlyPaths: [String]?
+        var cgroupsPath: String?
+        var resources: Resources?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
-                decoder, allowed: ["namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths"]
+                decoder,
+                allowed: ["namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources"]
             )
             namespaces = try object.required("namespaces")
             rootfsPropagation = try object.optional("rootfsPropagation")
             maskedPaths = try object.optional("maskedPaths")
             readonlyPaths = try object.optional("readonlyPaths")
+            cgroupsPath = try object.optional("cgroupsPath")
+            resources = try object.optional("resources")
         }
     }
 
@@ -234,6 +279,24 @@ private struct StrictObject {
     private func invalidUInt64(_ key: String) -> RuntimeError {
         let field = fieldPath(container.codingPath + [AnyKey(stringValue: key)])
         return RuntimeError("config.json: invalid value at \(field): expected an integer from 0 to \(UInt64.max)")
+    }
+
+    /// An optional signed 64-bit integer, with the same field-named
+    /// diagnostics as `requiredUInt64` for fractional or out-of-range numbers.
+    func optionalInt64(_ key: String) throws -> Int64? {
+        do {
+            return try container.decodeIfPresent(Int64.self, forKey: AnyKey(stringValue: key))
+        } catch let error as DecodingError {
+            guard case .dataCorrupted = error else { throw error }
+            throw invalidInt64(key)
+        } catch {
+            throw invalidInt64(key)
+        }
+    }
+
+    private func invalidInt64(_ key: String) -> RuntimeError {
+        let field = fieldPath(container.codingPath + [AnyKey(stringValue: key)])
+        return RuntimeError("config.json: invalid value at \(field): expected an integer from \(Int64.min) to \(Int64.max)")
     }
 
     func optional<Value: Decodable>(_ key: String) throws -> Value? {

@@ -137,8 +137,18 @@ func withVerifiedProcess<Result>(
     // Pin first, then compare procfs identity; a later PID reuse cannot retarget it.
     let raw = linux_pidfd_open(identity.pid)
     guard raw >= 0 else {
-        if errno == ESRCH { return nil }
-        throw RuntimeError("pidfd_open \(identity.pid): \(Errno(rawValue: errno)) (requires Linux 5.3+)")
+        let error = errno
+        if error == ESRCH { return nil }
+        // EINVAL also means the PID has no thread-group leader: a reaped
+        // init's PID stays allocated while orphaned descendants still use it
+        // as their process group or session. Without a pidfd nothing is
+        // signalled; procfs only decides whether the recorded init is gone.
+        if error == EINVAL {
+            guard let stat = try processStat(identity.pid), stat.startTime == identity.startTime, !stat.hasExited else {
+                return nil
+            }
+        }
+        throw RuntimeError("pidfd_open \(identity.pid): \(Errno(rawValue: error)) (requires Linux 5.3+)")
     }
     let handle = ProcessHandle(pid: identity.pid, descriptor: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)))
     guard let stat = try processStat(identity.pid), stat.startTime == identity.startTime, !stat.hasExited else {

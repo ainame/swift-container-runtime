@@ -112,6 +112,12 @@ public struct ContainerLifecycle: Sendable {
         if action != .destroy, try !Self.killInit(record) {
             throw RuntimeError("container \(id.rawValue) init is still running 10 seconds after SIGKILL")
         }
+        // Remaining cgroup members are the container's when its verified init
+        // was just killed, or (as runc assumes) when it had no PID namespace.
+        // A failed cleanup keeps the state so that delete can be retried.
+        if let record {
+            try Self.removeCgroup(record, killRemaining: action != .destroy || !record.pidNamespace)
+        }
         try container.destroy()
         #else
         throw Self.unsupported
@@ -181,6 +187,56 @@ extension ContainerLifecycle {
         return gone ?? true
     }
 
+    /// Removes the recorded cgroup, if any; a replaced cgroup is reported
+    /// as a warning and left alone.
+    private static func removeCgroup(_ record: ContainerRecord, killRemaining: Bool) throws {
+        guard let cgroup = record.cgroup else { return }
+        if let warning = try CgroupLeaf.remove(cgroup, killRemaining: killRemaining) {
+            RuntimeDiagnostics.writeError("swift-container-runtime: warning: container \(record.id): \(warning)")
+        }
+    }
+
+    /// Prepares the container's cgroup and records it before any init
+    /// exists, so every later failure or command can find and remove it.
+    private static func prepareCgroup(
+        _ plan: OCIRunPlan, id: ContainerID, record: inout ContainerRecord, container: LockedContainer
+    ) throws -> CgroupLeaf {
+        let leaf = try CgroupLeaf.prepare(plan.cgroup, id: id)
+        record.cgroup = leaf.identity
+        do {
+            try container.writeRecord(record)
+        } catch {
+            _ = try? CgroupLeaf.remove(leaf.identity, killRemaining: false)
+            record.cgroup = nil
+            throw error
+        }
+        return leaf
+    }
+
+    /// runc's report for a failed start: an OOM kill in the container's
+    /// cgroup since it was prepared is the most likely cause of whatever
+    /// failed. Kills counted before (in an adopted cgroup) are not claimed.
+    private static func explainingOOM(_ error: any Error, _ leaf: CgroupLeaf?) -> any Error {
+        guard let leaf, leaf.oomKilledSincePrepare else { return error }
+        return RuntimeError("container init was OOM-killed (memory limit too low?): \(error)")
+    }
+
+    /// Cleanup after a failed create or run. The init this command launched
+    /// is killed first, so whatever remains in its cgroup is the container's.
+    /// If the cgroup cannot be removed, the state is kept for `delete`.
+    private static func abandon(_ record: ContainerRecord, _ container: LockedContainer) {
+        _ = try? killInit(record)
+        do {
+            try removeCgroup(record, killRemaining: true)
+        } catch {
+            RuntimeDiagnostics.writeError(
+                "swift-container-runtime: warning: container \(record.id) kept for delete: \(error)"
+            )
+            return
+        }
+        try? container.destroy()
+    }
+
     /// `create`, and with `start` a detached `run`. Holding the lock for the
     /// whole command means no other command observes a half-made container;
     /// any failure kills the init and removes the state.
@@ -189,14 +245,18 @@ extension ContainerLifecycle {
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
         var record = ContainerRecord(id: id, plan: plan, created: currentTimestamp())
+        var leaf: CgroupLeaf? = nil
         do {
             try container.writeRecord(record)
+            let cgroup = try Self.prepareCgroup(plan, id: id, record: &record, container: container)
+            leaf = cgroup
             // The child drops only its inherited ownership; the parent keeps
             // the state lock through readiness and an optional detached start.
             let gate = try StartGate(container)
             var hooks = LaunchHooks()
             hooks.detached = true
             hooks.closeInChildren = { container.detachInForkedChild() }
+            hooks.placeInit = { try cgroup.join($0) }
             hooks.initStarted = { record.initProcess = $0 }
             // Recorded before the commit: an init that outlives this command
             // is always findable by later commands.
@@ -205,10 +265,11 @@ extension ContainerLifecycle {
             _ = try plan.runOnLinux(hooks: hooks, gate: gate)
             if start { try requestStart(container) }
         } catch {
-            // Failed creates leave neither a live init nor a reserved ID.
-            _ = try? Self.killInit(record)
-            try? container.destroy()
-            throw error
+            // Failed creates leave neither a live init, a cgroup, nor a
+            // reserved ID (unless the cgroup cannot be removed).
+            let reported = Self.explainingOOM(error, leaf)
+            Self.abandon(record, container)
+            throw reported
         }
     }
 
@@ -221,11 +282,15 @@ extension ContainerLifecycle {
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
         var record = ContainerRecord(id: id, plan: plan, created: currentTimestamp())
+        var leaf: CgroupLeaf? = nil
         let status: Int32
         do {
             try container.writeRecord(record)
+            let cgroup = try Self.prepareCgroup(plan, id: id, record: &record, container: container)
+            leaf = cgroup
             var hooks = LaunchHooks()
             hooks.closeInChildren = { container.detachInForkedChild() }
+            hooks.placeInit = { try cgroup.join($0) }
             hooks.initStarted = { record.initProcess = $0 }
             hooks.executed = {
                 try container.writeRecord(record)
@@ -234,16 +299,20 @@ extension ContainerLifecycle {
             status = try plan.runOnLinux(hooks: hooks)
         } catch {
             // Recover setup failures only if this generation still owns its ID.
-            if (try? container.lock()) != nil { try? container.destroy() }
-            throw error
+            let reported = Self.explainingOOM(error, leaf)
+            if (try? container.lock()) != nil { Self.abandon(record, container) }
+            throw reported
         }
         do {
-            // A concurrent `delete --force` may already have removed it.
+            // A concurrent `delete --force` may already have removed it. The
+            // init has exited, so what remains in its cgroup (descendants
+            // without a PID namespace) is the container's; runc kills them too.
             try container.lock()
+            try Self.removeCgroup(record, killRemaining: true)
             try container.destroy()
         } catch LifecycleError.notFound(_) {
         } catch {
-            RuntimeDiagnostics.writeError("swift-container-runtime: warning: remove state of container \(id.rawValue): \(error)")
+            RuntimeDiagnostics.writeError("swift-container-runtime: warning: remove container \(id.rawValue) (its state is kept for delete): \(error)")
         }
         return status
     }
