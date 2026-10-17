@@ -70,6 +70,7 @@ extension OCIRunPlan {
         let flags = namespaces.reduce(Int32(0)) { $0 | $1.cloneFlag }
         let mounts = self.mounts
         let populatesDev = self.populatesDev
+        let readonlyRoot = self.readonlyRoot
         let security = self.security
         // Converted before the fork so the init only borrows the buffer.
         let supplementaryGids = security.additionalGids.map { gid_t($0) }
@@ -106,7 +107,7 @@ extension OCIRunPlan {
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
                     unsafe initializeContainer(
-                        strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
+                        strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev, readonlyRoot: readonlyRoot,
                         security: security, supplementaryGids: gidBuffer,
                         capabilities: capabilities, lastCapability: lastCapability, resourceLimits: resourceLimits,
                         foreground: !hooks.detached,
@@ -126,6 +127,7 @@ private func initializeContainer(
     starts: [Int],
     mounts: [OCIRunPlan.Mount],
     populatesDev: Bool,
+    readonlyRoot: Bool,
     security: OCIRunPlan.ProcessSecurity,
     supplementaryGids: UnsafeBufferPointer<gid_t>,
     capabilities: ProcessCapabilities?,
@@ -215,6 +217,16 @@ private func initializeContainer(
         guard unsafe mkdir(path, 0o755) == 0 || errno == EEXIST else { return failureStatus(report, .cwd) }
         unsafe directory = path
         unsafe prefix += 1
+    }
+
+    // runc's finalizeRootfs: with every mount, /dev entry and the cwd in
+    // place, make the root mount read-only. This runs in the container's
+    // mount namespace after pivot_root, so it changes only the private bind
+    // of the rootfs made above, never the host's mount. It is not recursive:
+    // child mounts such as /proc, /dev and a tmpfs keep their own flags.
+    if readonlyRoot {
+        let code = remountRootReadonly()
+        guard code == 0 else { return failureStatus(report, .readonlyRoot, code: code) }
     }
     // As runc does, enter the cwd with the caller's credentials first and
     // retry after the switch only if they were denied it.
@@ -326,6 +338,32 @@ private func initializeContainer(
     }
     _ = unsafe execve(argv[0]!, argv, environment)
     return failureStatus(report, .execute)
+}
+
+/// Linux statvfs `f_flag` bits (<linux/statfs.h>) and the mount flags that
+/// restate them. Some bits differ (ST_NOSYMFOLLOW is MS_MOVE's value), so
+/// the reported flags are translated, not passed through as runc does.
+private let preservedMountFlags: [(reported: UInt, flag: UInt)] = [
+    (0x2, UInt(MS_NOSUID)), (0x4, UInt(MS_NODEV)), (0x8, UInt(MS_NOEXEC)), (0x2000, 256 /* MS_NOSYMFOLLOW */),
+]
+
+/// runc's setReadonly as a single bind remount of "/" with MS_RDONLY. A bind
+/// remount sets the mount's per-mount flags to exactly those given, so where
+/// runc first tries MS_RDONLY alone (which can clear nosuid, nodev or noexec
+/// that the rootfs inherited from its host mount), this restates the flags
+/// statvfs reports for "/" from the start. Omitting every atime flag keeps the
+/// mount's atime behavior. "/" is the root of the bind made before pivot_root
+/// (no configured mount may cover it), and the rootfs filesystem itself is
+/// untouched. Returns 0 or errno.
+private func remountRootReadonly() -> Int32 {
+    var status = statvfs()
+    guard unsafe statvfs("/", &status) == 0 else { return errno }
+    var flags = UInt(MS_BIND | MS_REMOUNT | MS_RDONLY)
+    for entry in preservedMountFlags where UInt(status.f_flag) & entry.reported != 0 {
+        flags |= entry.flag
+    }
+    guard unsafe mount("", "/", nil, flags, nil) == 0 else { return errno }
+    return 0
 }
 
 /// runc's fixStdioPermissions: stdio inherited from the caller is chowned to

@@ -8,7 +8,7 @@ container run --rm --cpus 4 --memory 4G \
         swift --version
         swift --version | grep -q "Swift version 6.4.1 "
         # OCI fixtures: static BusyBox rootfs and runc for comparison, in the VM only.
-        # The rlimit probe is linked statically by the image clang against glibc.
+        # The rlimit and readonly probes are linked statically by the image clang against glibc.
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc > /dev/null
         swift test --disable-automatic-resolution --scratch-path .build/linux-6.4.1
@@ -19,6 +19,7 @@ container run --rm --cpus 4 --memory 4G \
         RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/capabilities-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
         swift test -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
         sh scripts/integration.sh .build/linux-6.4.1/release/swift-container-runtime
         sh scripts/oci-integration.sh .build/linux-6.4.1/release/swift-container-runtime
@@ -26,4 +27,5 @@ container run --rm --cpus 4 --memory 4G \
         RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/capabilities-integration.sh .build/linux-6.4.1/release/swift-container-runtime
         RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/linux-6.4.1/release/swift-container-runtime
+        RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/linux-6.4.1/release/swift-container-runtime
     '

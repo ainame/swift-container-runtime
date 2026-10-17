@@ -78,6 +78,9 @@ public struct OCIRunPlan: Sendable {
     public let ociVersion: String
     public let bundle: FilePath
     public let rootfs: FilePath
+    /// `root.readonly`: after setup, the container's root mount (not its
+    /// child mounts, and not the host's mount of the rootfs) is read-only.
+    public let readonlyRoot: Bool
     /// Recorded in container state; they do not affect setup.
     public let annotations: [String: String]
     public let namespaces: [Namespace]
@@ -134,10 +137,6 @@ public struct OCIRunPlan: Sendable {
         guard version.hasPrefix("1."), version.split(separator: ".").count >= 2 else {
             throw RuntimeError("config.json: unsupported ociVersion \(version); expected 1.x")
         }
-        guard configuration.root.readonly != true else {
-            throw RuntimeError("config.json: root.readonly is not implemented")
-        }
-
         let process = configuration.process
         guard process.terminal != true else {
             throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
@@ -188,6 +187,7 @@ public struct OCIRunPlan: Sendable {
         self.ociVersion = version
         self.bundle = bundle
         self.rootfs = rootfs
+        self.readonlyRoot = configuration.root.readonly ?? false
         self.annotations = configuration.annotations
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.hostname = configuration.hostname

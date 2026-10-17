@@ -27,7 +27,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc
       - name: Unit tests with strict memory diagnostics
         run: swift test --disable-automatic-resolution
-      - name: Debug namespace, OCI, lifecycle, credential, capability, and rlimit integration
+      - name: Debug namespace, OCI, lifecycle, credential, capability, rlimit, and readonly root integration
         run: |
           sh scripts/integration.sh .build/debug/swift-container-runtime
           sh scripts/oci-integration.sh .build/debug/swift-container-runtime
@@ -35,7 +35,8 @@ jobs:
           RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/capabilities-integration.sh .build/debug/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/debug/swift-container-runtime
-      - name: Optimized namespace, OCI, lifecycle, credential, capability, and rlimit integration
+          RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/debug/swift-container-runtime
+      - name: Optimized namespace, OCI, lifecycle, credential, capability, rlimit, and readonly root integration
         run: |
           swift test -c release --disable-automatic-resolution
           sh scripts/integration.sh .build/release/swift-container-runtime
@@ -44,3 +45,4 @@ jobs:
           RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/capabilities-integration.sh .build/release/swift-container-runtime
           RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/release/swift-container-runtime
+          RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/release/swift-container-runtime

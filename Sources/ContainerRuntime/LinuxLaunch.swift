@@ -14,7 +14,7 @@ enum LaunchStage: Int32 {
     case pinInit, commit, startRequest, startSocket
     case noNewPrivileges, stdioOwnership, supplementaryGroups, setGroupID, setUserID
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
-    case setResourceLimit, startDescriptor
+    case setResourceLimit, startDescriptor, readonlyRoot
 
     var description: String {
         switch self {
@@ -57,6 +57,7 @@ enum LaunchStage: Int32 {
         case .setResourceLimit: "set process.rlimits"
         case .startDescriptor:
             "reserve a descriptor for the start connection (process.rlimits RLIMIT_NOFILE leaves no free descriptor for the created init)"
+        case .readonlyRoot: "remount the container root read-only (root.readonly)"
         }
     }
 }

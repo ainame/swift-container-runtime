@@ -60,6 +60,19 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     #expect(plan.mounts[2].data == "newinstance,ptmxmode=0666,mode=0620,gid=5")
 }
 
+@Test(arguments: [
+    (#"{"path": "rootfs", "readonly": true}"#, true),
+    (#"{"path": "rootfs", "readonly": false}"#, false),
+    (#"{"path": "rootfs"}"#, false),
+])
+func readsRootReadonly(root: String, readonly: Bool) throws {
+    #expect(try plan(config(root: root)).readonlyRoot == readonly)
+}
+
+@Test func rejectsNonBooleanRootReadonly() {
+    #expect(throws: (any Error).self) { try plan(config(root: #"{"path": "rootfs", "readonly": "true"}"#)) }
+}
+
 @Test func minimalConfigUsesEmptyEnvironmentAndNoDevSetup() throws {
     let plan = try plan(config(
         process: #"{"args": ["/bin/true"], "cwd": "/"}"#, hostname: "null", mounts: "[]",
@@ -130,7 +143,7 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     (config(process: #"{"args": ["/bin/sh"], "env": ["=value"], "cwd": "/"}"#), "NAME=value"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "relative"}"#), "process.cwd"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "/a/../b"}"#), "process.cwd"),
-    (config(root: #"{"path": "rootfs", "readonly": true}"#), "root.readonly"),
+    (config(linux: #"{"namespaces": [{"type": "mount"}], "readonlyPaths": ["/proc/sys"]}"#), "linux.readonlyPaths"),
     (config(version: "\"2.0.0\""), "ociVersion"),
     (config(hostname: "\"\""), "hostname"),
     (config(linux: #"{"namespaces": [{"type": "mount"}]}"#), "uts namespace"),
