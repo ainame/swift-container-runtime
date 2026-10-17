@@ -165,6 +165,8 @@ swift test
 
 Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace, OCI, lifecycle, credential, and capability checks in the pinned Swift 6.4.1 Linux image.
 
+`features` prints the OCI feature report for the current build. `--version` and `-v` print its development version and target OCI version; a commit is omitted when it is unknown. `spec --bundle PATH` writes a runc-style starter `config.json`, and `--rootless` generates the user mappings for the calling user. The generated starter includes terminal, mount, device, and namespace features this runtime still needs to implement, so it requires editing before use here. Existing configuration entries are never overwritten, including dangling symlinks; runc can write through a dangling symlink. `scripts/metadata-integration.sh` checks command output and compares generated specifications with runc as root and uid 1000.
+
 ## Development on macOS
 
 The commands perform Linux kernel operations; macOS builds cannot run containers or the namespace lab directly. Unit tests for configuration decoding and validation run on macOS. Use a Linux VM or Apple's [`container`](https://github.com/apple/container) command to build and test the Linux executable.

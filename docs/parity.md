@@ -13,10 +13,10 @@ The goal is feature parity with the behavior implemented by [kontainer-runtime a
 | `events` | Stats snapshot or interval stream, OOM events, termination on deletion | Missing |
 | `ps` | Table/JSON output and verbatim trailing host `ps` arguments | Implemented, including descendant/threaded groups, lifecycle states, empty JSON null, and host-table filtering; compared with runc |
 | `exec` | Command or process JSON; detach, terminal, console/PID/pidfd; cwd, env, user/groups, capabilities, preserved FDs, sub-cgroup, ignore-paused | Missing |
-| `spec` | Generate default `config.json`; bundle and rootless options | Missing |
-| `features` | OCI feature JSON matching actual runtime support | Missing |
+| `spec` | Generate default `config.json`; bundle and rootless options | Implemented as a generator following runc defaults, with runtime hostname and exclusive creation; its starter still requests runtime features listed below as missing |
+| `features` | OCI feature JSON matching actual runtime support | Implemented; reports only currently implemented build features, with unsupported surfaces empty or disabled |
 | Global options | State root, log path, text/JSON logs, debug | State root implemented; logging missing |
-| Version | Runtime version, commit, OCI specification version; `--version`/`-v` | Missing |
+| Version | Runtime version, commit, OCI specification version; `--version`/`-v` | Implemented with an explicit development version and OCI version; no commit line when build provenance is unknown |
 
 Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/KontainerConfig.kt`.
 

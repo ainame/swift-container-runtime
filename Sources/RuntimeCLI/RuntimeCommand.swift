@@ -8,12 +8,22 @@ struct RuntimeCommand: ParsableCommand {
         commandName: "swift-container-runtime",
         abstract: "An educational Linux container runtime.",
         discussion: "Educational subset of an OCI runtime; not a security sandbox.",
+        version: VersionOutput.text,
         subcommands: [
-            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Update.self, Run.self, NamespaceRun.self,
+            Create.self, Start.self, State.self, Kill.self, Pause.self, Resume.self, Delete.self, List.self, Ps.self, Update.self,
+            Spec.self, Features.self, Run.self, NamespaceRun.self,
         ]
     )
 
     @OptionGroup var globals: GlobalOptions
+
+    @Flag(name: .customShort("v"), help: "Print the runtime version.")
+    var shortVersion = false
+
+    mutating func run() throws {
+        guard shortVersion else { throw CleanExit.helpRequest(self) }
+        print(VersionOutput.text)
+    }
 }
 
 /// Options accepted before or after the subcommand name, like runc's `--root`.
