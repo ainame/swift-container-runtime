@@ -73,6 +73,17 @@ extension OCIRunPlan {
         let security = self.security
         // Converted before the fork so the init only borrows the buffer.
         let supplementaryGids = security.additionalGids.map { gid_t($0) }
+        // Configured capabilities must exist in the running kernel, whose
+        // whole range the init then clears from the bounding set.
+        let capabilities = self.capabilities
+        let lastCapability: Int32
+        if let capabilities {
+            let last = try kernelLastCapability()
+            try capabilities.checkSupported(lastCapability: last)
+            lastCapability = Int32(last)
+        } else {
+            lastCapability = -1
+        }
         let context: (LaunchStage, Int32) -> String? = { stage, detail in
             switch stage {
             case .resolveMount, .mount:
@@ -80,6 +91,10 @@ extension OCIRunPlan {
                 return "\(stage.description) \(mounts[Int(detail)].destinationPath)"
             case .setUserID: return "\(stage.description) \(security.uid)"
             case .setGroupID: return "\(stage.description) \(security.gid)"
+            case .dropBoundingCapability:
+                return "\(stage.description) \(CapabilitySet.name(of: Int(detail))) (the runtime needs CAP_SETPCAP)"
+            case .raiseAmbientCapability:
+                return "\(stage.description) \(CapabilitySet.name(of: Int(detail))) (refused by securebits or a missing permitted/inheritable capability)"
             default: return nil
             }
         }
@@ -88,7 +103,8 @@ extension OCIRunPlan {
                 unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
                     unsafe initializeContainer(
                         strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
-                        security: security, supplementaryGids: gidBuffer, foreground: !hooks.detached,
+                        security: security, supplementaryGids: gidBuffer,
+                        capabilities: capabilities, lastCapability: lastCapability, foreground: !hooks.detached,
                         report: report, commit: commit, launcher: launcher, gate: gate
                     )
                 }
@@ -107,6 +123,8 @@ private func initializeContainer(
     populatesDev: Bool,
     security: OCIRunPlan.ProcessSecurity,
     supplementaryGids: UnsafeBufferPointer<gid_t>,
+    capabilities: ProcessCapabilities?,
+    lastCapability: Int32,
     foreground: Bool,
     report: borrowing OwnedFileDescriptor,
     commit: borrowing OwnedFileDescriptor,
@@ -207,11 +225,27 @@ private func initializeContainer(
     if security.noNewPrivileges {
         guard linux_set_no_new_privileges() == 0 else { return failureStatus(report, .noNewPrivileges) }
     }
+    // An explicit process.capabilities follows runc's finalizeNamespace:
+    // reduce the bounding set while the init still holds CAP_SETPCAP (the
+    // kernel rejects drops later), then keep the permitted set across a
+    // non-root setuid so the configured sets can be installed after it.
+    if let capabilities {
+        for capability in stride(from: Int32(0), through: lastCapability, by: 1)
+        where !capabilities.bounding.contains(Int(capability)) {
+            // Skip capabilities already absent, so a fully reduced bounding
+            // set needs no CAP_SETPCAP.
+            let present = linux_read_bounding_capability(capability)
+            guard present >= 0, present == 0 || linux_drop_bounding_capability(capability) == 0 else {
+                return failureStatus(report, .dropBoundingCapability, detail: capability)
+            }
+        }
+        guard linux_set_keep_capabilities(1) == 0 else { return failureStatus(report, .keepCapabilities) }
+    }
     let stdioCode = giveStdio(to: uid_t(security.uid))
     guard stdioCode == 0 else { return failureStatus(report, .stdioOwnership, code: stdioCode) }
     // setgroups always runs, so an empty list clears the caller's groups;
     // setgid must precede setuid, which gives up the right to change groups.
-    // Without PR_SET_KEEPCAPS a non-zero uid also loses every capability.
+    // Unless keepcaps was set above, a non-zero uid also loses every capability.
     guard unsafe setgroups(supplementaryGids.count, supplementaryGids.baseAddress) == 0 else {
         return failureStatus(report, .supplementaryGroups)
     }
@@ -219,6 +253,27 @@ private func initializeContainer(
     guard setuid(uid_t(security.uid)) == 0 else { return failureStatus(report, .setUserID) }
     if enterCwdAsUser, let directory = unsafe directory {
         guard unsafe chdir(directory) == 0 else { return failureStatus(report, .cwd) }
+    }
+
+    // Then runc's ApplyCaps: clear keepcaps so exec semantics are standard,
+    // install effective/permitted/inheritable exactly (capset also drops
+    // ambient capabilities that are no longer permitted and inheritable),
+    // and replace whatever ambient set remains with the configured one.
+    // Without the object, the inherited sets stay as setuid left them.
+    if let capabilities {
+        guard linux_set_keep_capabilities(0) == 0 else { return failureStatus(report, .keepCapabilities) }
+        guard linux_set_capabilities(
+            capabilities.effective.mask, capabilities.permitted.mask, capabilities.inheritable.mask
+        ) == 0 else {
+            return failureStatus(report, .setCapabilities)
+        }
+        guard linux_clear_ambient_capabilities() == 0 else { return failureStatus(report, .clearAmbientCapabilities) }
+        for capability in stride(from: Int32(0), through: lastCapability, by: 1)
+        where capabilities.ambient.contains(Int(capability)) {
+            guard linux_raise_ambient_capability(capability) == 0 else {
+                return failureStatus(report, .raiseAmbientCapability, detail: capability)
+            }
+        }
     }
 
     // The credential change cleared the foreground init's parent-death
@@ -271,6 +326,15 @@ private func giveStdio(to uid: uid_t) -> Int32 {
         guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return errno }
     }
     return 0
+}
+
+/// The highest capability number the running kernel supports.
+private func kernelLastCapability() throws -> Int {
+    let path = "/proc/sys/kernel/cap_last_cap"
+    let bytes: [UInt8]?
+    do { bytes = try readProcFile(path) } catch { throw RuntimeError("read \(path): \(error)") }
+    guard let bytes else { throw RuntimeError("read \(path): file does not exist") }
+    return try ProcessCapabilities.parseLastCapability(bytes)
 }
 
 /// Go's exec.LookPath for an absolute path, as runc uses it: the file must

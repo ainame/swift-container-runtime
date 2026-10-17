@@ -232,10 +232,13 @@ expect_init() {
         }
     done
 }
-# Fields this increment implements; capability sets are not configurable
-# yet, so their parity with runc is not compared here.
+# Compared fields. These configs have no process.capabilities, so runc and
+# this runtime both leave the inherited sets (root keeps them; for non-root,
+# setuid clears permitted, effective, and ambient but not bounding or
+# inheritable), and the Cap lines must match too.
+# capabilities-integration.sh covers configured sets.
 implemented_fields() {
-    grep -E '^(Uid|Gid|Groups|NoNewPrivs|Umask):|^secret=|^suid-euid=' "$1"
+    grep -E '^(Uid|Gid|Groups|NoNewPrivs|Umask|Cap[A-Za-z]+):|^secret=|^suid-euid=' "$1"
 }
 
 shared_checks() {
@@ -292,10 +295,8 @@ shared_checks swift "$ours"
 if [ "$compare" = 1 ]; then
     shared_checks runc "$theirs"
     # The workloads saw identical credentials, umask, no_new_privs, group
-    # access, and setuid result under both runtimes. Capability lines are
-    # excluded: process.capabilities is not implemented yet, and the sets a
-    # runtime leaves without it are a later increment's parity question (the
-    # non-root empty-set assertions above still apply to both).
+    # access, setuid result, and inherited capability sets under both
+    # runtimes.
     for mode in foreground detached created; do
         for config in all plain root; do
             implemented_fields "$results/$config-$mode-swift.status" > "$results/$config-$mode-swift.compared"
@@ -376,4 +377,4 @@ $ours delete fds-created
 test -z "$(ls -A "$state_root")"
 comparison=skipped
 test "$compare" = 1 && comparison=runc
-printf '%s\n' "Credential integration checks passed (comparison: $comparison): uid/gid, additionalGids (also cleared), umask (default 0022), no_new_privs ($nnp_note), capabilities dropped for non-root, stdio reopen, credentials before start, root-only executable lookup, non-root parent-death cleanup, detached lifetime, descriptor isolation."
+printf '%s\n' "Credential integration checks passed (comparison: $comparison): uid/gid, additionalGids (also cleared), umask (default 0022), no_new_privs ($nnp_note), permitted/effective/ambient capabilities dropped for non-root and inherited sets matching runc, stdio reopen, credentials before start, root-only executable lookup, non-root parent-death cleanup, detached lifetime, descriptor isolation."

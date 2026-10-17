@@ -106,7 +106,7 @@ private func plan(_ json: String) throws -> OCIRunPlan {
     // Unknown or unimplemented fields are rejected wherever they appear.
     (config(extra: #""hooks": {}"#), "hooks"),
     (config(extra: #""futureField": 1"#), "futureField"),
-    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "capabilities": {}}"#), "process.capabilities"),
+    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "capabilities": {"permited": []}}"#), "process.capabilities.permited"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "rlimits": []}"#), "process.rlimits"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "apparmorProfile": "x"}"#), "process.apparmorProfile"),

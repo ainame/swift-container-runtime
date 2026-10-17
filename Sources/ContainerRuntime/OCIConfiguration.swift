@@ -38,6 +38,25 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
+    struct Capabilities: Decodable, Sendable {
+        var bounding: [String]?
+        var effective: [String]?
+        var inheritable: [String]?
+        var permitted: [String]?
+        var ambient: [String]?
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(
+                decoder, allowed: ["bounding", "effective", "inheritable", "permitted", "ambient"]
+            )
+            bounding = try object.optional("bounding")
+            effective = try object.optional("effective")
+            inheritable = try object.optional("inheritable")
+            permitted = try object.optional("permitted")
+            ambient = try object.optional("ambient")
+        }
+    }
+
     struct Process: Decodable, Sendable {
         var terminal: Bool?
         var user: User?
@@ -45,10 +64,11 @@ struct OCIConfiguration: Decodable, Sendable {
         var env: [String]?
         var cwd: String
         var noNewPrivileges: Bool?
+        var capabilities: Capabilities?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
-                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges"]
+                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities"]
             )
             terminal = try object.optional("terminal")
             user = try object.optional("user")
@@ -56,6 +76,7 @@ struct OCIConfiguration: Decodable, Sendable {
             env = try object.optional("env")
             cwd = try object.required("cwd")
             noNewPrivileges = try object.optional("noNewPrivileges")
+            capabilities = try object.optional("capabilities")
         }
     }
 

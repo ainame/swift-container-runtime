@@ -13,6 +13,7 @@ enum LaunchStage: Int32 {
     case bindRootfs, openRootfs, resolveMount, mount, devices, pivotRoot, cwd, verifyRootfs, markDescriptors
     case pinInit, commit, startRequest, startSocket
     case noNewPrivileges, stdioOwnership, supplementaryGroups, setGroupID, setUserID
+    case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
 
     var description: String {
         switch self {
@@ -46,6 +47,12 @@ enum LaunchStage: Int32 {
         case .supplementaryGroups: "set process.user.additionalGids"
         case .setGroupID: "set process.user.gid"
         case .setUserID: "set process.user.uid"
+        case .dropBoundingCapability: "drop bounding capability"
+        case .keepCapabilities: "set PR_SET_KEEPCAPS"
+        case .setCapabilities:
+            "set effective, permitted, and inheritable capabilities (the runtime must hold every permitted one, and each inheritable one must be in bounding or already inheritable)"
+        case .clearAmbientCapabilities: "clear ambient capabilities (requires Linux 4.3+)"
+        case .raiseAmbientCapability: "raise ambient capability"
         }
     }
 }

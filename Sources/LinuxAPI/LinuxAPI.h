@@ -33,6 +33,62 @@ static inline int linux_set_no_new_privileges(void) {
     return prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL);
 }
 
+/* Capability adapters. The sets and their order are decided in Swift; these
+ * only expose the variadic prctl operations and the capset(2) syscall, which
+ * neither libc wraps without libcap. Stable values from <linux/prctl.h> and
+ * <linux/capability.h> back older headers. */
+#ifndef PR_CAPBSET_READ
+#define PR_CAPBSET_READ 23
+#endif
+#ifndef PR_CAPBSET_DROP
+#define PR_CAPBSET_DROP 24
+#endif
+#ifndef PR_CAP_AMBIENT
+#define PR_CAP_AMBIENT 47
+#endif
+#ifndef PR_CAP_AMBIENT_RAISE
+#define PR_CAP_AMBIENT_RAISE 2
+#endif
+#ifndef PR_CAP_AMBIENT_CLEAR_ALL
+#define PR_CAP_AMBIENT_CLEAR_ALL 4
+#endif
+
+/* 1 if the capability is in the bounding set, 0 if not, -1 with errno. */
+static inline int linux_read_bounding_capability(int capability) {
+    return prctl(PR_CAPBSET_READ, (unsigned long)capability, 0UL, 0UL, 0UL);
+}
+
+/* Requires CAP_SETPCAP in the effective set. */
+static inline int linux_drop_bounding_capability(int capability) {
+    return prctl(PR_CAPBSET_DROP, (unsigned long)capability, 0UL, 0UL, 0UL);
+}
+
+static inline int linux_set_keep_capabilities(int keep) {
+    return prctl(PR_SET_KEEPCAPS, (unsigned long)keep, 0UL, 0UL, 0UL);
+}
+
+static inline int linux_clear_ambient_capabilities(void) {
+    return prctl(PR_CAP_AMBIENT, (unsigned long)PR_CAP_AMBIENT_CLEAR_ALL, 0UL, 0UL, 0UL);
+}
+
+static inline int linux_raise_ambient_capability(int capability) {
+    return prctl(PR_CAP_AMBIENT, (unsigned long)PR_CAP_AMBIENT_RAISE, (unsigned long)capability, 0UL, 0UL);
+}
+
+/* capset(2) for the calling thread with _LINUX_CAPABILITY_VERSION_3, whose
+ * data is two 32-bit words per set (capabilities 0-31, then 32-63). The
+ * layouts match struct __user_cap_header_struct and __user_cap_data_struct. */
+static inline int linux_set_capabilities(
+    unsigned long long effective, unsigned long long permitted, unsigned long long inheritable
+) {
+    struct { unsigned int version; int pid; } header = { 0x20080522U, 0 };
+    struct { unsigned int effective, permitted, inheritable; } data[2] = {
+        { (unsigned int)effective, (unsigned int)permitted, (unsigned int)inheritable },
+        { (unsigned int)(effective >> 32), (unsigned int)(permitted >> 32), (unsigned int)(inheritable >> 32) },
+    };
+    return (int)syscall(SYS_capset, &header, data);
+}
+
 static inline int linux_pidfd_open(pid_t pid) {
     return (int)syscall(SYS_pidfd_open, pid, 0U);
 }

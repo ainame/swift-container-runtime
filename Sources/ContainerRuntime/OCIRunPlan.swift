@@ -92,6 +92,8 @@ public struct OCIRunPlan: Sendable {
     /// Components of process.cwd below the container root.
     public let cwd: [String]
     public let security: ProcessSecurity
+    /// `process.capabilities`; nil leaves the inherited sets, as in runc.
+    public let capabilities: ProcessCapabilities?
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
@@ -139,6 +141,7 @@ public struct OCIRunPlan: Sendable {
             throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
         }
         let security = try Self.security(process)
+        let capabilities = try process.capabilities.map(ProcessCapabilities.init)
         guard let executable = process.args.first, executable.hasPrefix("/") else {
             throw RuntimeError("config.json: process.args[0] must be an absolute path; PATH lookup is not implemented")
         }
@@ -191,6 +194,7 @@ public struct OCIRunPlan: Sendable {
         self.environment = environment
         self.cwd = cwd
         self.security = security
+        self.capabilities = capabilities
     }
 
     /// An absent `process.user` means uid and gid 0, as in runc. Values the

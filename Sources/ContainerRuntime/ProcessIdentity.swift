@@ -9,7 +9,7 @@ import SystemPackage
 
 /// Reads a small procfs file; nil when it does not exist (or the process
 /// it describes has gone).
-private func readProcFile(_ path: String, limit: Int = 4096) throws -> [UInt8]? {
+func readProcFile(_ path: String, limit: Int = 4096) throws -> [UInt8]? {
     let owner: OwnedFileDescriptor
     do {
         owner = OwnedFileDescriptor(takingOwnershipOf: try FileDescriptor.open(FilePath(path), .readOnly, options: .closeOnExec))
