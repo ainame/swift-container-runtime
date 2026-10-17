@@ -2,6 +2,26 @@
 # Apple container 0.9+; each invocation creates a disposable Linux VM.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+configuration=all
+case "${1:-}" in
+    --help|-h)
+        echo "Usage: $0 [--configuration debug|release|all] [SUITE ...]"
+        echo "Default: unit tests and all integration suites in debug and release."
+        echo "Use --list to list integration suites."
+        exit 0 ;;
+    --list) exec sh "$root/scripts/run-integration.sh" --list ;;
+esac
+if [ "${1:-}" = --configuration ]; then
+    [ "$#" -ge 2 ] || { echo "--configuration needs a value" >&2; exit 2; }
+    configuration=$2
+    shift 2
+fi
+case "$configuration" in
+    debug|release|all) ;;
+    *) echo "Unknown configuration: $configuration" >&2; exit 2 ;;
+esac
+# Reject typos before paying for VM startup, package installation, or builds.
+sh "$root/scripts/run-integration.sh" --check "$@"
 container run --rm --cpus 4 --memory 4G \
     --volume "$root:/workspace" --workdir /workspace swift:6.4.1 \
     /bin/sh -eu -c '
@@ -20,35 +40,17 @@ container run --rm --cpus 4 --memory 4G \
         # The rlimit, readonly, path and CPU probes are linked statically by the image clang against glibc.
         apt-get update -qq
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc > /dev/null
-        swift test --disable-automatic-resolution --scratch-path .build/linux-6.4.1
-        swift build --disable-automatic-resolution --scratch-path .build/linux-6.4.1
-        sh scripts/integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        sh scripts/oci-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/lifecycle-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/capabilities-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/cpu-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/cpuset-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/freezer-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/ps-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/update-integration.sh .build/linux-6.4.1/debug/swift-container-runtime
-        swift test -c release --disable-automatic-resolution --scratch-path .build/linux-6.4.1
-        sh scripts/integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        sh scripts/oci-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/lifecycle-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/credentials-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/capabilities-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/rlimits-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/readonly-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/path-controls-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/cgroup-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/cpu-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/cpuset-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/freezer-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/ps-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-        RUNC_COMPARE=1 sh scripts/update-integration.sh .build/linux-6.4.1/release/swift-container-runtime
-    '
+        configuration=$1
+        shift
+        case "$configuration" in
+            all) configurations="debug release" ;;
+            *) configurations=$configuration ;;
+        esac
+        # A unit-test invocation also builds the executable. Each selected suite
+        # then uses that configuration; the full debug/release gate stays default.
+        for configuration in $configurations; do
+            swift test -c "$configuration" --disable-automatic-resolution --scratch-path .build/linux-6.4.1
+            sh scripts/run-integration.sh \
+                ".build/linux-6.4.1/$configuration/swift-container-runtime" "$@"
+        done
+    ' test-linux "$configuration" "$@"

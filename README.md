@@ -178,6 +178,15 @@ scripts/test-linux.sh
 
 The script uses a disposable VM-backed `swift:6.4.1` container and stores Linux build products separately in `.build/linux-6.4.1`. It runs debug and optimized integration checks for namespaces, procfs, surrounding hostname/mount preservation, exit and signal status, argument handling, permission failures, and parent-death cleanup.
 
+For a shorter development cycle, select the build configuration and the suites affected by a change. Unit tests still run, and selected integration suites still compare with runc:
+
+```sh
+scripts/test-linux.sh --list
+scripts/test-linux.sh --configuration debug lifecycle update
+```
+
+The complete debug/release run remains the default and the CI gate. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/swift-container-runtime update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
+
 Inside the VM it also installs `busybox-static` and `runc` and runs `scripts/oci-integration.sh`. That script builds a static BusyBox rootfs and runs the same bundles through this runtime and runc. Both must satisfy the shared checks: PID 1, rootfs contents and isolation from host files, hostname, cwd, environment replacement, device nodes, separate stdout/stderr, exit 42, and missing executables. Runtime-specific checks cover exit 125 diagnostics, rejected configurations, symlink escapes from mount destinations (absolute and relative), and setup failures after partial mounting. Those failures must not run the workload or change host mounts and hostname. Set `RUNC_COMPARE=0` to skip runc, or `RUNC_COMPARE=1` to require it.
 
 `scripts/lifecycle-integration.sh` then runs the lifecycle against both runtimes (`RUNC_COMPARE=1` in the VM and CI): a created init is PID 1 in the prepared rootfs and has not run the workload; created, running, and stopped transitions; a single start; TERM reaching a handler and KILL; real exits; invalid transitions; `delete --force` leaving no process of the PID namespace; duplicate IDs; detached and foreground `run`; and renamed or removed bundles. Runtime-specific checks cover exact messages, concurrent starts and creates, `list` formats, create-time and start-time exec failures, descriptor isolation, foreground parent-death cleanup, and stale or tampered state that must not signal an unrelated process. Failed create and foreground run clean up their state and processes. An exec failure during `start` leaves stopped state for inspection and deletion; abrupt CLI termination can also leave stopped metadata. A fixture start client dies at each handshake step: before its request, after it, after acceptance (all leave the container created), and after unlinking `start.sock` without committing (stopped, nothing runs).
