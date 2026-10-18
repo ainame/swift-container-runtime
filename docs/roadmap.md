@@ -153,11 +153,11 @@ separate Docker-driven extension and make the scope decision explicitly.
    newly passing execution results distinguishable. Commit each meaningful change.
 
 The [engine baseline](engine-baseline.md) records real containerd 2.2.2 capture,
-global logging/error extraction, shared-PID SIGKILL cleanup, requested filesystem
-mounts, and enforced device rules. The first cgroupfs **directory-rootfs** engine
-scenario now passes pipes/EOF, init/exec PID publication, nonzero exits, failed
-create/exec, kill/delete, reaping and state/cgroup cleanup. Milestones 1 and 3
-still need their broader gates; this is not an image-derived or Docker result.
-Next: bind mounts and supplied namespace joins for an image-derived containerd
-scenario, then the remaining security and console gates. Never discard requested
-security fields to advance it.
+logging/error extraction, shared-PID SIGKILL cleanup, filesystem mounts, enforced
+device rules, and file/directory bind mounts. The cgroupfs directory-rootfs
+scenario passes pipes/EOF and lifecycle cleanup; a pinned Alpine image now also
+passes native-snapshotter run/exec with readonly configuration and writable
+volume binds, PID files, exit status and snapshot/state/cgroup cleanup.
+This is still a constrained profile, not ordinary Docker support or closure of
+the broader milestone gates. Next: supplied namespace joins, then the remaining
+security and console gates. Never discard requested security fields to advance it.

@@ -36,8 +36,8 @@ For command options:
 ## What works
 
 - Container lifecycle: create, start, run, exec, inspect, signal, and delete.
-- Namespaces, a separate root filesystem, proc/tmpfs/devpts/sysfs/mqueue mounts, read-only
-  roots and path controls, credentials, capabilities, and resource limits.
+- Namespaces, a separate root filesystem, bind mounts and proc/tmpfs/devpts/sysfs/mqueue;
+  read-only roots and path controls, credentials, capabilities, and resource limits.
 - cgroup v2 memory, pids, CPU, cpuset and device controls; pause/resume, updates,
   process listing, statistics, and OOM events.
 

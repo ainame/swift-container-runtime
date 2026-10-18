@@ -3,8 +3,9 @@
 Captured on 2026-10-18. This began with a **real containerd/runc capture** and a
 Swift failed-create logging check. The device-policy follow-up at `6344146` now
 passes a constrained Swift containerd directory-rootfs scenario through the same
-shim. See the final section for fresh evidence and exclusions. Docker was not run;
-image-derived bundles and the broader roadmap gates remain open.
+shim. The bind follow-up at `62f04f2` also passes a pinned Alpine image with the
+native snapshotter. See the final sections for evidence and exclusions. Docker
+was not run; broader namespace/security/console gates remain open.
 
 ## Profile and provenance
 
@@ -128,7 +129,7 @@ below now verifies its constrained nonterminal exit/reaping/stdio behavior.
 | `kill --all` | Implemented with runc 1.4 compatibility semantics; see the focused kill validation below. |
 | Version/features | Focused metadata integration passes. go-runc v1.1.0's version parser only populates values for the literal `runc version ` prefix; Swift retains its own identity, so this helper returns empty metadata. The captured shim create path did not query version. Features emit valid OCI JSON; broader engine feature negotiation is unverified. |
 | Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. Swift still rejects them explicitly. Keyring setup and no-pivot remain deferred. `--systemd-cgroup` and explicit global `--rootless` remain rejected; no systemd support is implied. |
-| Next runnable scenario | Bind mounts and supplied namespace paths for an image-derived containerd scenario. Directory-rootfs cgroupfs nonterminal PID/stdio/exit/cleanup behavior now has live evidence below. |
+| Next runnable scenario | Supplied namespace joins, followed by remaining security/console gates. Directory-rootfs and pinned-image nonterminal scenarios now have live evidence below. |
 
 ## Focused validation
 
@@ -264,3 +265,76 @@ support or completion of the image-derived containerd milestone. Bind mounts,
 supplied namespace paths and cgroup mounts remain next; default security and
 console support still gate Docker. Full release/debug matrices and another
 architecture remain deferred to review/milestone validation.
+
+## Follow-up: bind mounts and an image-backed engine scenario
+
+**Verified implementation revision: `62f04f2`**, same Swift 6.4.1 debug/Linux
+profile. File/directory bind and rbind mounts now pin their host sources before
+mount setup, resolve existing target links in-root without magic links, create
+missing target parents/files and use descriptor clone/attach operations. Relative
+sources resolve from the bundle. A final bind at `/dev` disables automatic device
+population, preventing writes into the host-backed source directory.
+
+Bind attributes preserve inherited flags unless explicitly set/cleared. Supported
+pairs are ro/rw, nosuid/suid, nodev/dev and noexec/exec, plus strictatime and
+private/rprivate propagation. `rbind,ro` keeps child mount flags unchanged; it is
+not recursive read-only. Explicit remount, other propagation modes, idmapping,
+recursive attributes, dangling target links and direct bind destinations under `/proc` remain
+unsupported. Attribute/propagation changes require Linux 5.12+.
+
+Fresh checks:
+
+- 186 Linux runtime unit tests passed before the final small `/dev` decision and
+  fixture additions; focused planning/metadata/captured-image tests then passed
+  on the final implementation. Targeted macOS planning and fixture checks pass.
+- `bind` passes run/create/start/exec against installed runc: files, directories,
+  recursive submount inclusion, readonly top mount with writable submounts,
+  readonly-root behavior, explicit rw clearing a readonly source clone, atime,
+  exec/nodev permissions, existing relative/absolute/climbing target links,
+  relative sources, new targets and parent directories, private propagation,
+  descriptor closure, unchanged host mount tables and failure cleanup.
+- Source pinning under an earlier `/dev` mount is Swift-only: installed runc 1.4
+  rejects that synthetic source after it is hidden. Preventing node creation in
+  a host-backed `/dev` is also a Swift-specific regression. Unmentioned inherited
+  security flags stay set here; runc 1.4 may clear them in its first remount
+  attempt. These are documented differences, not a parity failure.
+- OCI, lifecycle, readonly-root, path-controls and preserve-fds debug regressions
+  passed. The directory-rootfs engine gate also passes actual engine-provided
+  readonly file and writable volume binds.
+
+The following image was fetched from Docker Hub and unpacked by containerd's
+**native snapshotter**, then run using the Swift binary. The image's actual
+`/etc/alpine-release` is **3.23.6**:
+
+- Index/name: `docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0`.
+- Selected Linux arm64/v8 manifest: `sha256:ae959799024a09da597284763c417a6e820e020fad0634c5267cf4f125e682bf`.
+- Pull used `ctr images pull --local --snapshotter native --platform linux/arm64/v8
+  docker.io/library/alpine:3.23`; the digest alias above was then stored locally
+  and used for execution. The initial transfer-service pull failed with `no
+  unpack platforms defined`; the explicit local/variant pull succeeded. That
+  was an unpacker/client setup issue before the runtime was invoked.
+
+```sh
+ENGINE_CAPTURE_DIRECTORY=/workspace/docs/engine-baseline/image-bind \
+  sh scripts/containerd-image-integration.sh \
+  .build/linux-6.4.1/debug/swift-container-runtime \
+  /tmp/sct-engine/containerd.sock sct-image-baseline \
+  docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+[Captured result](engine-baseline/image-bind/result.txt) and the
+[original create JSON](engine-baseline/image-bind/create.config.json) are live
+engine evidence, not a synthesized bundle. JSON is pretty-printed with values
+unchanged; the public image supplied PATH only, with no environment secrets.
+The original device rules remain applied. The image test proves readonly
+`/etc/resolv.conf` contents and write refusal, volume writes reaching the host
+source, init/exec, PID files, exec exit 42, kill/delete, reaping, and removal of
+the native active snapshot, runtime state and cgroup. Cached image layers remain
+in the explicitly selected namespace for later iterations.
+
+This is still rootful cgroup v2/cgroupfs, UID 0 and nonterminal, with a fresh,
+unconfigured network namespace. External namespace paths, bridge/DNS behavior,
+TTYs, requested LSM/seccomp/hooks and session-keyring isolation remain unverified
+or unimplemented as listed earlier. Native-snapshotter success does not certify
+Docker's ordinary storage/network/security profile. No release/full-matrix or
+second-architecture validation was repeated for this increment.

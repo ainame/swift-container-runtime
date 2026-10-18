@@ -41,7 +41,7 @@ suite because a shared file was touched:
 | Change | Starting integration selection |
 | --- | --- |
 | Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
-| Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and per-mount read-only flags; add `lifecycle` for readiness/cleanup changes. |
+| Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and `bind` for bind sources/targets/flags; add `lifecycle` for readiness/cleanup changes. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
 | Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`, `devices`), plus `update`; add `freezer ps events` if membership/reporting changes. |
@@ -177,3 +177,23 @@ runtime root, cgroup subtree and directory rootfs, and cleans them up. It checks
 pipes/EOF, init/exec PID files, exit codes, shim reaping, kill/delete, error logs
 and failure cleanup. It does not change a daemon default or test Docker, image
 unpacking, network provisioning, TTYs or default seccomp/LSM security.
+
+`scripts/bind-integration.sh` checks file/directory bind and rbind through real
+I/O, mount flags, execute/device permissions, read-only roots, existing in-root
+links, new target files/parents, bundle-relative sources, strictatime and private
+propagation. It compares ordinary cases with runc and verifies host mount tables,
+FD closure, source writes only where requested, and failure cleanup. Early
+source pinning and host-backed `/dev` protection are Swift-specific regressions.
+
+The opt-in image gate expects a previously pulled/unpacked Alpine image in its
+explicit namespace, with `native` snapshotter available. It never downloads an
+image or changes the daemon default:
+
+```sh
+sh scripts/containerd-image-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+It checks image-backed readonly config and writable volume mounts, init/exec,
+PID publication, nonzero exit, reaping and native-snapshot cleanup. Set
+`ENGINE_CAPTURE_DIRECTORY` only when intentionally capturing the real create
+JSON; inspect image-provided environment values before sharing that artifact.

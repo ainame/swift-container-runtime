@@ -51,7 +51,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | --- | --- |
 | Process setup | HOME resolution; empty/omitted-process behavior; OOM score; scheduling, I/O priority, exec CPU affinity, NUMA memory policy |
 | Namespaces | Join supplied namespace paths; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
-| Rootfs and mounts | No-pivot; cgroup mounts; bind/rbind/remount and propagation; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
+| Rootfs and mounts | No-pivot; cgroup mounts; explicit remount and broader propagation; dangling target symlinks and protected-proc bind handling; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
 | Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device-rule updates, update support for the other remaining controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
 | Security | Complete init/exec policy verification; AppArmor/SELinux execution-context staging and availability behavior; session keyrings; sealed executable handoff |
@@ -108,3 +108,14 @@ A partial deny rejects any overlapping access, including combined read/write,
 which is deliberately stricter than runc 1.4's subset test for combined requests.
 The [engine baseline](engine-baseline.md) now includes the successful constrained
 containerd directory-rootfs scenario and its remaining exclusions.
+
+File/directory bind and rbind mounts now support confined existing target links,
+missing target files/parents, source paths relative to the bundle, explicit VFS
+attribute clears and private/rprivate propagation. `rbind,ro` changes the top
+mount only; submounts keep their attributes. Unmentioned inherited attributes
+remain set, which can be stricter than runc 1.4's first remount attempt. The bind
+suite compares ordinary cases with runc and checks host mount tables, descriptor
+closure and failure cleanup. Early source pinning and prevention of device-node
+creation in a host-backed `/dev` have Swift-specific regressions. A pinned Alpine
+3.23.6 native-snapshotter run through containerd also passes file/volume binds and
+init/exec cleanup; supplied namespace joins remain open.

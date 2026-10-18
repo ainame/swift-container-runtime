@@ -1,0 +1,18 @@
+Implementation: 62f04f2
+Date: 2026-10-18
+Command: scripts/containerd-image-integration.sh (exact command in docs/engine-baseline.md)
+Profile: Linux aarch64, Swift 6.4.1 debug, kernel 6.12.28, cgroup v2/cgroupfs, native snapshotter
+
+Client:
+  Version:  2.2.2
+  Revision:
+  Go version: go1.24.13
+
+Server:
+  Version:  2.2.2
+  Revision:
+  UUID: 5f44dc5b-f9d5-45f2-bf23-87a753be1815
+image: docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+3.23.6
+time="2026-10-18T15:43:18Z" level=warning msg="task sct-image-22648 exit with non-zero exit code 137"
+containerd-image: PASS (native snapshot, readonly config, writable volume, init/exec, PID files, exit status and cleanup)
