@@ -1,0 +1,113 @@
+{
+  "delete_only_create_resources": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable tests removal of cgroup v1 controller directories.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/delete_only_create_resources/delete_only_create_resources.go"
+  },
+  "delete_resources": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable tests removal of cgroup v1 controller directories.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/delete_resources/delete_resources.go"
+  },
+  "hooks_stdin": {
+    "category": "upstream",
+    "reason": "Expects prestart state created, while current runc sends creating (libcontainer/process_linux.go procHooks); runc fails this test too.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/hooks_stdin/hooks_stdin.go"
+  },
+  "linux_cgroups_blkio": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_blkio/linux_cgroups_blkio.go"
+  },
+  "linux_cgroups_cpus": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_cpus/linux_cgroups_cpus.go"
+  },
+  "linux_cgroups_devices": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_devices/linux_cgroups_devices.go"
+  },
+  "linux_cgroups_hugetlb": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_hugetlb/linux_cgroups_hugetlb.go"
+  },
+  "linux_cgroups_memory": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_memory/linux_cgroups_memory.go"
+  },
+  "linux_cgroups_network": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_network/linux_cgroups_network.go"
+  },
+  "linux_cgroups_pids": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_pids/linux_cgroups_pids.go"
+  },
+  "linux_cgroups_relative_blkio": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_blkio/linux_cgroups_relative_blkio.go"
+  },
+  "linux_cgroups_relative_cpus": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_cpus/linux_cgroups_relative_cpus.go"
+  },
+  "linux_cgroups_relative_devices": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_devices/linux_cgroups_relative_devices.go"
+  },
+  "linux_cgroups_relative_hugetlb": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_hugetlb/linux_cgroups_relative_hugetlb.go"
+  },
+  "linux_cgroups_relative_memory": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_memory/linux_cgroups_relative_memory.go"
+  },
+  "linux_cgroups_relative_network": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_network/linux_cgroups_relative_network.go"
+  },
+  "linux_cgroups_relative_pids": {
+    "category": "cgroup-v1",
+    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_pids/linux_cgroups_relative_pids.go"
+  },
+  "linux_devices": {
+    "category": "upstream",
+    "reason": "Supplies FIFO major/minor 8:666; Linux FIFOs report 0:0, and current runc rejects this configuration. Correct character/block/FIFO nodes have a separate integration gate.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_devices/linux_devices.go"
+  },
+  "mounts": {
+    "category": "upstream",
+    "reason": "Adds tmpfs data mode=755,size=1k to bind mounts; current runc rejects filesystem-specific data on a bind mount. Valid bind/tmpfs propagation has a separate integration gate.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/mounts/mounts.go"
+  },
+  "pidfile": {
+    "category": "upstream",
+    "issue": "https://github.com/opencontainers/runtime-tools/issues/805",
+    "reason": "PreDelete sends a signal after the true workload exited; signaling a stopped container errors. See upstream issue 805; current runc fails too.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/pidfile/pidfile.go"
+  },
+  "process_rlimits": {
+    "category": "upstream",
+    "reason": "The Go probe cannot reliably validate its startup limits: RLIMIT_AS constrains Go/libseccomp initialization, and Go may raise RLIMIT_NOFILE. Current runc also fails; rlimits have a separate static C-probe integration gate.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/process_rlimits/process_rlimits.go"
+  },
+  "start": {
+    "category": "upstream",
+    "reason": "After setting process=nil, expects create to succeed and start err==nil despite its MUST-generate-error assertion text; current runc fails this case too.",
+    "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/start/start.go"
+  }
+}

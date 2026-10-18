@@ -74,3 +74,54 @@ jobs:
           sudo sh scripts/docker-integration.sh swift "$IMAGE"
       - name: AppArmor confinement gate
         run: sudo sh scripts/apparmor-integration.sh /usr/local/bin/srunc
+
+  runtime-tools:
+    name: OCI runtime-tools validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: swift:6.4.1
+      # The pinned suite creates namespaces, mounts and device nodes. It uses
+      # a private state root and the host's delegated cgroup v2 hierarchy.
+      options: --privileged --cgroupns=host
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tooling
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            golang-go make perl python3 git busybox-static libseccomp-dev apparmor
+          swift --version
+          swift --version | grep -q 'Swift version 6.4.1 '
+      - name: Build srunc with strict memory safety
+        run: swift build --disable-automatic-resolution --product srunc
+      - name: Check the TAP harness
+        run: PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-runtime-tools-runner.py
+      - name: Build the pinned upstream suite
+        run: sh scripts/prepare-runtime-tools.sh .build/runtime-tools-upstream
+      - name: Prepare the upstream AppArmor profile when available
+        run: |
+          if grep -q '^Y' /sys/module/apparmor/parameters/enabled 2>/dev/null; then
+            mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security
+            cat > .build/runtime-tools-apparmor <<'PROFILE'
+          profile acme_secure_profile flags=(attach_disconnected,mediate_deleted) {
+            file, capability, network, unix, signal, ptrace, mount, umount, pivot_root, dbus,
+          }
+          PROFILE
+            apparmor_parser -r .build/runtime-tools-apparmor
+          fi
+      - name: Run applicable OCI validation executables
+        run: python3 scripts/runtime-tools-integration.py .build/debug/srunc .build/runtime-tools-upstream .build/runtime-tools-results
+      - name: Remove the test AppArmor profile
+        if: always()
+        run: |
+          if [ -f .build/runtime-tools-apparmor ]; then
+            apparmor_parser -R .build/runtime-tools-apparmor
+          fi
+      - name: Preserve results, raw TAP and exclusion reasons
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-tools-validation
+          path: .build/runtime-tools-results/
+          if-no-files-found: warn
