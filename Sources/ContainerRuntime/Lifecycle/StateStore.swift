@@ -103,15 +103,14 @@ final class StateRoot {
     func contains(_ directory: borrowing ContainerDirectory) throws -> Bool {
         let id = directory.id
         guard let own = directory.descriptor.identity() else { throw RuntimeError.system("inspect state of container \(id.rawValue)") }
-        var status = stat()
-        let result = try descriptor.withDescriptor {
-            unsafe fstatat($0.rawValue, id.rawValue, &status, AT_SYMLINK_NOFOLLOW)
+        do {
+            let status = try descriptor.withDescriptor { root in try Kernel.File.status(of: id.rawValue, in: root) }
+            return status.identity == own
+        } catch Errno.noSuchFileOrDirectory {
+            return false
+        } catch {
+            throw RuntimeError.system("inspect state of container \(id.rawValue)", (error as? Errno) ?? .badFileDescriptor)
         }
-        guard result == 0 else {
-            if errno == ENOENT { return false }
-            throw RuntimeError.system("inspect state of container \(id.rawValue)")
-        }
-        return status.st_dev == own.device && status.st_ino == own.inode
     }
 }
 
@@ -247,7 +246,9 @@ final class LockedContainer {
         try root.withMembershipLock {
             guard try root.contains(directory) else { return }
             // Remove only files in our pinned generation before unlinking its name.
-            for name in try directory.descriptor.directoryEntries() {
+            let names: [String]
+            do { names = try directory.descriptor.directoryEntries() } catch { throw RuntimeError.system("list state directory", (error as? Errno) ?? .ioError) }
+            for name in names {
                 let result = try directory.descriptor.withDescriptor { descriptor in
                     var result = unsafe unlinkat(descriptor.rawValue, name, 0)
                     if result != 0 && errno == EISDIR { result = unsafe unlinkat(descriptor.rawValue, name, AT_REMOVEDIR) }

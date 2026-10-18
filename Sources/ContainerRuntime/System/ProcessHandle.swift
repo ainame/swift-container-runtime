@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// A process pinned by a pidfd after its identity was verified.
@@ -14,14 +8,18 @@ struct ProcessHandle: ~Copyable {
 
     /// Sends `signal` through the pidfd; false if the process has exited.
     func signal(_ signal: Int32) throws -> Bool {
-        let result = try descriptor.withDescriptor { linux_pidfd_send_signal($0.rawValue, signal) }
-        if result == 0 { return true }
-        if errno == ESRCH { return false }
-        throw RuntimeError("signal container init \(pid): \(Errno.current)")
+        do {
+            try descriptor.withDescriptor { pidfd in try Kernel.Pidfd.sendSignal(signal, to: pidfd) }
+            return true
+        } catch Errno.noSuchProcess {
+            return false
+        } catch {
+            throw RuntimeError("signal container init \(pid): \(error)")
+        }
     }
 
     func waitForExit(timeout: Duration) -> Bool {
-        descriptor.poll(events: Int16(POLLIN), timeout: timeout) & Int16(POLLIN | POLLHUP) != 0
+        !descriptor.poll(.input, timeout: timeout).isDisjoint(with: [.input, .hangup])
     }
 }
 
@@ -40,12 +38,13 @@ extension ProcessHandle {
         _ body: (borrowing ProcessHandle) throws -> Result
     ) throws -> Result? {
         // Reject structurally unsafe identities before opening any kernel handle.
-        guard identity.pid > 1, identity.pid != getpid() else { return nil }
+        guard identity.pid > 1, identity.pid != Kernel.Process.id else { return nil }
         guard try ProcFS.bootID() == identity.bootID else { return nil }
         // Pin first, then compare procfs identity; a later PID reuse cannot retarget it.
-        let raw = linux_pidfd_open(identity.pid)
-        guard raw >= 0 else {
-            let error = Errno.current
+        let pidfd: OwnedFileDescriptor
+        do {
+            pidfd = try Kernel.Pidfd.open(identity.pid)
+        } catch {
             if error == .noSuchProcess { return nil }
             // EINVAL also means the PID has no thread-group leader: a reaped
             // init's PID stays allocated while orphaned descendants still use it
@@ -58,7 +57,7 @@ extension ProcessHandle {
             }
             throw RuntimeError("pidfd_open \(identity.pid): \(error) (requires Linux 5.3+)")
         }
-        let handle = ProcessHandle(pid: identity.pid, descriptor: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)))
+        let handle = ProcessHandle(pid: identity.pid, descriptor: pidfd)
         guard let stat = try ProcFS.processStat(identity.pid), stat.startTime == identity.startTime, !stat.hasExited else {
             return nil
         }

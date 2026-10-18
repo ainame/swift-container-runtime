@@ -13,10 +13,17 @@ so all runtime code type-checks there.
   the mount API). It gets no platform policy and no stubs.
 - **No `@_exported import Glibc`.** Re-exporting libc would put all of it into
   every file and every client.
-- **A new Swift target, `Kernel`,** is the only code that imports libc
-  (`Musl`/`Glibc`/`Darwin`, conditionally) and `LinuxAPI` (Linux only). It
-  exposes Swift API; its macOS implementation is the stubs. `ContainerRuntime`
-  depends on `Kernel` and imports it plus `SystemPackage`.
+- **`Kernel` is a directory, not a module:** `Sources/ContainerRuntime/Kernel/`.
+  Swift imports are per file, so only Kernel files import libc
+  (`Musl`/`Glibc`/`Darwin`, conditionally) and `LinuxAPI`, and no other
+  runtime file sees them. A separate module would add `package`/`public`
+  modifiers to every wrapper without hiding anything more: what keeps C out of
+  the rest of the runtime is that Kernel's API uses only Swift types
+  (`FileStatus`, option sets, `Errno`, descriptors, and C string pointers on
+  post-fork paths). It can become a module later if another target needs it.
+- **The boundary is checked:** a unit test fails when a runtime file outside
+  `Kernel/` imports `Glibc`, `Musl`, `Darwin` or `LinuxAPI`. Files not yet
+  migrated are listed in the test and removed step by step.
 - **Only Kernel has platform conditionals.** Each Kernel file has a Linux
   implementation and a stub implementation; nothing else checks the platform.
 
@@ -48,7 +55,7 @@ From the 29 importing files:
 - **Post-fork paths must not allocate.** Wrappers used between `fork` and
   `exec` take C strings/pointers and return `Errno?` or raw descriptors, never
   `String` or arrays. Throwing a plain `Errno` is fine.
-- **Names are grouped by area:** `Kernel.Process` (fork, wait, exit, exec,
+- **Names are grouped by area** (Kernel is an `enum` namespace): `Kernel.Process` (fork, wait, exit, exec,
   credentials, parent-death signal, capabilities, limits), `Kernel.File`
   (open/stat/directory/link/flock), `Kernel.Mount` (mount, pivot_root, the
   descriptor mount API), `Kernel.Namespace` (unshare, setns, clone flags),
@@ -64,10 +71,10 @@ From the 29 importing files:
 
 ## Migration (one commit each, Linux gate per step)
 
-1. Create the `Kernel` target (depends on `LinuxAPI` on Linux and
-   `SystemPackage`), with `Errno.current` and `FileStatus`. Move
-   `OwnedFileDescriptor`, `ProcFS` primitives and `ProcessHandle`'s pidfd
-   calls behind it.
+1. **Done.** `Kernel/` with `Errno.current`, the `pid_t`/`uid_t`/`gid_t`
+   names, `FileStatus`/`FileIdentity`, `PollEvents` polling, directory
+   listing and pidfds, plus `KernelBoundaryTests`. `ProcFS`, `ProcessHandle`,
+   `ContainerState` and `RuntimeError` no longer import libc.
 2. Files and directories: `StateStore`, `PIDFile`, `LinuxDescriptor`,
    `BundleConfiguration`, `DefaultSpecification`, `Cgroup` I/O.
 3. Events: inotify and poll (`ContainerEventStream`).
@@ -93,8 +100,8 @@ Tests keep `#if os(Linux)` where they exercise real kernel behavior.
 
 ## Cost and risk
 
-The change touches all 29 files and adds a Kernel target of several hundred
-lines. The main risks are allocation or ordering changes on post-fork paths
+The change touches all 29 files and adds several hundred lines under
+`Kernel/`. The main risks are allocation or ordering changes on post-fork paths
 (step 5) and Darwin type differences surfacing in stubs (`dev_t`, `mode_t`
 widths, `msghdr` fields), which stay inside Kernel.
 

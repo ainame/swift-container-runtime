@@ -233,7 +233,7 @@ public struct ContainerLifecycle: Sendable {
 
     /// A snapshot of host PIDs in the recorded cgroup and its descendants.
     /// The state lock is released before invoking the external ps program.
-    public func processIDs(id: ContainerID) throws -> [pid_t] {
+    public func processIDs(id: ContainerID) throws -> [Int32] {
         #if os(Linux)
         let container = try lock(id)
         guard let record = try container.readRecord(), let identity = record.cgroup else {
@@ -340,7 +340,12 @@ public struct ContainerLifecycle: Sendable {
         // enumeration is ordinary concurrent deletion rather than a warning.
         var reports: [ContainerStateReport] = []
         var warnings: [String] = []
-        let names = try root.descriptor.directoryEntries().sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+        let names: [String]
+        do {
+            names = try root.descriptor.directoryEntries().sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+        } catch {
+            throw RuntimeError.system("list state directory", error)
+        }
         for name in names {
             guard let id = try? ContainerID(name) else { continue }
             do {

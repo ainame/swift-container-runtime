@@ -203,7 +203,7 @@ extension StartProtocol {
     }
 
     fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, timeout: Duration) -> Bool {
-        owner.poll(events: Int16(POLLIN), timeout: timeout) != 0
+        !owner.poll(.input, timeout: timeout).isEmpty
     }
 
     /// Asks a created init to exec its workload and waits for the outcome.
@@ -242,12 +242,10 @@ extension StartProtocol {
         // Step 3: consume the marker this command connected through, then commit.
         // A failed unlink closes the connection, which the init treats as a
         // start that never happened.
-        var current = stat()
-        let inspected = try container.directory.descriptor.withDescriptor {
-            unsafe fstatat($0.rawValue, StateFile.startSocket, &current, AT_SYMLINK_NOFOLLOW)
+        let current = try? container.directory.descriptor.withDescriptor { directory in
+            try Kernel.File.status(of: StateFile.startSocket, in: directory)
         }
-        guard inspected == 0, let connectedIdentity = socketFile.identity(),
-              connectedIdentity.device == current.st_dev, connectedIdentity.inode == current.st_ino else {
+        guard let current, let connectedIdentity = socketFile.identity(), connectedIdentity == current.identity else {
             throw RuntimeError("container \(id) start socket changed during start")
         }
         let unlinked = try container.directory.descriptor.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }

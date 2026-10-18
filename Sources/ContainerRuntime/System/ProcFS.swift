@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// Bounded reads and identity information from the running kernel.
@@ -56,13 +50,14 @@ enum ProcFS {
 
     /// Whether `pid` is in the caller's PID namespace.
     static func sharesPIDNamespace(_ pid: pid_t) throws -> Bool {
-        func identity(_ path: String) throws -> (dev_t, ino_t)? {
-            var status = stat()
-            guard unsafe stat(path, &status) == 0 else {
-                if errno == ENOENT || errno == ESRCH { return nil }
-                throw RuntimeError("stat \(path): \(Errno.current)")
+        func identity(_ path: String) throws -> FileIdentity? {
+            do {
+                return try Kernel.File.status(atPath: path).identity
+            } catch where error == .noSuchFileOrDirectory || error == .noSuchProcess {
+                return nil
+            } catch {
+                throw RuntimeError("stat \(path): \(error)")
             }
-            return (status.st_dev, status.st_ino)
         }
         guard let own = try identity("/proc/self/ns/pid"), let other = try identity("/proc/\(pid)/ns/pid") else {
             return false
@@ -74,19 +69,14 @@ extension ProcFS {
     /// The Swift bootstrap requires a single-threaded caller, with no concurrent
     /// thread creation or signal handler that introduces background work.
     static func threadCount() throws -> Int {
-        guard let directory = unsafe opendir("/proc/self/task") else {
-            throw RuntimeError.launch(.inspectThreads)
+        do {
+            let tasks = OwnedFileDescriptor(takingOwnershipOf: try FileDescriptor.open(
+                FilePath("/proc/self/task"), .readOnly, options: [.directory, .closeOnExec]))
+            // Each entry is one thread, named by its decimal TID.
+            return try tasks.directoryEntries().count
+        } catch {
+            throw RuntimeError.launch(.inspectThreads, (error as? Errno) ?? .ioError)
         }
-        defer { _ = unsafe closedir(directory) }
-        var count = 0
-        errno = 0
-        while let entry = unsafe readdir(directory) {
-            // Proc task names are decimal TIDs; ignore '.' and '..'.
-            let first = unsafe entry.pointee.d_name.0
-            if first >= 48 && first <= 57 { count += 1 }
-        }
-        guard errno == 0 else { throw RuntimeError.launch(.inspectThreads) }
-        return count
     }
 }
 extension ProcFS {

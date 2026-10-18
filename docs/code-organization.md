@@ -25,10 +25,23 @@ spelling, escaping and fractional-second digits.
 | `Lifecycle/` | Container commands, state records and their directories, live observation, PID files, `ps` |
 | `Cgroups/` | cgroup v2 placement, resource plans and updates, interface-file parsing, statistics |
 | `Events/` | Event snapshots and JSON, the inotify watch, tick scheduling, timestamps and duration text |
-| `System/` | Owned descriptors, procfs, verified processes, errno and runtime errors |
+| `System/` | Owned descriptors, procfs, verified processes, runtime errors |
+| `Kernel/` | The only files that import libc and `LinuxAPI`: system calls as Swift API, with `ENOSYS` stubs off Linux |
 
 A file belongs where its main type's responsibility lies; a Linux extension of a
 type sits beside that type.
+
+Only `Kernel/` imports `Glibc`, `Musl`, `Darwin` or `LinuxAPI`
+(`KernelBoundaryTests` enforces this; files still being migrated are listed
+there). Kernel API takes and returns Swift types such as `FileStatus`,
+`PollEvents`, `Errno` and descriptors, and names libc's `pid_t`, `uid_t` and
+`gid_t` for the rest of the runtime. A new system call goes into Kernel with a
+stub for other platforms. See [the migration plan](platform-shim-plan.md).
+
+Do not annotate a closure `throws(Errno)` when passing it to an untyped
+`throws` parameter such as `OwnedFileDescriptor.withDescriptor`: Swift 6.4.1
+on Linux crashes in SILGen on the conversion thunk. Let the closure take the
+parameter's type and catch `Errno` cases at the call site.
 
 ## Boundaries
 

@@ -111,8 +111,8 @@ func pollTimeoutRoundsUpAndClamps(_ duration: Duration, _ expected: Int32) {
     let pipe = try FileDescriptor.pipe()
     let reader = OwnedFileDescriptor(takingOwnershipOf: pipe.readEnd)
     let writer = OwnedFileDescriptor(takingOwnershipOf: pipe.writeEnd)
-    #expect(reader.poll(events: Int16(POLLIN), timeout: .milliseconds(10)) == 0)
+    #expect(reader.poll(.input, timeout: .milliseconds(10)).isEmpty)
     try writer.withDescriptor { _ = try $0.writeAll([1]) }
-    #expect(reader.poll(events: Int16(POLLIN), timeout: .seconds(1)) & Int16(POLLIN) != 0)
+    #expect(reader.poll(.input, timeout: .seconds(1)).contains(.input))
 }
 #endif

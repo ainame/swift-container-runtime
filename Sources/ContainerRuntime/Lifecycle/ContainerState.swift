@@ -3,13 +3,6 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import SystemPackage
 
 /// Runtime status, including runc's cgroup-freezer `paused` extension.
@@ -202,7 +195,7 @@ public struct ContainerStateReport: Sendable, Equatable {
     public let id: String
     public let status: ContainerStatus
     /// The init PID, retained while paused; 0 when stopped, as in runc.
-    public let pid: pid_t
+    public let pid: Int32
     public let bundle: String
     public let rootfs: String
     public let created: String
