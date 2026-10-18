@@ -484,6 +484,17 @@ final class CgroupLeaf {
         if let error = directory.write("cgroup.procs", String(pid)) { throw RuntimeError("join exec process to cgroup: \(error)") }
     }
 
+    /// Kill the pinned cgroup subtree atomically, including concurrently
+    /// forking descendants. Never fall back to a path or an unpinned PID list.
+    static func killAll(_ identity: CgroupIdentity) throws {
+        guard let directory = try recordedDirectory(identity) else {
+            throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
+        }
+        if let error = directory.write("cgroup.kill", "1") {
+            throw RuntimeError("kill processes in cgroup \(directory.displayPath): \(error) (requires cgroup.kill, Linux 5.14+)")
+        }
+    }
+
     /// Opens only this recorded generation, never a replacement or a group
     /// from another boot. Freezer writes use this pinned directory throughout.
     private static func recordedDirectory(_ identity: CgroupIdentity) throws -> CgroupDirectory? {

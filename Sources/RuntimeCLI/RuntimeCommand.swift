@@ -125,10 +125,14 @@ struct Kill: RuntimeLoggingCommand {
         commandName: "kill",
         abstract: "Send a signal (default TERM) to the init of a created, running, or paused container.",
         discussion: "SIGNAL is a name such as KILL or SIGKILL, or a number. "
-            + "In a PID namespace the init is PID 1, which ignores signals it has no handler for, except KILL and STOP."
+            + "SIGKILL also kills the cgroup subtree when the container shares a PID namespace. "
+            + "Other signals target init, including with the compatibility flag --all."
     )
 
     @OptionGroup var globals: GlobalOptions
+
+    @Flag(name: [.customShort("a"), .long], help: "Compatibility flag; also succeed when the container is already stopped.")
+    var all = false
 
     @Argument(help: "Container ID.")
     var id: String
@@ -147,7 +151,7 @@ struct Kill: RuntimeLoggingCommand {
 
     mutating func run() throws {
         do {
-            try globals.lifecycle().kill(id: ContainerID(id), signal: SignalName.parse(signal))
+            try globals.lifecycle().kill(id: ContainerID(id), signal: SignalName.parse(signal), all: all)
         } catch {
             throw CommandFailure.report(error)
         }

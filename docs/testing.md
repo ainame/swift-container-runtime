@@ -40,7 +40,7 @@ suite because a shared file was touched:
 
 | Change | Starting integration selection |
 | --- | --- |
-| Launch/start/exit, process identity or cleanup | `oci lifecycle`; add suites for changed setup or descriptor invariants. |
+| Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
 | Mount/rootfs/path controls | `oci readonly path-controls`; add `lifecycle` for readiness/cleanup changes. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
@@ -146,3 +146,8 @@ The local development environment has Apple `container` 0.9.0 and a cached `swif
 The [engine baseline](engine-baseline.md) records pinned live capture evidence and
 its limits. `scripts/logging-integration.sh` also runs on macOS: its synthetic
 failure probes exercise the CLI/log contract without launching a container.
+
+`scripts/kill-integration.sh` compares runc 1.4 signal semantics, with a real
+subreaper, shared/private PID namespaces, surviving descendants after init exits,
+paused and stopped states, descendant cgroups, non-KILL init-only signaling and
+bystander/stale-identity safety. It needs cgroup v2 `cgroup.kill` (Linux 5.14+).

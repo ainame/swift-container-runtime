@@ -327,19 +327,40 @@ public struct ContainerLifecycle: Sendable {
         try eventsOnLinux(id: id, interval: interval, statsOnly: statsOnly, emit: emit)
     }
 
-    /// runc's `kill`: sends `signal` to the container's init.
+    /// Sends `signal` to init; SIGKILL also kills its cgroup subtree when the
+    /// PID namespace is shared, even if init has exited, as in runc 1.4.
     ///
     /// - Parameters:
     ///   - id: A created, running or paused container.
     ///   - signal: A Linux signal number, such as 15 for SIGTERM; see
     ///     ``SignalName/parse(_:)`` for names. SIGKILL also thaws a paused
     ///     container so that the kill takes effect, as runc does.
+    ///   - all: runc's compatibility flag: stopped containers succeed; signals
+    ///     other than SIGKILL still target init only.
     /// - Throws: ``LifecycleError`` when the container is missing, stopped, or
     ///   its init has already exited.
-    public func kill(id: ContainerID, signal: Int32) throws {
+    public func kill(id: ContainerID, signal: Int32, all: Bool = false) throws {
         let container = try lock(id)
         let record = try container.readRecord()
-        _ = try LifecycleOperation.kill.action(for: try container.status(of: record), id: id)
+        let status = try container.status(of: record)
+        // In a private namespace the kernel kills descendants when init dies.
+        // Shared namespaces need a cgroup-wide kill, including surviving execs
+        // after init exits. State locking serializes this with exec and delete.
+        if signal == Kernel.Signal.kill, let record, !record.pidNamespace, let identity = record.cgroup {
+            if status == .stopped, !all, try CgroupLeaf.processes(identity).isEmpty {
+                throw LifecycleError.invalidTransition(id: id, operation: "kill", status: .stopped)
+            }
+            if status != .stopped {
+                _ = try LifecycleOperation.kill.action(for: status, id: id)
+            }
+            try CgroupLeaf.killAll(identity)
+            try? CgroupLeaf.setFrozen(identity, frozen: false)
+            return
+        }
+        // Modern runc keeps --all as a compatibility flag, not a request to
+        // broadcast non-KILL signals. Missing containers still fail in lock().
+        if all, status == .stopped { return }
+        _ = try LifecycleOperation.kill.action(for: status, id: id)
         guard let record, let process = record.initProcess,
               try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace, { try $0.signal(signal) }) == true else {
             throw LifecycleError.invalidTransition(id: id, operation: "kill", status: .stopped)

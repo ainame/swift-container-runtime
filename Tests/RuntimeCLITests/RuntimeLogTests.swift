@@ -56,7 +56,7 @@ func rejectsInvalidLoggingOptions(_ arguments: [String]) {
     #expect(throws: CommandFailure.self) { _ = try RuntimeLog(options: options) }
 }
 
-@Test(arguments: ["create", "start", "exec", "exec-2", "delete", "delete-2"])
+@Test(arguments: ["create", "start", "exec", "exec-2", "delete", "delete-2", "kill"])
 func replaysCapturedContainerdArguments(_ name: String) throws {
     let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()

@@ -48,8 +48,8 @@ expect_failure 1 exec --process "$scratch/missing-process.json" --detach --pid-f
 [ ! -e "$scratch/exec.pid" ] || fail "failed exec published a PID"
 
 # Rejected command flags still reach the shim's log reader.
-expect_failure 64 kill --all box KILL
-"$scratch/check" "$log" "--all" 4
+expect_failure 64 kill --unsupported box KILL
+"$scratch/check" "$log" "--unsupported" 4
 expect_failure 125 run --bundle "$scratch/missing" box
 "$scratch/check" "$log" "config.json" 5
 

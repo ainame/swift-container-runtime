@@ -382,3 +382,10 @@ func rejectsInvalidPreserveFDs(_ arguments: [String]) {
         #expect(RuntimeCommand.exitCode(for: error) == .validationFailure)
     }
 }
+
+@Test(arguments: ["--all", "-a"])
+func killAcceptsShimCompatibilityFlag(_ flag: String) throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["kill", flag, "box", "9"]) as? Kill)
+    #expect(command.all)
+    #expect(command.signal == "9")
+}

@@ -123,7 +123,7 @@ remains unverified.
 | Global logging and error extraction | Implemented; real shim failed-create evidence above. |
 | Captured create JSON | First rejection is `linux.resources.devices`. It also requests mqueue/sysfs mounts. Security restrictions must be implemented or explicitly rejected, never dropped to get past decoding. |
 | Captured exec JSON | Decodes and validates as a Swift process plan; actual shim exec into Swift is blocked by create. |
-| `kill --all` | Observed in the real trace; still rejected and logged. Shared-PID-namespace semantics need their own implementation and Linux check. |
+| `kill --all` | Implemented with runc 1.4 compatibility semantics; see the focused kill validation below. |
 | Version/features | Focused metadata integration passes. go-runc v1.1.0's version parser only populates values for the literal `runc version ` prefix; Swift retains its own identity, so this helper returns empty metadata. The captured shim create path did not query version. Features emit valid OCI JSON; broader engine feature negotiation is unverified. |
 | Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. Swift still rejects them explicitly. Keyring setup and no-pivot remain deferred. `--systemd-cgroup` and explicit global `--rootless` remain rejected; no systemd support is implied. |
 | Next runnable scenario | Implement requested mounts and device policy, then supplied namespace paths/bind mounts for richer bundles. Continue with a declared cgroupfs nonterminal scenario; retain remaining milestone-1 PID-publication and cleanup gates. |
@@ -143,3 +143,32 @@ remains unverified.
   synthetic failure probes, distinct from the live engine capture above.
 - No full unit suite, release matrix, Docker, terminal, rootless or second
   architecture gate was run. Those are not claims of this implementation slice.
+
+## Follow-up: shim kill compatibility
+
+`kill --all` / `-a` now parses the captured shim invocation. Following the
+installed runc 1.4 applying code (`Container.signal` in
+`libcontainer/container_linux.go`, `signalAllProcesses` in `init_linux.go`),
+SIGKILL kills the cgroup subtree for a shared PID namespace, including surviving
+processes after init exits. Private PID namespaces retain init-pidfd signaling
+and kernel descendant teardown. Other signals still target init, even with
+`--all`; the compatibility flag also succeeds for an already-stopped container.
+A missing container remains an error. Plain kill of a stopped empty container
+retains Swift's stricter stopped-state diagnosis.
+
+The cgroup-wide operation writes `cgroup.kill` through the recorded boot/inode
+identity and a pinned directory. It requires Linux 5.14+ and never falls back to
+unverified PID enumeration or the current object at a replaced path. It does not
+remove state or the cgroup; delete remains responsible for cleanup.
+
+Fresh checks on the same Linux profile: 46 CLI tests, the new `kill` integration
+suite, `logging`, and the lifecycle regression suite passed. The kill suite runs
+under a real subreaper and compares Swift with installed runc: private/shared PID
+namespaces, stopped init with surviving children, descendant cgroups, paused
+cleanup, non-KILL init-only signaling, missing/stopped compatibility, reaped
+processes, and a separate bystander cgroup. A Swift-only stale-boot case proves
+that invalid cgroup identity cannot signal live members. The fixture explicitly
+thaws runc's empty frozen group before deleting it; Swift already thaws on kill.
+No Swift engine workload succeeds yet: device policy and mounts still block the
+captured create, and shim-owned PID publication/exit cleanup still needs engine
+execution evidence.
