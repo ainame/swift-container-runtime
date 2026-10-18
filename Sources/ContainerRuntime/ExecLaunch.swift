@@ -51,14 +51,14 @@ struct ExecNamespaceSet: ~Copyable {
     /// Called only in the single-threaded launcher. PID namespace entry
     /// applies to the next fork; the launcher remains outside that namespace.
     func join() -> Errno? {
-        func enter(_ owner: borrowing OwnedFileDescriptor, _ type: Int32) -> Errno? {
-            owner.failure(in: { setns($0.rawValue, type) == 0 ? nil : .current })
+        func enter(_ owner: borrowing OwnedFileDescriptor, _ namespace: OCIRunPlan.Namespace) -> Errno? {
+            owner.failure(in: { setns($0.rawValue, namespace.cloneFlag) == 0 ? nil : .current })
         }
-        if let error = enter(network, Int32(CLONE_NEWNET)) { return error }
-        if let error = enter(ipc, Int32(CLONE_NEWIPC)) { return error }
-        if let error = enter(uts, Int32(CLONE_NEWUTS)) { return error }
-        if let error = enter(mount, Int32(CLONE_NEWNS)) { return error }
-        return enter(pid, Int32(CLONE_NEWPID))
+        if let error = enter(network, .network) { return error }
+        if let error = enter(ipc, .ipc) { return error }
+        if let error = enter(uts, .uts) { return error }
+        if let error = enter(mount, .mount) { return error }
+        return enter(pid, .pid)
     }
 
     /// Chroot through the live init's root descriptor, never its host path.
@@ -101,7 +101,7 @@ extension OCIProcessPlan {
                     directory: (pointers + starts[2])[0], security: security,
                     supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
                     resourceLimits: resourceLimits, foreground: !hooks.detached)
-                return unsafe try NamespaceLauncher.run(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
+                return unsafe try NamespaceLauncher.run(hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
                     guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors)
                     }

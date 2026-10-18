@@ -38,7 +38,7 @@ struct LaunchHooks {
 
 /// Synchronous namespace launch choreography; each fork branch closes its own descriptors.
 enum NamespaceLauncher {
-    /// Forks a launcher that unshares `namespaceFlags` with private mount
+    /// Forks a launcher that unshares `namespaces` with private mount
     /// propagation, then forks the namespace init. The init runs `initialize`
     /// with the report pipe, the commit socket, and (in the foreground only) a
     /// pidfd for the launcher, which `restoreParentDeathSignal` needs after a
@@ -57,7 +57,7 @@ enum NamespaceLauncher {
     /// buffers it borrows must stay alive until this function returns.
     @unsafe
     static func run(
-        namespaceFlags: Int32,
+        unsharing namespaces: [OCIRunPlan.Namespace] = [],
         hooks: LaunchHooks = LaunchHooks(),
         context: (LaunchStage, Int32) -> String? = { _, _ in nil },
         prepareLauncher: () -> Errno? = { nil },
@@ -93,6 +93,8 @@ enum NamespaceLauncher {
         // Authoritative check: every runtime descriptor now exists, so none may
         // sit in the preserved range (see `PreservedDescriptors.verify`).
         try hooks.preserved.verify()
+        // Computed before the fork, so the launcher only reads an integer.
+        let namespaceFlags = namespaces.reduce(Int32(0)) { $0 | $1.cloneFlag }
         let supervisor = getpid()
         let launcher = fork()
         guard launcher >= 0 else {

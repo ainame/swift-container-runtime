@@ -52,7 +52,6 @@ extension OCIRunPlan {
         }
         var strings = try CStringVector(groups: groups)
         let starts = strings.groupStarts
-        let flags = namespaces.reduce(Int32(0)) { $0 | $1.cloneFlag }
         let mounts = self.mounts
         let populatesDev = self.populatesDev
         let readonlyRoot = self.readonlyRoot
@@ -103,7 +102,7 @@ extension OCIRunPlan {
                     directory: (pointers + starts[InitStringGroup.cwdPrefixes])[max(0, cwdCount - 1)],
                     security: security, supplementaryGids: gidBuffer, capabilities: capabilities,
                     lastCapability: lastCapability, resourceLimits: resourceLimits, foreground: !hooks.detached)
-                return unsafe try NamespaceLauncher.run(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
+                return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context) { report, commit, launcher in
                     // Preserve caller descriptors before any rootfs setup opens temporary handles.
                     guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors)

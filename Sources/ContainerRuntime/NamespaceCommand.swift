@@ -60,7 +60,7 @@ extension NamespaceCommand {
         arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>
     ) throws -> Int32 {
         let hostnameLength = unsafe strlen(hostname)
-        return unsafe try NamespaceLauncher.run(namespaceFlags: Int32(CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS)) { report, _, _ in
+        return unsafe try NamespaceLauncher.run(unsharing: [.uts, .pid, .mount]) { report, _, _ in
             guard unsafe mount("proc", "/proc", "proc", UInt(MS_NOSUID | MS_NODEV | MS_NOEXEC), nil) == 0 else {
                 return LaunchRecord.reportFailure(to: report, at: .procMount)
             }
