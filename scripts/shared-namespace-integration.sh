@@ -34,4 +34,12 @@ for mode in foreground created failure; do
     esac
     cmp "$results/host-mounts" /proc/self/mountinfo || fail "$mode leaked or changed host mounts"
 done
+# An explicit path to our own mount namespace must not take pivot_root's
+# old-root detachment path. Inherit by omitting the mount entry instead.
+namespaces='[{"type":"mount","path":"/proc/self/ns/mnt"}]'
+tag=sharedns-explicit path=/$fixture/sharedns-explicit
+write_config "$tag" "$root" "$(cgroup_fields "$path" '{}')" '["/bin/true"]'
+sed -i '/"hostname":/d' "$bundles/$tag/config.json"
+expect_failure "$ours" "$tag" foreground 'omit the mount namespace'
+cmp "$results/host-mounts" /proc/self/mountinfo || fail 'explicit host mount path changed mounts'
 echo 'Inherited namespace integration passed.'

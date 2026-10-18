@@ -82,6 +82,11 @@ extension OCIRunPlan {
         // Host-owned namespaces may be explicitly joined, but their mutable
         // properties must never be changed as a side effect of this container.
         for handle in namespaceHandles where handle.matchesCaller {
+            if handle.namespace == .mount {
+                // pivot_root in the caller's namespace would detach its host
+                // root. The omitted-mount path uses chroot plus recorded cleanup.
+                throw RuntimeError("omit the mount namespace to inherit the caller's mounts safely")
+            }
             if handle.namespace == .network, sysctls.contains(where: \.isNetwork) {
                 throw RuntimeError("config.json: linux.sysctl net.* is not allowed in the host's network namespace")
             }
