@@ -44,3 +44,14 @@ private func engineFixture(_ name: String) throws -> Data {
     #expect(binds.first { $0.destinationPath == "/volume" }?.clearedFlags.contains(.readonly) == true)
     #expect(plan.cgroup.resources.devicePolicy != nil)
 }
+
+@Test func capturedImageNetworkBundlePlansSuppliedNamespace() throws {
+    let config = try JSONDecoder().decode(OCIConfiguration.self, from: engineFixture("image-network/create.config.json"))
+    let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/rootfs"))
+    let path = try #require(plan.networkNamespacePath)
+    #expect(FilePath(path).isAbsolute)
+    #expect(!plan.namespaces.contains(.network))
+    #expect(plan.namespaces.contains(.mount))
+    #expect(plan.mounts.filter { $0.type == .bind }.count == 2)
+    #expect(plan.cgroup.resources.devicePolicy != nil)
+}

@@ -524,3 +524,31 @@ func rejectsUnimplementedBindRequests(_ mount: String) {
     let value = try plan(config(mounts: #"[{"destination":"/dev","type":"tmpfs"},{"destination":"/dev","type":"bind","source":"/host/dev"}]"#))
     #expect(!value.populatesDev)
 }
+
+@Test func plansJoinedNetworkWithoutCreatingAnotherNetworkNamespace() throws {
+    let value = try plan(config(linux: #"{"namespaces":[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"/run/netns/service"}]}"#))
+    #expect(value.networkNamespacePath == "/run/netns/service")
+    #expect(value.namespaces == [.pid, .mount, .uts])
+}
+
+@Test(arguments: [#""""#, "null"])
+func emptyNetworkNamespacePathsKeepCreateSemantics(_ path: String) throws {
+    let value = try plan(config(linux: #"{"namespaces":[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":\#(path)}]}"#))
+    #expect(value.namespaces.contains(.network))
+    #expect(value.networkNamespacePath == nil)
+}
+
+@Test(arguments: [
+    (#"[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"/proc/1/ns/net"},{"type":"network"}]"#, "duplicate network"),
+    (#"[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"bad\u0000path"}]"#, "must not contain NUL"),
+    (#"[{"type":"pid"},{"type":"mount"},{"type":"uts","path":"/proc/1/ns/uts"}]"#, "only network paths"),
+    (#"[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"relative/net"}]"#, "must be absolute"),
+])
+func rejectsConflictingOrUnsupportedNamespacePaths(_ entries: String, _ reason: String) {
+    do {
+        _ = try plan(config(linux: #"{"namespaces":\#(entries)}"#))
+        Issue.record("expected namespace rejection")
+    } catch {
+        #expect(String(describing: error).contains(reason))
+    }
+}

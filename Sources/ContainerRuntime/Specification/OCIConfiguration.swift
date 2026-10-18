@@ -121,11 +121,12 @@ struct OCIConfiguration: Decodable, Sendable {
 
     struct Namespace: Decodable, Sendable {
         var type: String
+        var path: String?
 
         init(from decoder: any Decoder) throws {
-            // `path` (joining an existing namespace) is intentionally absent.
-            let object = try StrictObject(decoder, allowed: ["type"])
+            let object = try StrictObject(decoder, allowed: ["type", "path"])
             type = try object.required("type")
+            path = try object.optional("path")
         }
     }
 

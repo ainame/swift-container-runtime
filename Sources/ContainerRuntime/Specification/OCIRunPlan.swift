@@ -97,8 +97,11 @@ public struct OCIRunPlan: Sendable {
     public let readonlyRoot: Bool
     /// Recorded in container state; they do not affect setup.
     public let annotations: [String: String]
-    /// The namespaces created for the container; others are shared with the host.
+    /// The namespaces created for the container; others are inherited or joined.
     public let namespaces: [Namespace]
+    /// A supplied network namespace to join; nil creates one only when listed
+    /// in namespaces. Supplied paths must be absolute host paths.
+    public let networkNamespacePath: String?
     /// The UTS hostname; nil keeps the inherited one.
     public let hostname: String?
     /// The configured mounts, in order.
@@ -266,12 +269,25 @@ public struct OCIRunPlan: Sendable {
         let process = try OCIProcessPlan(configuration.process)
 
         var namespaces = Set<Namespace>()
+        var seenNamespaces = Set<Namespace>()
+        var networkNamespacePath: String?
         for entry in configuration.linux.namespaces {
             guard let namespace = Namespace(rawValue: entry.type) else {
                 throw RuntimeError("config.json: namespace type \(entry.type) is not implemented; supported: pid, mount, uts, ipc, network")
             }
-            guard namespaces.insert(namespace).inserted else {
+            guard seenNamespaces.insert(namespace).inserted else {
                 throw RuntimeError("config.json: duplicate \(entry.type) namespace")
+            }
+            if let path = entry.path, !path.isEmpty {
+                guard namespace == .network else {
+                    throw RuntimeError("config.json: \(entry.type) namespace path is not implemented; only network paths may be joined")
+                }
+                guard !path.utf8.contains(0) else { throw RuntimeError("config.json: network namespace path must not contain NUL") }
+                let file = FilePath(path)
+                guard file.isAbsolute else { throw RuntimeError("config.json: network namespace path must be absolute") }
+                networkNamespacePath = path
+            } else {
+                namespaces.insert(namespace)
             }
         }
         guard namespaces.contains(.mount) else {
@@ -306,6 +322,7 @@ public struct OCIRunPlan: Sendable {
         self.readonlyRoot = configuration.root.readonly ?? false
         self.annotations = configuration.annotations
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
+        self.networkNamespacePath = networkNamespacePath
         self.hostname = configuration.hostname
         self.mounts = mounts
         self.populatesDev = mounts.last(where: { $0.destination == ["dev"] })?.type == .tmpfs

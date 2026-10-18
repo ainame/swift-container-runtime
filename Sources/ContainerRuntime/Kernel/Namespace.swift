@@ -34,6 +34,18 @@ extension Kernel {
             #endif
         }
 
+        /// NS_GET_NSTYPE, rejecting ordinary files and mismatched namespaces
+        /// before the launcher forks. Paths themselves remain owned by Launch.
+        static func type(of descriptor: FileDescriptor) throws(Errno) -> Int32 {
+            #if os(Linux)
+            let type = linux_namespace_type(descriptor.rawValue)
+            guard type >= 0 else { throw .current }
+            return type
+            #else
+            throw .noFunction
+            #endif
+        }
+
         /// setns(2) into the namespace open at `descriptor`.
         static func enter(_ descriptor: FileDescriptor, _ namespace: OCIRunPlan.Namespace) throws(Errno) {
             #if os(Linux)

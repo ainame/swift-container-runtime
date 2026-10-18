@@ -30,10 +30,15 @@ c version
 printf 'image: %s\n' "$image"
 mkdir -p "$scratch/volume" "/sys/fs/cgroup$fixture"
 printf 'nameserver 192.0.2.1\n' > "$scratch/resolv.conf"
+# Optional supplied network path is explicit; no namespace is provisioned here.
+set --
+if [ -n "${ENGINE_NETWORK_NAMESPACE_PATH:-}" ]; then
+    set -- --with-ns "network:$ENGINE_NETWORK_NAMESPACE_PATH"
+fi
 c run --snapshotter native --runc-binary "$runtime" --runc-root "$scratch/runtime" --cgroup "$fixture/workload" -d \
     --mount "type=bind,src=$scratch/resolv.conf,dst=/etc/resolv.conf,options=rbind:ro:rprivate" \
     --mount "type=bind,src=$scratch/volume,dst=/volume,options=rbind:rw:rprivate" \
-    "$image" "$id" /bin/sh -ec 'echo image-volume > /volume/result; exec sleep 1000'
+    "$@" "$image" "$id" /bin/sh -ec 'echo image-volume > /volume/result; exec sleep 1000'
 bundle=$("$runtime" --root "$root" state "$id" | sed -n 's/.*"bundle"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [ -n "$bundle" ] || fail 'missing Swift state/bundle'
 init=$(cat "$bundle/init.pid")
@@ -41,6 +46,17 @@ grep -q '"deviceProgramID"' "$root/$id/state.json" || fail 'device policy was no
 if [ -n "${ENGINE_CAPTURE_DIRECTORY:-}" ]; then
     mkdir -p "$ENGINE_CAPTURE_DIRECTORY"
     cp "$bundle/config.json" "$ENGINE_CAPTURE_DIRECTORY/create.config.json"
+fi
+if [ -n "${ENGINE_NETWORK_NAMESPACE_PATH:-}" ]; then
+    expected_net=$(stat -Lc %i "$ENGINE_NETWORK_NAMESPACE_PATH")
+    actual_net=$(stat -Lc %i "/proc/$init/ns/net")
+    [ "$expected_net" = "$actual_net" ] || fail 'engine joined wrong network namespace'
+    printf 'network namespace inode: %s\n' "$actual_net"
+fi
+if [ -n "${ENGINE_NETWORK_TEST_PORT:-}" ]; then
+    c tasks exec --exec-id network "$id" /bin/busybox nc -w 3 127.0.0.1 "$ENGINE_NETWORK_TEST_PORT" > "$scratch/network"
+    grep -qx joined-network "$scratch/network" || fail 'image exec did not reach supplied namespace listener'
+    echo 'network TCP reply: joined-network'
 fi
 c tasks exec --exec-id release "$id" /bin/cat /etc/alpine-release
 c tasks exec --exec-id check "$id" /bin/sh -ec 'cat /etc/resolv.conf; cat /volume/result; if (echo forbidden > /etc/resolv.conf) 2>/dev/null; then exit 3; fi' > "$scratch/check"

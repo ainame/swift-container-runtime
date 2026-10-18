@@ -49,8 +49,13 @@ extension OCIRunPlan {
         let pathControls = self.pathControls
         let cwdCount = cwd.count
         let lastCapability = try capabilities?.validatedKernelLimit() ?? -1
+        // Pin and validate in the supervisor. Only its forked launcher calls
+        // setns, before unsharing the remaining namespaces or mounting sysfs.
+        let network = try InitNetworkNamespace(path: networkNamespacePath)
         let context: (LaunchStage, Int32) -> String? = { stage, detail in
             switch stage {
+            case .joinNamespaces:
+                return networkNamespacePath.map { "join supplied network namespace \($0)" }
             case .openMountSource:
                 guard mounts.indices.contains(Int(detail)) else { return nil }
                 return "open bind mount source \(mounts[Int(detail)].source) for \(mounts[Int(detail)].destinationPath)"
@@ -87,7 +92,7 @@ extension OCIRunPlan {
                     directory: (pointers + starts[InitStringGroup.cwdPrefixes])[max(0, cwdCount - 1)],
                     security: security, supplementaryGids: gidBuffer, capabilities: capabilities,
                     lastCapability: lastCapability, resourceLimits: resourceLimits, foreground: !hooks.detached)
-                return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context) { report, commit, launcher in
+                return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context, prepareLauncher: { network.join() }) { report, commit, launcher in
                     // Preserve caller descriptors before any rootfs setup opens temporary handles.
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)

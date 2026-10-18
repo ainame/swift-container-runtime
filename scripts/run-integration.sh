@@ -2,7 +2,7 @@
 # Shared suite inventory for focused local runs and the complete CI gate.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-suites="namespace oci lifecycle lookup credentials capabilities rlimits preserve-fds pidfd-socket readonly path-controls cgroup cpu cpuset freezer ps update events metadata logging kill filesystems devices bind"
+suites="namespace oci lifecycle lookup credentials capabilities rlimits preserve-fds pidfd-socket readonly path-controls cgroup cpu cpuset freezer ps update events metadata logging kill filesystems devices bind network-namespace"
 usage() {
     echo "Usage: $0 BINARY [SUITE ...] | --list | --check [SUITE ...]"
     echo "With no suites, run all suites. RUNC_COMPARE defaults to 1."
