@@ -26,13 +26,13 @@ private final class CgroupDirectory {
         } catch {
             throw RuntimeError("open \(mountPoint): \(error) (cgroup v2 is required)")
         }
-        let type: UInt64
+        let isCgroup2: Bool
         do {
-            type = try root.descriptor.withDescriptor { try Kernel.File.filesystemType(of: $0) }
+            isCgroup2 = try root.descriptor.withDescriptor { try Kernel.File.isOnCgroup2($0) }
         } catch {
             throw RuntimeError("inspect \(mountPoint): \(error)")
         }
-        guard type == Kernel.File.cgroup2FilesystemType else {
+        guard isCgroup2 else {
             throw RuntimeError("\(mountPoint) is not a cgroup v2 (unified) mount; cgroup v1 and hybrid hierarchies are not supported")
         }
         return root

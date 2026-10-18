@@ -69,13 +69,12 @@ extension ProcFS {
     /// The Swift bootstrap requires a single-threaded caller, with no concurrent
     /// thread creation or signal handler that introduces background work.
     static func threadCount() throws -> Int {
+        // Each entry is one thread, named by its decimal TID. A path listing
+        // needs one descriptor, so this works with a single free slot.
         do {
-            let tasks = OwnedFileDescriptor(takingOwnershipOf: try FileDescriptor.open(
-                FilePath("/proc/self/task"), .readOnly, options: [.directory, .closeOnExec]))
-            // Each entry is one thread, named by its decimal TID.
-            return try tasks.directoryEntries().count
+            return try Kernel.File.directoryEntries(atPath: "/proc/self/task").count
         } catch {
-            throw RuntimeError.launch(.inspectThreads, (error as? Errno) ?? .ioError)
+            throw RuntimeError.launch(.inspectThreads, error)
         }
     }
 }

@@ -70,23 +70,25 @@ extension Kernel.File {
 
     /// realpath(3): the absolute path with every symbolic link resolved.
     static func resolvedPath(_ path: FilePath) throws(Errno) -> FilePath {
-        let resolved: FilePath? = unsafe path.withPlatformString { input in
-            guard let output = unsafe realpath(input, nil) else { return nil }
+        // errno is captured before leaving the C string's scope.
+        let result: Result<FilePath, Errno> = unsafe path.withPlatformString { input in
+            guard let output = unsafe realpath(input, nil) else { return .failure(.current) }
             defer { unsafe free(output) }
-            return unsafe FilePath(platformString: output)
+            return .success(unsafe FilePath(platformString: output))
         }
-        guard let resolved else { throw .current }
-        return resolved
+        return try result.get()
     }
 
-    /// CGROUP2_SUPER_MAGIC from <linux/magic.h>.
-    static let cgroup2FilesystemType: UInt64 = 0x6367_7270
-
-    /// fstatfs(2)'s filesystem type (`f_type`), such as a magic number.
-    static func filesystemType(of descriptor: FileDescriptor) throws(Errno) -> UInt64 {
+    /// Whether the open file is on a cgroup v2 filesystem (fstatfs(2) reports
+    /// CGROUP2_SUPER_MAGIC from <linux/magic.h>); always false off Linux.
+    static func isOnCgroup2(_ descriptor: FileDescriptor) throws(Errno) -> Bool {
         var status = statfs()
         guard unsafe fstatfs(descriptor.rawValue, &status) == 0 else { throw .current }
-        return UInt64(truncatingIfNeeded: status.f_type)
+        #if os(Linux)
+        return UInt64(truncatingIfNeeded: status.f_type) == 0x6367_7270
+        #else
+        return false
+        #endif
     }
 
     enum LockMode {

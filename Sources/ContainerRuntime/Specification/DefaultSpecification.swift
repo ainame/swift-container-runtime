@@ -174,9 +174,8 @@ public struct DefaultSpecification: Codable, Equatable, Sendable {
     /// False off Linux, where the path does not exist.
     public static func hostUsesUnifiedCgroupHierarchy() -> Bool {
         // Opened the same way as Cgroup.swift's mount root.
-        guard let root = try? Kernel.File.open("/sys/fs/cgroup", .readOnly, options: .directory),
-              let type = try? root.withDescriptor({ try Kernel.File.filesystemType(of: $0) }) else { return false }
-        return type == Kernel.File.cgroup2FilesystemType
+        guard let root = try? Kernel.File.open("/sys/fs/cgroup", .readOnly, options: .directory) else { return false }
+        return (try? root.withDescriptor { try Kernel.File.isOnCgroup2($0) }) ?? false
     }
 
     /// Indented JSON with sorted keys and a trailing newline.

@@ -79,20 +79,37 @@ extension OwnedFileDescriptor {
             throw error
         }
         defer { _ = unsafe closedir(stream) }
-        var names: [String] = []
-        while true {
-            // readdir signals an error only through errno, and the String work
-            // below may change errno, so clear it before every call.
-            errno = 0
-            guard let entry = unsafe readdir(stream) else {
-                guard errno == 0 else { throw .current }
-                return names
-            }
-            if onlyDirectories, unsafe entry.pointee.d_type != UInt8(DT_DIR) { continue }
-            let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
-                unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
-            }
-            if name != "." && name != ".." { names.append(name) }
+        return try unsafe readEntries(onlyDirectories: onlyDirectories) { unsafe readdir(stream) }
+    }
+}
+
+extension Kernel.File {
+    /// Names in the directory at `path` other than `.` and `..`, through one
+    /// opendir(3) descriptor (for callers that may have a single free slot).
+    static func directoryEntries(atPath path: String, onlyDirectories: Bool = false) throws(Errno) -> [String] {
+        guard let stream = unsafe opendir(path) else { throw .current }
+        defer { _ = unsafe closedir(stream) }
+        return try unsafe readEntries(onlyDirectories: onlyDirectories) { unsafe readdir(stream) }
+    }
+}
+
+/// Reads a directory stream to its end through `next` (readdir).
+private func readEntries(
+    onlyDirectories: Bool, _ next: () -> UnsafeMutablePointer<dirent>?
+) throws(Errno) -> [String] {
+    var names: [String] = []
+    while true {
+        // readdir signals an error only through errno, and the String work
+        // below may change errno, so clear it before every call.
+        errno = 0
+        guard let entry = unsafe next() else {
+            guard errno == 0 else { throw .current }
+            return names
         }
+        if onlyDirectories, unsafe entry.pointee.d_type != UInt8(DT_DIR) { continue }
+        let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
+            unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        if name != "." && name != ".." { names.append(name) }
     }
 }
