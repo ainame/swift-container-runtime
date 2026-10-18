@@ -88,12 +88,14 @@ struct OCIConfiguration: Decodable, Sendable {
         var noNewPrivileges: Bool?
         var capabilities: Capabilities?
         var rlimits: [Rlimit]?
+        var oomScoreAdj: Int64?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
-                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities", "rlimits"]
+                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities", "rlimits", "oomScoreAdj"]
             )
             rlimits = try object.optional("rlimits")
+            oomScoreAdj = try object.optionalInt64("oomScoreAdj")
             terminal = try object.optional("terminal")
             user = try object.optional("user")
             args = try object.required("args")

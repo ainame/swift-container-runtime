@@ -9,10 +9,11 @@ enum LaunchStage: Int32 {
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
     case setResourceLimit, startDescriptor, readonlyRoot
     case resolveReadonlyPath, readonlyPath, openDevNull, resolveMaskedPath, maskPath, verifyMaskedPath
-    case findExecutable, relativeExecutable, pidfdOpen, pidfdSend, openMountSource, seccomp
+    case findExecutable, relativeExecutable, pidfdOpen, pidfdSend, openMountSource, seccomp, oomScoreAdjustment
 
     var description: String {
         switch self {
+        case .oomScoreAdjustment: "set process.oomScoreAdj"
         case .seccomp: "load linux.seccomp filter"
         case .pipe: "create launch pipe"
         case .forkLauncher: "fork launcher"

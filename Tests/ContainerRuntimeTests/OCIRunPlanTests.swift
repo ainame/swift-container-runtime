@@ -144,7 +144,7 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(extra: #""hooks": {}"#), "hooks"),
     (config(extra: #""futureField": 1"#), "futureField"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "capabilities": {"permited": []}}"#), "process.capabilities.permited"),
-    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "oomScoreAdj": 100}"#), "process.oomScoreAdj"),
+    (config(process: #"{"args": ["/bin/true"], "cwd": "/", "oomScoreAdj": 1001}"#), "process.oomScoreAdj"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "apparmorProfile": "x"}"#), "process.apparmorProfile"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "sysctl": {"net.ipv4.ip_forward": "1"}}"#), "linux.sysctl"),

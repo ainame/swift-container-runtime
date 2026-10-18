@@ -117,6 +117,8 @@ public struct OCIRunPlan: Sendable {
     let executable: ExecutableLookup
     /// Components of process.cwd below the container root.
     public let cwd: [String]
+    /// Initial OOM policy, reused for exec independently of process-file overrides.
+    public let oomScoreAdjustment: Int32?
     /// Syscall policy applied to init and persisted for every exec.
     let seccomp: SeccompProfile?
     /// The workload's user, groups, umask and no_new_privs.
@@ -326,6 +328,7 @@ public struct OCIRunPlan: Sendable {
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.networkNamespacePath = networkNamespacePath
         self.seccomp = configuration.linux.seccomp
+        self.oomScoreAdjustment = process.oomScoreAdjustment
         self.hostname = configuration.hostname
         self.mounts = mounts
         self.populatesDev = mounts.last(where: { $0.destination == ["dev"] })?.type == .tmpfs

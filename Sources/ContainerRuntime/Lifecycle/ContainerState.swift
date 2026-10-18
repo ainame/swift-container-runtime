@@ -148,6 +148,8 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     /// Security policy for every later exec, independent of bundle mutations.
     /// Nil also reads legacy records written before seccomp support.
     var seccomp: SeccompProfile?
+    /// Original container OOM score, reused even for standalone-process exec.
+    var oomScoreAdjustment: Int32?
     /// Raw resource configuration, independent of the source bundle. Nil
     /// distinguishes legacy records from new containers with empty settings.
     var resourceConfiguration: OCIConfiguration.Resources?
@@ -166,6 +168,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         cgroup = nil
         resourceConfiguration = plan.resourceConfiguration
         seccomp = plan.seccomp
+        oomScoreAdjustment = plan.oomScoreAdjustment
     }
 
     func encoded() throws -> [UInt8] {
@@ -199,6 +202,9 @@ struct ContainerRecord: Codable, Sendable, Equatable {
             guard process.pid > 1 else { throw corrupt("invalid init PID \(process.pid)") }
             guard process.startTime > 0 else { throw corrupt("invalid init start time") }
             guard InitIdentity.isValidBootID(process.bootID) else { throw corrupt("invalid boot ID") }
+        }
+        if let score = record.oomScoreAdjustment, !(-1000...1000).contains(score) {
+            throw corrupt("invalid OOM score adjustment")
         }
         // A cgroup record must never name the mount root or leave it.
         if let cgroup = record.cgroup, !cgroup.isValid { throw corrupt("invalid cgroup \(cgroup.path)") }

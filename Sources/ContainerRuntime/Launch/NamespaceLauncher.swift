@@ -53,7 +53,7 @@ enum NamespaceLauncher {
         unsharing namespaces: [OCIRunPlan.Namespace] = [],
         hooks: LaunchHooks = LaunchHooks(),
         context: (LaunchStage, Int32) -> String? = { _, _ in nil },
-        prepareLauncher: () -> Errno? = { nil },
+        prepareLauncher: () -> LaunchFailure? = { nil },
         initialize: InitBody
     ) throws -> Int32 {
         var channels = try LaunchChannels()
@@ -89,7 +89,7 @@ enum NamespaceLauncher {
     /// for the init itself (foreground).
     private static func runLauncher(
         _ channels: consuming LaunchChannels, supervisor: pid_t, namespaceFlags: Int32, hooks: LaunchHooks,
-        prepare: () -> Errno?, initialize: InitBody
+        prepare: () -> LaunchFailure?, initialize: InitBody
     ) -> Never {
         hooks.closeInChildren()
         try? channels.reportRead.close(); try? channels.releaseWrite.close(); try? channels.commitWrite.close()
@@ -98,8 +98,8 @@ enum NamespaceLauncher {
         }
         guard Kernel.Process.parentID == supervisor else { Kernel.Process.exit(125) }
 
-        // Enter the namespaces the init will start in.
-        if let error = prepare() { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .joinNamespaces, error: error)) }
+        // Apply process bootstrap settings and enter the namespaces init will start in.
+        if let failure = prepare() { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, failure)) }
         if namespaceFlags != 0 {
             if let error = Errno.failure({ () throws(Errno) in try Kernel.Namespace.unshare(namespaceFlags) }) {
                 Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .namespaces, error: error))
