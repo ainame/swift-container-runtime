@@ -173,7 +173,9 @@ containerd's attached `run -t`/`exec -t` through the shim. Milestone 6 has its f
 profile: after namespaced sysctls, cgroup namespaces/mounts, empty blockIO and
 Docker's error-to-exit-code wording, the Docker acceptance gate passes with Docker
 29.1.3 defaults on an Ubuntu 26.04 arm64 cgroupfs VM, matching runc (release
-build). The full debug/release Linux matrix (32 suites) passes on the 6.12 guest with the `8c29c37` sources. Next: an x86_64 Docker profile and
-the milestone 7 breadth items a real workload needs first (hooks when supplied,
-user namespace mapping), then distribution.
+build). The full debug/release Linux matrix (32 suites) passes on the 6.12 guest with the `8c29c37` sources. x86_64 has no local
+host; CI's hosted x86_64 runner provides that profile instead (its own Docker,
+AppArmor and kernel, cgroupfs driver; see the `docker` job). Next: milestone 7
+(broader kontainer functionality), starting with the OCI hook phases, then user
+namespace mapping, then distribution.
 Never discard requested security fields to advance it.

@@ -37,3 +37,40 @@ jobs:
         run: |
           swift test -c release --disable-automatic-resolution
           sh scripts/run-integration.sh .build/release/swift-container-runtime
+
+  docker:
+    # x86_64 engine profile on the hosted runner: its Docker, AppArmor and
+    # kernel, with the daemon switched to the cgroupfs driver this runtime
+    # manages. The runtime is built for the runner's Ubuntu 24.04 glibc.
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE: alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the runtime for the runner
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace swift:6.4.1-noble /bin/sh -euc '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libseccomp-dev > /dev/null
+            swift build -c release --static-swift-stdlib --product swift-container-runtime --scratch-path .build/noble'
+          sudo install -m 755 .build/noble/release/swift-container-runtime /usr/local/bin/swift-container-runtime
+      - name: Register the runtime with Docker
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static libseccomp2 jq
+          config=/etc/docker/daemon.json
+          [ -f "$config" ] || echo '{}' | sudo tee "$config" > /dev/null
+          sudo jq '. + {"exec-opts": ["native.cgroupdriver=cgroupfs"],
+                        "runtimes": ((.runtimes // {}) + {"swift": {"path": "/usr/local/bin/swift-container-runtime"}})}' \
+            "$config" | sudo tee "$config.new" > /dev/null
+          sudo mv "$config.new" "$config"
+          sudo systemctl restart docker
+          uname -srm
+          docker info --format '{{.ServerVersion}} {{.CgroupDriver}} {{.SecurityOptions}}'
+          docker pull -q "$IMAGE"
+      - name: Docker acceptance gate
+        run: |
+          sudo sh scripts/docker-integration.sh runc "$IMAGE"
+          sudo sh scripts/docker-integration.sh swift "$IMAGE"
+      - name: AppArmor confinement gate
+        run: sudo sh scripts/apparmor-integration.sh /usr/local/bin/swift-container-runtime
