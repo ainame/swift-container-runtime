@@ -5,7 +5,7 @@ declared profile:** rootful Docker 29.1.3 with containerd 2.2.2 and the cgroupfs
 driver on an Ubuntu 26.04 arm64 VM (kernel 7.0, AppArmor enabled), registered as
 an extra runtime and selected with `--runtime swift`. The [Docker gate](#current-result)
 passes with Docker's default security there, as it does with runc. The CI `docker`
-job runs the same gate and the AppArmor gate on GitHub's x86_64 Ubuntu 24.04
+job runs the same gate and the AppArmor gate on GitHub's x86_64 Ubuntu 26.04
 runner with its Docker switched to cgroupfs. Other hosts, the systemd cgroup
 driver and rootless setups are unverified. The original
 assessment was source-based; the [engine baseline](engine-baseline.md) records the

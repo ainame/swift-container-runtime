@@ -10,9 +10,9 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container:
-      image: swift:6.4.1
+      image: swift:6.4.1-resolute
       # Namespace, procfs, mount, and mknod integration tests require privileges.
       # The host cgroup namespace shows the runner VM's own root, where systemd
       # already enables memory and pids; a private namespace's root would be
@@ -41,19 +41,19 @@ jobs:
   docker:
     # x86_64 engine profile on the hosted runner: its Docker, AppArmor and
     # kernel, with the daemon switched to the cgroupfs driver this runtime
-    # manages. The runtime is built for the runner's Ubuntu 24.04 glibc.
-    runs-on: ubuntu-24.04
+    # manages. The runtime is built for the runner's Ubuntu 26.04 glibc.
+    runs-on: ubuntu-26.04
     env:
       IMAGE: alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
     steps:
       - uses: actions/checkout@v4
       - name: Build the runtime for the runner
         run: |
-          docker run --rm -v "$PWD:/workspace" -w /workspace swift:6.4.1-noble /bin/sh -euc '
+          docker run --rm -v "$PWD:/workspace" -w /workspace swift:6.4.1-resolute /bin/sh -euc '
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libseccomp-dev > /dev/null
-            swift build -c release --static-swift-stdlib --product srunc --scratch-path .build/noble'
-          sudo install -m 755 .build/noble/release/srunc /usr/local/bin/srunc
+            swift build -c release --static-swift-stdlib --product srunc --scratch-path .build/resolute'
+          sudo install -m 755 .build/resolute/release/srunc /usr/local/bin/srunc
       - name: Register the runtime with Docker
         run: |
           sudo apt-get update -qq
@@ -77,10 +77,10 @@ jobs:
 
   runtime-tools:
     name: OCI runtime-tools validation
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     container:
-      image: swift:6.4.1
+      image: swift:6.4.1-resolute
       # The pinned suite creates namespaces, mounts and device nodes. It uses
       # a private state root and the host's delegated cgroup v2 hierarchy.
       options: --privileged --cgroupns=host
