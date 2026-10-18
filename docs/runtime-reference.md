@@ -438,7 +438,9 @@ cannot create host device nodes with `mknod`.
 
 Every supported namespace type accepts an absolute `path`. The supervisor pins
 and checks the namespace type before fork; the launcher enters user namespaces
-first and PID namespaces last. An already-current namespace is left in place.
+first and PID namespaces last. An already-current namespace is left in place, except that an explicit path
+to the caller's mount namespace is refused: omit that entry to use the inherited
+namespace and its cleanup protocol.
 Host UTS, IPC and network properties cannot be changed through container hostname
 or sysctl settings. A joined mount namespace remains owned by its external
 creator; mount setup occurs inside it.
