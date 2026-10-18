@@ -71,7 +71,7 @@ extension ProcessTable {
         var status: Int32 = 0
         var waited: pid_t
         repeat { waited = unsafe waitpid(pid, &status, 0) } while waited < 0 && errno == EINTR
-        guard waited == pid else { throw RuntimeError("wait for host ps: \(Errno(rawValue: errno))") }
+        guard waited == pid else { throw RuntimeError("wait for host ps: \(Errno.current)") }
         reaped = true
         guard status == 0 else { throw RuntimeError("host ps failed (wait status \(status)): \(output)") }
         return output

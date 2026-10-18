@@ -107,7 +107,7 @@ func handOffSendsTheLabelWithOnePidfd(_ label: PidfdLabel) throws {
     // MSG_NOSIGNAL: EPIPE is returned rather than SIGPIPE killing the test.
     let failure = socket.handOff(label: .standard)
     #expect(failure?.stage == .pidfdSend)
-    #expect(failure?.code == EPIPE)
+    #expect(failure?.error == .brokenPipe)
     #expect(socket.isClosed)
 }
 #endif

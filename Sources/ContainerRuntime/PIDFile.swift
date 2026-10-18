@@ -28,13 +28,13 @@ enum PIDFile {
         defer { if !published { _ = unsafe temporary.withCString { unsafe unlink($0) } } }
         try file.withDescriptor { descriptor in
             _ = try descriptor.writeAll(Array(String(pid).utf8))
-            guard fsync(descriptor.rawValue) == 0 else { throw Errno(rawValue: errno) }
+            guard fsync(descriptor.rawValue) == 0 else { throw Errno.current }
         }
         try file.close()
         let result = unsafe temporary.withCString { source in
             unsafe destination.withCString { target in unsafe rename(source, target) }
         }
-        guard result == 0 else { throw Errno(rawValue: errno) }
+        guard result == 0 else { throw Errno.current }
         published = true
     }
 }

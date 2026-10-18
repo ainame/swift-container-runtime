@@ -40,6 +40,20 @@ Keep internal helpers private where possible. A short name must still describe
 what a caller can rely on; comments explain ordering and invariants rather than
 compensating for vague names. Qualify libc calls where a method has the same name.
 
+## Integer types
+
+Don't add typealiases for integer roles: Swift treats an alias as the same type,
+so it labels a value without checking it. Use an existing type that carries
+the meaning, and add a small type only when values are easy to mix up:
+
+- errno values are `Errno?` (nil on success) or a thrown `Errno`; read
+  `Errno.current` right after the failing call. Child-side launch steps return
+  `Errno?` or `LaunchFailure?` so each step reports and exits explicitly.
+- Descriptors are `FileDescriptor` or `OwnedFileDescriptor` outside raw
+  syscall and post-fork mount code.
+
+Raw `Int32` remains for C call results and `LaunchRecord`'s fixed wire fields.
+
 ## Lifetime and execution constraints
 
 `RootFilesystemSetup` and `WorkloadSetup` are explicitly unsafe views over C

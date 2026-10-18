@@ -59,7 +59,7 @@ func rejectsMalformedUpdateResources(_ json: String) {
             try check.validate(current: 100)
         }) { file, _ in
             operations.append(file)
-            return 0
+            return nil
         }
         Issue.record("memory usage check should refuse the request")
     } catch {

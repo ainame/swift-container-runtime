@@ -88,7 +88,7 @@ final class PidfdSocket {
     /// alone, as in runc, and never to `base`.
     init(connectingTo address: PidfdSocketAddress, relativeTo base: String?) throws {
         let raw = linux_unix_stream_socket()
-        guard raw >= 0 else { throw RuntimeError("create --pidfd-socket connection: \(Errno(rawValue: errno))") }
+        guard raw >= 0 else { throw RuntimeError("create --pidfd-socket connection: \(Errno.current)") }
         let connection = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         var target = address
         var pinned = OwnedFileDescriptor()
@@ -96,16 +96,14 @@ final class PidfdSocket {
             let resolved = base.hasSuffix("/") ? base + address.path : base + "/" + address.path
             let handle = resolved.withCString { unsafe linux_open_path(AT_FDCWD, $0, 0) }
             guard handle >= 0 else {
-                throw RuntimeError("connect to --pidfd-socket \(address.path) in \(base): \(Errno(rawValue: errno))")
+                throw RuntimeError("connect to --pidfd-socket \(address.path) in \(base): \(Errno.current)")
             }
             pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: handle))
             target = try PidfdSocketAddress("/proc/self/fd/\(handle)")
         }
-        let code = try connection.withDescriptor { Self.connect($0, to: target) }
+        let error = connection.failure(in: { Self.connect($0, to: target) })
         try? pinned.close()
-        guard code == 0 else {
-            throw RuntimeError("connect to --pidfd-socket \(address.path): \(Errno(rawValue: code))")
-        }
+        if let error { throw RuntimeError("connect to --pidfd-socket \(address.path): \(error)") }
         self.connection = connection
         self.address = address
     }
@@ -119,17 +117,16 @@ final class PidfdSocket {
     /// Runs in the forked init or exec process, in its final PID namespace,
     /// so `pidfd_open(getpid())` names this process and never a PID read
     /// elsewhere. Sends the pidfd with `label` as runc's `setupPidfd`, then
-    /// closes the pidfd and the connection on every path. Returns the failing
-    /// stage and errno, or nil.
-    func handOff(label: PidfdLabel) -> (stage: LaunchStage, code: Int32)? {
+    /// closes the pidfd and the connection on every path. Returns nil or the failure.
+    func handOff(label: PidfdLabel) -> LaunchFailure? {
         defer { try? connection.close() }
         let raw = linux_pidfd_open(getpid())
-        guard raw >= 0 else { return (.pidfdOpen, errno) }
+        guard raw >= 0 else { return LaunchFailure(stage: .pidfdOpen, error: .current) }
         let pidfd = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-        let code = (try? connection.withDescriptor { socket in
-            try pidfd.withDescriptor { Self.send($0, over: socket, label: Array(label.rawValue.utf8)) }
-        }) ?? EBADF
-        return code == 0 ? nil : (.pidfdSend, code)
+        let error = connection.failure(in: { socket in
+            pidfd.failure(in: { Self.send($0, over: socket, label: Array(label.rawValue.utf8)) })
+        })
+        return error.map { LaunchFailure(stage: .pidfdSend, error: $0) }
     }
 
     var isClosed: Bool { (try? connection.withDescriptor { _ in }) == nil }
@@ -140,8 +137,8 @@ final class PidfdSocket {
 }
 
 private extension PidfdSocket {
-    /// Connects a blocking stream socket to `address`. Returns 0 or errno.
-    static func connect(_ socket: FileDescriptor, to address: PidfdSocketAddress) -> Int32 {
+    /// Connects a blocking stream socket to `address`. Returns nil or the error.
+    static func connect(_ socket: FileDescriptor, to address: PidfdSocketAddress) -> Errno? {
         var storage = sockaddr_un()
         storage.sun_family = sa_family_t(AF_UNIX)
         let path = address.sunPath
@@ -155,20 +152,20 @@ private extension PidfdSocket {
                 unsafe LinuxAPI.connect(socket.rawValue, generic, length)
             }
         }
-        return result == 0 ? 0 : errno
+        return result == 0 ? nil : .current
     }
 
     /// Sends `label` and one SCM_RIGHTS descriptor in a single message, as runc's
     /// `cmsg.SendRawFd`: no length prefix or encoding, the label bytes are the
     /// whole payload. MSG_NOSIGNAL turns a vanished listener into EPIPE instead
     /// of SIGPIPE, and EINTR retries. A short send (not expected for a few bytes
-    /// on a stream) is EIO. Returns 0 or errno.
-    static func send(_ descriptor: FileDescriptor, over socket: FileDescriptor, label: [UInt8]) -> Int32 {
+    /// on a stream) is EIO. Returns nil or the error.
+    static func send(_ descriptor: FileDescriptor, over socket: FileDescriptor, label: [UInt8]) -> Errno? {
         let payloadSize = MemoryLayout<Int32>.size
         let space = linux_cmsg_space(payloadSize)
         // CMSG_LEN(0) is the aligned header size, where CMSG_DATA begins.
         let dataOffset = linux_cmsg_len(0)
-        guard dataOffset + payloadSize <= space else { return EINVAL }
+        guard dataOffset + payloadSize <= space else { return .invalidArgument }
         var header = cmsghdr()
         header.cmsg_len = numericCast(linux_cmsg_len(payloadSize))
         header.cmsg_level = Int32(SOL_SOCKET)
@@ -192,8 +189,8 @@ private extension PidfdSocket {
                     var sent: Int
                     repeat { sent = unsafe sendmsg(socket.rawValue, &message, Int32(MSG_NOSIGNAL)) }
                     while sent < 0 && errno == EINTR
-                    guard sent >= 0 else { return errno }
-                    return sent == bytes.count ? 0 : EIO
+                    guard sent >= 0 else { return .current }
+                    return sent == bytes.count ? nil : .ioError
                 }
             }
         }

@@ -24,7 +24,7 @@ struct ExecNamespaceSet: ~Copyable {
             let raw = try directory.withDescriptor { descriptor in
                 unsafe linux_open_at(descriptor.rawValue, path, (root ? O_PATH | O_DIRECTORY : O_RDONLY) | O_CLOEXEC, 0)
             }
-            guard raw >= 0 else { throw RuntimeError("open exec \(path): \(Errno(rawValue: errno))") }
+            guard raw >= 0 else { throw RuntimeError("open exec \(path): \(Errno.current)") }
             return OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         }
         // The proc directory and each namespace are pinned before checking
@@ -50,30 +50,23 @@ struct ExecNamespaceSet: ~Copyable {
 
     /// Called only in the single-threaded launcher. PID namespace entry
     /// applies to the next fork; the launcher remains outside that namespace.
-    func join() -> Int32 {
-        func enter(_ owner: borrowing OwnedFileDescriptor, _ type: Int32) -> Int32 {
-            let result = (try? owner.withDescriptor { setns($0.rawValue, type) }) ?? -1
-            return result == 0 ? 0 : errno
+    func join() -> Errno? {
+        func enter(_ owner: borrowing OwnedFileDescriptor, _ type: Int32) -> Errno? {
+            owner.failure(in: { setns($0.rawValue, type) == 0 ? nil : .current })
         }
-        let networkCode = enter(network, Int32(CLONE_NEWNET))
-        guard networkCode == 0 else { return networkCode }
-        let ipcCode = enter(ipc, Int32(CLONE_NEWIPC))
-        guard ipcCode == 0 else { return ipcCode }
-        let utsCode = enter(uts, Int32(CLONE_NEWUTS))
-        guard utsCode == 0 else { return utsCode }
-        let mountCode = enter(mount, Int32(CLONE_NEWNS))
-        guard mountCode == 0 else { return mountCode }
-        let pidCode = enter(pid, Int32(CLONE_NEWPID))
-        guard pidCode == 0 else { return pidCode }
-        return 0
+        if let error = enter(network, Int32(CLONE_NEWNET)) { return error }
+        if let error = enter(ipc, Int32(CLONE_NEWIPC)) { return error }
+        if let error = enter(uts, Int32(CLONE_NEWUTS)) { return error }
+        if let error = enter(mount, Int32(CLONE_NEWNS)) { return error }
+        return enter(pid, Int32(CLONE_NEWPID))
     }
 
     /// Chroot through the live init's root descriptor, never its host path.
     /// No mount or propagation operation changes the existing container.
-    func enterRoot() -> Int32 {
-        guard (try? root.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return errno }
-        guard unsafe chroot(".") == 0, unsafe chdir("/") == 0 else { return errno }
-        return 0
+    func enterRoot() -> Errno? {
+        if let error = root.failure(in: { fchdir($0.rawValue) == 0 ? nil : .current }) { return error }
+        guard unsafe chroot(".") == 0, unsafe chdir("/") == 0 else { return .current }
+        return nil
     }
 }
 
@@ -112,13 +105,10 @@ extension OCIProcessPlan {
                     guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors)
                     }
-                    let rootCode = namespaces.enterRoot()
-                    guard rootCode == 0 else { return LaunchRecord.reportFailure(to: report, at: .enterRoot, code: rootCode) }
+                    if let error = namespaces.enterRoot() { return LaunchRecord.reportFailure(to: report, at: .enterRoot, error: error) }
                     // As runc's setns init: inside the container, before
                     // no_new_privs and the credential switch.
-                    if let failure = pidfdSocket?.handOff(label: .setns) {
-                        return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code)
-                    }
+                    if let failure = pidfdSocket?.handOff(label: .setns) { return LaunchRecord.reportFailure(to: report, failure) }
                     return unsafe workload.run(report: report, commit: commit, launcher: launcher, gate: nil)
                 }
             }

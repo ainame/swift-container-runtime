@@ -310,19 +310,19 @@ func rejectsMalformedCpu(_ cpu: String, _ reason: String) {
 }
 
 /// Applies `json`'s writes through a fake cgroup whose files answer with
-/// the listed errno values in turn (then 0); returns every attempted write
+/// the listed errors in turn (then success); returns every attempted write
 /// and the error, if any.
-private func applied(_ json: String, answers: [String: [Int32]]) throws -> (writes: [String], error: String?) {
+private func applied(_ json: String, answers: [String: [Errno]]) throws -> (writes: [String], error: String?) {
     let converted = try resources(json)
     var remaining = answers
     var writes: [String] = []
     do {
         try converted.apply(in: "/sys/fs/cgroup/test") { file, text in
             writes.append("\(file)=\(text)")
-            guard var codes = remaining[file], !codes.isEmpty else { return 0 }
-            let code = codes.removeFirst()
-            remaining[file] = codes
-            return code
+            guard var errors = remaining[file], !errors.isEmpty else { return nil }
+            let error = errors.removeFirst()
+            remaining[file] = errors
+            return error
         }
         return (writes, nil)
     } catch {
@@ -330,8 +330,8 @@ private func applied(_ json: String, answers: [String: [Int32]]) throws -> (writ
     }
 }
 
-private let einval = Errno.invalidArgument.rawValue
-private let enoent = Errno.noSuchFileOrDirectory.rawValue
+private let einval = Errno.invalidArgument
+private let enoent = Errno.noSuchFileOrDirectory
 
 @Test func appliesEveryWriteInOrder() throws {
     let result = try applied(#"{"pids": {"limit": 5}, "cpu": {"idle": 0, "shares": 1024, "burst": 0, "quota": -1}}"#, answers: [:])
@@ -359,10 +359,10 @@ private let enoent = Errno.noSuchFileOrDirectory.rawValue
     (#"{"cpu": {"burst": 20000}}"#, einval, ["cpu.max.burst=20000"]),
     (#"{"cpu": {"burst": 20000, "period": 100000}}"#, einval, ["cpu.max.burst=20000"]),
     (#"{"cpu": {"burst": 20000, "quota": 50000}}"#, enoent, ["cpu.max.burst=20000"]),
-    (#"{"cpu": {"burst": 20000, "quota": 50000}}"#, Errno.permissionDenied.rawValue, ["cpu.max.burst=20000"]),
-] as [(String, Int32, [String])])
-func burstRefusalWithoutRetryFailsAtOnce(_ json: String, _ code: Int32, _ writes: [String]) throws {
-    let result = try applied(json, answers: ["cpu.max.burst": [code]])
+    (#"{"cpu": {"burst": 20000, "quota": 50000}}"#, Errno.permissionDenied, ["cpu.max.burst=20000"]),
+] as [(String, Errno, [String])])
+func burstRefusalWithoutRetryFailsAtOnce(_ json: String, _ error: Errno, _ writes: [String]) throws {
+    let result = try applied(json, answers: ["cpu.max.burst": [error]])
     #expect(result.writes == writes)
     #expect(result.error?.contains("cpu.max.burst") == true, "\(result.error ?? "accepted")")
 }

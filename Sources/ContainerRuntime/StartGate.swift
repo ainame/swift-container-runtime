@@ -111,7 +111,7 @@ final class StartGate {
             if status.st_nlink > 0 {
                 // Not consumed: still created. A commit without the unlink
                 // is a protocol error reported to that client.
-                if committed { _ = LaunchRecord.reportFailure(to: connection, at: .startSocket, code: EPROTO, socket: true) }
+                if committed { _ = LaunchRecord.reportFailure(to: connection, at: .startSocket, error: .protocolError, socket: true) }
                 continue
             }
             // Consumed without a commit: the start was abandoned after its
@@ -134,12 +134,12 @@ final class StartGate {
     /// into that same lowest free slot and closes it again. The connection
     /// later uses a real descriptor within the limit. One slot is enough: the
     /// init opens no other descriptor before serving, and serve releases each
-    /// connection before its next accept. Returns 0 or errno.
-    func acceptCapacityError() -> Int32 {
-        guard let raw = try? listener.withDescriptor({ dup($0.rawValue) }) else { return EBADF }
-        guard raw >= 0 else { return errno }
+    /// connection before its next accept. Returns nil or the error.
+    func acceptCapacityError() -> Errno? {
+        guard let raw = try? listener.withDescriptor({ dup($0.rawValue) }) else { return .badFileDescriptor }
+        guard raw >= 0 else { return .current }
         _ = close(raw)
-        return 0
+        return nil
     }
 
     private func receiveRequest(_ connection: borrowing OwnedFileDescriptor) -> Bool {
@@ -217,7 +217,7 @@ extension StartProtocol {
             unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
         }
         guard socketFileRaw >= 0 else {
-            throw RuntimeError("container \(id) init is not waiting for start: \(Errno(rawValue: errno))")
+            throw RuntimeError("container \(id) init is not waiting for start: \(Errno.current)")
         }
         let socketFile = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: socketFileRaw))
         let connectionRaw = linux_unix_seqpacket_socket()
@@ -229,10 +229,10 @@ extension StartProtocol {
             }
         }
         guard connected == 0 else {
-            throw RuntimeError("connect to container \(id) init: \(Errno(rawValue: errno))")
+            throw RuntimeError("connect to container \(id) init: \(Errno.current)")
         }
         guard StartProtocol.sendPacket(connection, StartProtocol.request) else {
-            throw RuntimeError("send start request to container \(id): \(Errno(rawValue: errno))")
+            throw RuntimeError("send start request to container \(id): \(Errno.current)")
         }
 
         // Step 2: until the acknowledgement, any failure leaves the marker and
@@ -253,7 +253,7 @@ extension StartProtocol {
         let unlinked = try container.directory.descriptor.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }
         guard unlinked == 0 else { throw RuntimeError.launch(.startSocket) }
         guard StartProtocol.sendPacket(connection, StartProtocol.commit) else {
-            throw RuntimeError("container \(id) init vanished before the start commit: \(Errno(rawValue: errno))")
+            throw RuntimeError("container \(id) init vanished before the start commit: \(Errno.current)")
         }
 
         // Step 4: EOF means execve closed the connection.
@@ -270,15 +270,15 @@ extension StartProtocol {
         case let .record(record):
             let kind = LaunchRecord.Kind(rawValue: record.kind)
             if kind == .failure {
-                throw RuntimeError.launch(LaunchStage(rawValue: record.stage) ?? .startRequest, record.code)
+                throw RuntimeError.launch(LaunchStage(rawValue: record.stage) ?? .startRequest, record.error)
             }
-            guard let expected, kind == expected else { throw RuntimeError.launch(.startRequest, EPROTO) }
+            guard let expected, kind == expected else { throw RuntimeError.launch(.startRequest, .protocolError) }
         case .end:
             guard expected == nil else {
                 throw RuntimeError("container \(id) init closed the start connection without starting")
             }
-        case let .failed(code):
-            throw RuntimeError.launch(.startRequest, code)
+        case let .failed(error):
+            throw RuntimeError.launch(.startRequest, error)
         }
     }
 }

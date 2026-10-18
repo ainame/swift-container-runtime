@@ -7,11 +7,6 @@ import Glibc
 import LinuxAPI
 #endif
 
-public struct RuntimeError: Error, CustomStringConvertible, Sendable {
-    public let description: String
-    public init(_ description: String) { self.description = description }
-}
-
 /// A namespace experiment. This does not isolate the root filesystem or privileges.
 public struct NamespaceCommand: Sendable {
     public let hostname: String

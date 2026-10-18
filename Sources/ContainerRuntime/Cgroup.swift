@@ -31,11 +31,11 @@ private final class CgroupDirectory {
     /// Opens /sys/fs/cgroup and requires it to be a cgroup v2 mount.
     static func openRoot() throws -> CgroupDirectory {
         let raw = unsafe linux_open_at(AT_FDCWD, mountPoint, O_RDONLY | O_DIRECTORY, 0)
-        guard raw >= 0 else { throw RuntimeError("open \(mountPoint): \(Errno(rawValue: errno)) (cgroup v2 is required)") }
+        guard raw >= 0 else { throw RuntimeError("open \(mountPoint): \(Errno.current) (cgroup v2 is required)") }
         let root = CgroupDirectory(OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)), path: "/")
         var status = statfs()
         let result = (try? root.descriptor.withDescriptor { unsafe fstatfs($0.rawValue, &status) }) ?? -1
-        guard result == 0 else { throw RuntimeError("inspect \(mountPoint): \(Errno(rawValue: errno))") }
+        guard result == 0 else { throw RuntimeError("inspect \(mountPoint): \(Errno.current)") }
         guard Int64(status.f_type) == cgroup2Magic else {
             throw RuntimeError("\(mountPoint) is not a cgroup v2 (unified) mount; cgroup v1 and hybrid hierarchies are not supported")
         }
@@ -47,7 +47,7 @@ private final class CgroupDirectory {
         let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) }
         guard raw >= 0 else {
             if errno == ENOENT { return nil }
-            throw RuntimeError("open cgroup \(childPath(name)): \(Errno(rawValue: errno))")
+            throw RuntimeError("open cgroup \(childPath(name)): \(Errno.current)")
         }
         let child = CgroupDirectory(OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)), path: childPath(name))
         // A different filesystem mounted over a cgroup directory is not part
@@ -63,25 +63,25 @@ private final class CgroupDirectory {
         let result = try descriptor.withDescriptor { unsafe mkdirat($0.rawValue, name, 0o755) }
         if result == 0 { return true }
         if errno == EEXIST { return false }
-        throw RuntimeError("create cgroup \(childPath(name)): \(Errno(rawValue: errno))")
+        throw RuntimeError("create cgroup \(childPath(name)): \(Errno.current)")
     }
 
     /// Removes the empty child cgroup `name`. EBUSY is retried as runc does
     /// (1 ms doubling, 10 retries) while exiting tasks are released.
-    /// Returns 0 or errno; a missing child counts as removed.
-    func removeChild(_ name: String) -> Int32 {
+    /// Returns nil or the error; a missing child counts as removed.
+    func removeChild(_ name: String) -> Errno? {
         var delay: Int32 = 1
         for attempt in 0...10 {
             let result = (try? descriptor.withDescriptor { unsafe unlinkat($0.rawValue, name, AT_REMOVEDIR) }) ?? -1
-            if result == 0 { return 0 }
-            let code = errno
-            if code == ENOENT { return 0 }
-            if code == EINTR { continue }
-            guard code == EBUSY, attempt < 10 else { return code }
+            if result == 0 { return nil }
+            let error = Errno.current
+            if error == .noSuchFileOrDirectory { return nil }
+            if error == .interrupted { continue }
+            guard error == .resourceBusy, attempt < 10 else { return error }
             CgroupRetry.wait(milliseconds: delay)
             delay *= 2
         }
-        return EBUSY
+        return .resourceBusy
     }
 
     /// An interface file's contents, or nil when it does not exist.
@@ -89,12 +89,12 @@ private final class CgroupDirectory {
         let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_RDONLY | O_NOFOLLOW, 0) }
         guard raw >= 0 else {
             if errno == ENOENT { return nil }
-            throw RuntimeError("open \(displayPath)/\(file): \(Errno(rawValue: errno))")
+            throw RuntimeError("open \(displayPath)/\(file): \(Errno.current)")
         }
         let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         do {
             return String(decoding: try owner.readAll(limit: 1 << 20), as: UTF8.self)
-        } catch let code as Errno where file == "cgroup.procs" && code.rawValue == ENOTSUP {
+        } catch let error as Errno where file == "cgroup.procs" && error == .notSupported {
             // Threaded cgroups expose TIDs through cgroup.threads instead,
             // as runc's readProcsFile does after an unsupported procs read.
             return try read("cgroup.threads")
@@ -108,10 +108,10 @@ private final class CgroupDirectory {
     func contents(_ file: String) throws -> String? {
         let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_RDONLY | O_NOFOLLOW, 0) }
         guard raw >= 0 else {
-            let code = errno
-            if code == ENOENT { return nil }
-            if code == ENOTSUP { throw Errno.notSupported }
-            throw RuntimeError("open \(displayPath)/\(file): \(Errno(rawValue: code))")
+            let error = Errno.current
+            if error == .noSuchFileOrDirectory { return nil }
+            if error == .notSupported { throw error }
+            throw RuntimeError("open \(displayPath)/\(file): \(error)")
         }
         let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         do {
@@ -124,10 +124,10 @@ private final class CgroupDirectory {
     }
 
     /// Writes `text` to an interface file in one write(2), as the kernel
-    /// parses each write separately. Returns 0 or errno.
-    func write(_ file: String, _ text: String) -> Int32 {
+    /// parses each write separately. Returns nil or the error.
+    func write(_ file: String, _ text: String) -> Errno? {
         let raw = (try? descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_WRONLY | O_NOFOLLOW, 0) }) ?? -1
-        guard raw >= 0 else { return errno }
+        guard raw >= 0 else { return .current }
         var owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         defer { try? owner.close() }
         let bytes = Array(text.utf8)
@@ -135,11 +135,9 @@ private final class CgroupDirectory {
             let written = try owner.withDescriptor { descriptor in
                 try bytes.withUnsafeBytes { buffer in unsafe try descriptor.write(buffer) }
             }
-            return written == bytes.count ? 0 : EIO
-        } catch let error as Errno {
-            return error.rawValue
+            return written == bytes.count ? nil : .ioError
         } catch {
-            return EIO
+            return (error as? Errno) ?? .ioError
         }
     }
 
@@ -172,19 +170,19 @@ private final class CgroupDirectory {
     /// Names of child cgroups.
     func subdirectories() throws -> [String] {
         let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
-        guard raw >= 0 else { throw RuntimeError("list cgroup \(displayPath): \(Errno(rawValue: errno))") }
+        guard raw >= 0 else { throw RuntimeError("list cgroup \(displayPath): \(Errno.current)") }
         // fdopendir takes ownership of the new descriptor; closedir closes it.
         guard let stream = unsafe fdopendir(raw) else {
-            let code = errno
+            let error = Errno.current
             _ = close(raw)
-            throw RuntimeError("list cgroup \(displayPath): \(Errno(rawValue: code))")
+            throw RuntimeError("list cgroup \(displayPath): \(error)")
         }
         defer { _ = unsafe closedir(stream) }
         var names: [String] = []
         while true {
             errno = 0
             guard let entry = unsafe readdir(stream) else {
-                guard errno == 0 else { throw RuntimeError("list cgroup \(displayPath): \(Errno(rawValue: errno))") }
+                guard errno == 0 else { throw RuntimeError("list cgroup \(displayPath): \(Errno.current)") }
                 return names
             }
             guard unsafe entry.pointee.d_type == Self.directoryType else { continue }
@@ -201,14 +199,14 @@ private final class CgroupDirectory {
     /// an exclusive flock, or nil when another one holds it.
     func lockExclusively() throws -> OwnedFileDescriptor? {
         let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
-        guard raw >= 0 else { throw RuntimeError("lock cgroup \(displayPath): \(Errno(rawValue: errno))") }
+        guard raw >= 0 else { throw RuntimeError("lock cgroup \(displayPath): \(Errno.current)") }
         let lock = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         while true {
             let result = try lock.withDescriptor { flock($0.rawValue, LOCK_EX | LOCK_NB) }
             if result == 0 { return lock }
             if errno == EINTR { continue }
             if errno == EWOULDBLOCK { return nil }
-            throw RuntimeError("lock cgroup \(displayPath): \(Errno(rawValue: errno))")
+            throw RuntimeError("lock cgroup \(displayPath): \(Errno.current)")
         }
     }
 
@@ -319,7 +317,7 @@ final class CgroupLeaf {
             // for runc's ignorable swap and its burst retry after cpu.max.
             try apply(resources, to: leaf)
             guard let inode = leaf.inode, inode > 0 else {
-                throw RuntimeError("inspect cgroup \(leaf.displayPath): \(Errno(rawValue: errno))")
+                throw RuntimeError("inspect cgroup \(leaf.displayPath): \(Errno.current)")
             }
             let identity = CgroupIdentity(path: leaf.path, inode: inode, bootID: bootID, created: created)
             return CgroupLeaf(identity: identity, directory: leaf, setupLock: setupLock)
@@ -335,9 +333,8 @@ final class CgroupLeaf {
     /// of a blocked launcher) and that the init has not started setup.
     /// Membership ends the setup lock's critical section.
     func join(_ pid: pid_t) throws {
-        let code = directory.write("cgroup.procs", String(pid))
-        guard code == 0 else {
-            throw RuntimeError("join container init \(pid) to cgroup \(directory.displayPath): \(Errno(rawValue: code))")
+        if let error = directory.write("cgroup.procs", String(pid)) {
+            throw RuntimeError("join container init \(pid) to cgroup \(directory.displayPath): \(error)")
         }
         releaseSetupLock()
     }
@@ -375,8 +372,7 @@ final class CgroupLeaf {
                     "cgroup controller \(controller) is not available in \(directory.displayPath) (cgroup.controllers: \(available.joined(separator: " ")))"
                 )
             }
-            let code = directory.write("cgroup.subtree_control", "+" + controller)
-            guard code == 0 else {
+            if let error = directory.write("cgroup.subtree_control", "+" + controller) {
                 // A non-root cgroup with member processes cannot enable
                 // controllers for its children (no internal processes).
                 let members = (try? directory.words("cgroup.procs").count) ?? 0
@@ -384,7 +380,7 @@ final class CgroupLeaf {
                     ? " (it has \(members) member process(es); cgroup v2 enables controllers only for children of a cgroup without processes)"
                     : ""
                 throw RuntimeError(
-                    "enable cgroup controller \(controller) in \(directory.displayPath)/cgroup.subtree_control: \(Errno(rawValue: code))\(hint)"
+                    "enable cgroup controller \(controller) in \(directory.displayPath)/cgroup.subtree_control: \(error)\(hint)"
                 )
             }
         }
@@ -452,10 +448,9 @@ final class CgroupLeaf {
                     "container's cgroup \(current.displayPath) still has processes that this runtime cannot attribute to the container; they were not killed"
                 )
             }
-            let code = current.write("cgroup.kill", "1")
-            guard code == 0 else {
-                let hint = code == ENOENT ? " (requires Linux 5.14+)" : ""
-                throw RuntimeError("kill processes in cgroup \(current.displayPath) through cgroup.kill: \(Errno(rawValue: code))\(hint)")
+            if let error = current.write("cgroup.kill", "1") {
+                let hint = error == .noSuchFileOrDirectory ? " (requires Linux 5.14+)" : ""
+                throw RuntimeError("kill processes in cgroup \(current.displayPath) through cgroup.kill: \(error)\(hint)")
             }
             var waited: Int32 = 0
             while try current.isPopulated() {
@@ -470,8 +465,7 @@ final class CgroupLeaf {
         // Remove child cgroups depth-first, then the cgroup if it is ours.
         try removeDescendants(of: current)
         if identity.created {
-            let code = parent.removeChild(components[components.count - 1])
-            guard code == 0 else { throw RuntimeError("remove cgroup \(current.displayPath): \(Errno(rawValue: code))") }
+            if let error = parent.removeChild(components[components.count - 1]) { throw RuntimeError("remove cgroup \(current.displayPath): \(error)") }
         }
         return nil
     }
@@ -481,8 +475,7 @@ final class CgroupLeaf {
         guard let directory = try recordedDirectory(identity) else {
             throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
         }
-        let code = directory.write("cgroup.procs", String(pid))
-        guard code == 0 else { throw RuntimeError("join exec process to cgroup: \(Errno(rawValue: code))") }
+        if let error = directory.write("cgroup.procs", String(pid)) { throw RuntimeError("join exec process to cgroup: \(error)") }
     }
 
     /// Opens only this recorded generation, never a replacement or a group
@@ -522,9 +515,8 @@ final class CgroupLeaf {
             throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
         }
         let value = frozen ? "1" : "0"
-        let code = directory.write("cgroup.freeze", value)
-        guard code == 0 else {
-            throw RuntimeError("set \(directory.displayPath)/cgroup.freeze to \(value): \(Errno(rawValue: code))")
+        if let error = directory.write("cgroup.freeze", value) {
+            throw RuntimeError("set \(directory.displayPath)/cgroup.freeze to \(value): \(error)")
         }
         // A freeze request is asynchronous in the kernel. Readback of 1
         // alone does not prove every task has reached the frozen state.
@@ -610,8 +602,7 @@ final class CgroupLeaf {
         for name in try directory.subdirectories() {
             guard let child = try directory.child(name) else { continue }
             try removeDescendants(of: child)
-            let code = directory.removeChild(name)
-            guard code == 0 else { throw RuntimeError("remove cgroup \(child.displayPath): \(Errno(rawValue: code))") }
+            if let error = directory.removeChild(name) { throw RuntimeError("remove cgroup \(child.displayPath): \(error)") }
         }
     }
 }

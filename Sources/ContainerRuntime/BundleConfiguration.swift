@@ -15,7 +15,7 @@ enum BundleConfiguration {
     static func resolveDirectory(_ path: FilePath, role: String) throws -> FilePath {
         let resolved: FilePath = unsafe try path.withPlatformString { input in
             guard let output = unsafe realpath(input, nil) else {
-                throw RuntimeError("resolve \(role) \(path): \(Errno(rawValue: errno))")
+                throw RuntimeError("resolve \(role) \(path): \(Errno.current)")
             }
             defer { unsafe free(output) }
             return unsafe FilePath(platformString: output)

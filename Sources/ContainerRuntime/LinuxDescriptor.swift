@@ -23,9 +23,9 @@ extension OwnedFileDescriptor {
         guard raw >= 0 else { throw RuntimeError.system("list state directory") }
         // fdopendir takes ownership of the new descriptor; closedir closes it.
         guard let stream = unsafe fdopendir(raw) else {
-            let code = errno
+            let error = Errno.current
             _ = LinuxAPI.close(raw)
-            throw RuntimeError.system("list state directory", code)
+            throw RuntimeError.system("list state directory", error)
         }
         defer { _ = unsafe closedir(stream) }
         var names: [String] = []

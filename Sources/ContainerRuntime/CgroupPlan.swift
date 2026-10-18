@@ -175,41 +175,39 @@ public struct CgroupResources: Sendable, Equatable {
     /// the kernel's cpu controller is threaded, any CPU setting.
     var needsDomainController: Bool { memoryMax != nil || memoryLow != nil || swapMax != nil || cpu.isSet }
 
-    /// Performs `writes` in order through `write`, which returns 0 or an
-    /// errno, and throws at the first refusal. A deferred burst (see
+    /// Performs `writes` in order through `write`, which returns nil or the
+    /// error, and throws at the first refusal. A deferred burst (see
     /// `CgroupWrite.retriedAfterCPUMax`) is written once more right after
     /// `cpu.max` succeeds, and its second refusal is the error.
-    func apply(in displayPath: String, checkMemory: () throws -> Void = {}, write: (_ file: String, _ text: String) -> Int32) throws {
-        func failure(_ item: CgroupWrite, _ code: Int32) -> RuntimeError {
-            let hint = code == Errno.noSuchFileOrDirectory.rawValue
+    func apply(in displayPath: String, checkMemory: () throws -> Void = {}, write: (_ file: String, _ text: String) -> Errno?) throws {
+        func failure(_ item: CgroupWrite, _ error: Errno) -> RuntimeError {
+            let hint = error == .noSuchFileOrDirectory
                 ? " (the controller file does not exist in this kernel or cgroup)" : ""
-            return RuntimeError("set \(displayPath)/\(item.file) to \(item.value): \(Errno(rawValue: code))\(hint)")
+            return RuntimeError("set \(displayPath)/\(item.file) to \(item.value): \(error)\(hint)")
         }
-        var deferred: (item: CgroupWrite, code: Int32)?
+        var deferred: (item: CgroupWrite, error: Errno)?
         var checkedMemory = false
         for item in writes {
             if !checkedMemory && item.file.hasPrefix("memory.") {
                 try checkMemory()
                 checkedMemory = true
             }
-            let code = write(item.file, item.value.description)
-            if code == 0 {
+            guard let error = write(item.file, item.value.description) else {
                 if item.file == "cpu.max", let retry = deferred {
                     deferred = nil
-                    let again = write(retry.item.file, retry.item.value.description)
-                    guard again == 0 else { throw failure(retry.item, again) }
+                    if let again = write(retry.item.file, retry.item.value.description) { throw failure(retry.item, again) }
                 }
                 continue
             }
-            if code == Errno.noSuchFileOrDirectory.rawValue && item.ignoreMissing { continue }
-            if code == Errno.invalidArgument.rawValue && item.retriedAfterCPUMax && deferred == nil {
-                deferred = (item, code)
+            if error == .noSuchFileOrDirectory && item.ignoreMissing { continue }
+            if error == .invalidArgument && item.retriedAfterCPUMax && deferred == nil {
+                deferred = (item, error)
                 continue
             }
-            throw failure(item, code)
+            throw failure(item, error)
         }
         // A retried burst always precedes a `cpu.max` write; never drop it.
-        if let deferred { throw failure(deferred.item, deferred.code) }
+        if let deferred { throw failure(deferred.item, deferred.error) }
     }
 }
 

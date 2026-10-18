@@ -60,7 +60,7 @@ enum NamespaceLauncher {
         namespaceFlags: Int32,
         hooks: LaunchHooks = LaunchHooks(),
         context: (LaunchStage, Int32) -> String? = { _, _ in nil },
-        prepareLauncher: () -> Int32 = { 0 },
+        prepareLauncher: () -> Errno? = { nil },
         initialize: (
             _ report: borrowing OwnedFileDescriptor, _ commit: borrowing OwnedFileDescriptor,
             _ launcher: borrowing OwnedFileDescriptor
@@ -70,7 +70,7 @@ enum NamespaceLauncher {
             do {
                 return try FileDescriptor.pipe(options: .closeOnExec)
             } catch {
-                throw RuntimeError.launch(.pipe, error.rawValue)
+                throw RuntimeError.launch(.pipe, error)
             }
         }
         let report = try makePipe()
@@ -103,9 +103,8 @@ enum NamespaceLauncher {
             try? reportRead.close(); try? releaseWrite.close(); try? commitWrite.close()
             guard linux_set_parent_death_signal(SIGKILL) == 0 else { _exit(LaunchRecord.reportFailure(to: reportWrite, at: .parentLifetime)) }
             guard getppid() == supervisor else { _exit(125) }
-            let preparation = prepareLauncher()
-            guard preparation == 0 else {
-                _exit(LaunchRecord.reportFailure(to: reportWrite, at: .joinNamespaces, code: preparation))
+            if let error = prepareLauncher() {
+                _exit(LaunchRecord.reportFailure(to: reportWrite, at: .joinNamespaces, error: error))
             }
             if namespaceFlags != 0 {
                 guard unshare(namespaceFlags) == 0 else {
@@ -178,13 +177,13 @@ enum NamespaceLauncher {
             switch LaunchRecord.read(from: reportRead) {
             case .end:
                 break reading
-            case let .failed(code):
-                thrown = RuntimeError.launch(.protocolRead, code)
+            case let .failed(error):
+                thrown = RuntimeError.launch(.protocolRead, error)
             case let .record(record):
                 switch LaunchRecord.Kind(rawValue: record.kind) {
                 case .initProcess?:
                     guard initPID == 0, record.value > 1, record.value <= Int64(Int32.max) else {
-                        thrown = RuntimeError.launch(.protocolRead, EPROTO)
+                        thrown = RuntimeError.launch(.protocolRead, .protocolError)
                         continue reading
                     }
                     initPID = pid_t(record.value)
@@ -210,14 +209,14 @@ enum NamespaceLauncher {
                     if failure == nil { failure = record }
                 case .ready?:
                     guard hooks.detached, failure == nil else {
-                        thrown = RuntimeError.launch(.protocolRead, EPROTO)
+                        thrown = RuntimeError.launch(.protocolRead, .protocolError)
                         continue reading
                     }
                     ready = true
                     if initPID != 0 { break reading }
                 case .accepted?, nil:
                     // `accepted` belongs only to the start connection.
-                    thrown = RuntimeError.launch(.protocolRead, EPROTO)
+                    thrown = RuntimeError.launch(.protocolRead, .protocolError)
                 }
             }
         }
@@ -258,7 +257,7 @@ enum NamespaceLauncher {
         if let thrown { throw thrown }
         if let failure {
             let stage = LaunchStage(rawValue: failure.stage) ?? .protocolRead
-            throw RuntimeError.launch(stage, failure.code, context: context(stage, failure.detail))
+            throw RuntimeError.launch(stage, failure.error, context: context(stage, failure.detail))
         }
         return hooks.detached ? 0 : exitCode(status)
     }

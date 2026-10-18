@@ -43,6 +43,13 @@ struct OwnedFileDescriptor: ~Copyable {
 }
 
 extension OwnedFileDescriptor {
+    /// For steps that return a failure instead of throwing: the body's error,
+    /// or `EBADF` when this owner holds nothing. (`try? withDescriptor` would
+    /// flatten the body's nil, meaning success, into its fallback.)
+    borrowing func failure(in body: (FileDescriptor) -> Errno?) -> Errno? {
+        do { return try withDescriptor(body) } catch { return .badFileDescriptor }
+    }
+
     /// Reads to EOF, failing once more than `limit` bytes arrive.
     func readAll(limit: Int) throws -> [UInt8] {
         try withDescriptor { descriptor in

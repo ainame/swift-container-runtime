@@ -57,29 +57,30 @@ struct RootFilesystemSetup {
         var root = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: rootRaw))
         guard let pinnedIdentity = pinned.identity(), let rootIdentity = root.identity(),
               pinnedIdentity == rootIdentity else {
-            return LaunchRecord.reportFailure(to: report, at: .verifyRootfs, code: ESTALE)
+            return LaunchRecord.reportFailure(to: report, at: .verifyRootfs, error: Errno(rawValue: ESTALE))
         }
         try? pinned.close()
 
         for (index, mount) in mounts.enumerated() {
             let filesystem = unsafe group(InitStringGroup.filesystem(index))
-            if let failure = unsafe Self.mount(
+            if var failure = unsafe Self.mount(
                 root, unsafe group(InitStringGroup.destination(index)),
                 source: unsafe filesystem[0]!, type: unsafe filesystem[1]!, flags: mount.flags.kernelFlags,
                 data: unsafe filesystem[2]!
             ) {
-                return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code, detail: Int32(index))
+                failure.detail = Int32(index)
+                return LaunchRecord.reportFailure(to: report, failure)
             }
         }
 
         if populatesDev {
             let hasDevpts = mounts.contains { $0.type == .devpts }
-            let code = (try? root.withDescriptor { rootDescriptor in
+            let error = root.failure(in: { rootDescriptor in
                 unsafe Self.withDirectory(beneath: rootDescriptor, unsafe group(InitStringGroup.dev)) { dev in
                     unsafe Self.populateDevices(dev, linkPtmx: hasDevpts)
                 }
-            }) ?? EBADF
-            guard code == 0 else { return LaunchRecord.reportFailure(to: report, at: .devices, code: code) }
+            })
+            if let error { return LaunchRecord.reportFailure(to: report, at: .devices, error: error) }
         }
 
         // pivot_root(".", ".") as in runc: the old root is stacked on the new one
@@ -112,16 +113,15 @@ struct RootFilesystemSetup {
         // of the rootfs made above, never the host's mount. It is not recursive:
         // child mounts such as /proc, /dev and a tmpfs keep their own flags.
         if readonlyRoot {
-            let code = unsafe Self.makeReadonly()
-            guard code == 0 else { return LaunchRecord.reportFailure(to: report, at: .readonlyRoot, code: code) }
+            if let error = unsafe Self.makeReadonly() {
+                return LaunchRecord.reportFailure(to: report, at: .readonlyRoot, error: error)
+            }
         }
         // runc applies linux.readonlyPaths and then linux.maskedPaths right after
         // finalizeRootfs, and only then enters the cwd and drops privileges, so a
         // cwd below a masked directory is gone and the full privilege of the init
         // performs the mounts.
-        if let failure = pathControls.apply() {
-            return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code, detail: failure.index)
-        }
+        if let failure = pathControls.apply() { return LaunchRecord.reportFailure(to: report, failure) }
         return nil
     }
 
@@ -132,40 +132,40 @@ struct RootFilesystemSetup {
     /// statvfs reports for "/" from the start. Omitting every atime flag keeps the
     /// mount's atime behavior. "/" is the root of the bind made before pivot_root
     /// (no configured mount may cover it), and the rootfs filesystem itself is
-    /// untouched. Returns 0 or errno.
-    private static func makeReadonly() -> Int32 {
+    /// untouched. Returns nil or the error.
+    private static func makeReadonly() -> Errno? {
         var status = statvfs()
-        guard unsafe statvfs("/", &status) == 0 else { return errno }
+        guard unsafe statvfs("/", &status) == 0 else { return .current }
         var flags = UInt(MS_BIND | MS_REMOUNT | MS_RDONLY)
         for entry in unsafe preservedMountFlags where UInt(status.f_flag) & entry.reported != 0 {
             flags |= entry.flag
         }
-        guard unsafe LinuxAPI.mount("", "/", nil, flags, nil) == 0 else { return errno }
-        return 0
+        guard unsafe LinuxAPI.mount("", "/", nil, flags, nil) == 0 else { return .current }
+        return nil
     }
 
     /// Mounts a filesystem on a destination resolved beneath `root`.
-    /// Returns the failing stage and errno, or nil on success.
+    /// Returns nil or the failure.
     @unsafe
     private static func mount(
         _ root: borrowing OwnedFileDescriptor,
         _ destination: UnsafePointer<UnsafeMutablePointer<CChar>?>,
         source: UnsafePointer<CChar>, type: UnsafePointer<CChar>, flags: UInt, data: UnsafePointer<CChar>
-    ) -> (stage: LaunchStage, code: Int32)? {
-        var mountError: Int32 = 0
-        let walkError = (try? root.withDescriptor { rootDescriptor in
+    ) -> LaunchFailure? {
+        var mountError: Errno? = nil
+        let walkError = root.failure(in: { rootDescriptor in
             unsafe withDirectory(beneath: rootDescriptor, destination) { target in
                 // Mount through the descriptor's magic link so the kernel uses
                 // exactly the directory resolved above rather than re-walking a path.
                 let result = "/proc/self/fd/\(target.rawValue)".withCString { targetPath in
                     unsafe LinuxAPI.mount(source, targetPath, type, flags, unsafe data[0] == 0 ? nil : UnsafeRawPointer(data))
                 }
-                if result != 0 { mountError = errno }
-                return 0
+                if result != 0 { mountError = .current }
+                return nil
             }
-        }) ?? EBADF
-        if walkError != 0 { return (.resolveMount, walkError) }
-        if mountError != 0 { return (.mount, mountError) }
+        })
+        if let walkError { return LaunchFailure(stage: .resolveMount, error: walkError) }
+        if let mountError { return LaunchFailure(stage: .mount, error: mountError) }
         return nil
     }
 
@@ -174,44 +174,44 @@ struct RootFilesystemSetup {
     /// directories. A symlink component fails with ENOTDIR or ELOOP, so the walk
     /// never leaves the tree under `parent` (other than through mounts this
     /// runtime placed there). Each intermediate descriptor is owned and closed.
-    /// Returns errno on failure or the body's result.
+    /// Returns the walk's error or the body's result.
     @unsafe
     private static func withDirectory(
         beneath parent: FileDescriptor,
         _ components: UnsafePointer<UnsafeMutablePointer<CChar>?>,
-        _ body: (FileDescriptor) -> Int32
-    ) -> Int32 {
+        _ body: (FileDescriptor) -> Errno?
+    ) -> Errno? {
         guard let name = unsafe components[0] else { return body(parent) }
         let flags = O_DIRECTORY | O_NOFOLLOW
         var raw = unsafe linux_open_path(parent.rawValue, name, flags)
         if raw < 0 && errno == ENOENT {
-            guard unsafe mkdirat(parent.rawValue, name, 0o755) == 0 || errno == EEXIST else { return errno }
+            guard unsafe mkdirat(parent.rawValue, name, 0o755) == 0 || errno == EEXIST else { return .current }
             raw = unsafe linux_open_path(parent.rawValue, name, flags)
         }
-        guard raw >= 0 else { return errno }
+        guard raw >= 0 else { return .current }
         let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-        return (try? owner.withDescriptor { directory in
+        return owner.failure(in: { directory in
             unsafe withDirectory(beneath: directory, components + 1, body)
-        }) ?? EBADF
+        })
     }
 
     /// Creates standard device nodes and links in a freshly mounted /dev tmpfs.
-    /// Returns 0 or errno. Requires CAP_MKNOD; user namespaces are not supported.
-    private static func populateDevices(_ dev: FileDescriptor, linkPtmx: Bool) -> Int32 {
+    /// Returns nil or the error. Requires CAP_MKNOD; user namespaces are not supported.
+    private static func populateDevices(_ dev: FileDescriptor, linkPtmx: Bool) -> Errno? {
         let previousMask = umask(0)
         defer { _ = umask(previousMask) }
         for device in unsafe standardDevices {
             let mode = mode_t(LinuxAPI.S_IFCHR) | 0o666
             guard unsafe mknodat(dev.rawValue, device.name, mode, LinuxDevice.number(device.major, device.minor)) == 0 || errno == EEXIST else {
-                return errno
+                return .current
             }
         }
         var links = unsafe standardDevLinks
         if linkPtmx { links.append((target: "pts/ptmx", name: "ptmx")) }
         for link in links {
-            guard unsafe symlinkat(link.target, dev.rawValue, link.name) == 0 || errno == EEXIST else { return errno }
+            guard unsafe symlinkat(link.target, dev.rawValue, link.name) == 0 || errno == EEXIST else { return .current }
         }
-        return 0
+        return nil
     }
 
     /// Standard character devices, matching runc's default device set.

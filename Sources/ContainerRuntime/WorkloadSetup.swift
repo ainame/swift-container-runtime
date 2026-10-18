@@ -54,7 +54,7 @@ struct WorkloadSetup {
             var found: UnsafeMutablePointer<CChar>? = nil
             var index = 0
             while let candidate = unsafe executables[index] {
-                if unsafe Self.checkExecutable(candidate) == 0 {
+                if unsafe Self.checkExecutable(candidate) == nil {
                     unsafe found = candidate
                     break
                 }
@@ -63,15 +63,16 @@ struct WorkloadSetup {
             // Go reports only ErrNotFound for a search, whatever each candidate's
             // error was, and refuses (ErrDot) a first match from a relative or
             // empty PATH element instead of trying later elements.
-            guard let found = unsafe found else { return LaunchRecord.reportFailure(to: report, at: .findExecutable, code: 0) }
+            guard let found = unsafe found else { return LaunchRecord.reportFailure(to: report, at: .findExecutable, error: nil) }
             guard unsafe found[0] == CChar(UInt8(ascii: "/")) else {
-                return LaunchRecord.reportFailure(to: report, at: .relativeExecutable, code: 0)
+                return LaunchRecord.reportFailure(to: report, at: .relativeExecutable, error: nil)
             }
             unsafe file = found
         } else {
             // An explicit path, absolute or relative to the cwd, reports its own error.
-            let lookup = unsafe Self.checkExecutable(executables[0]!)
-            guard lookup == 0 else { return LaunchRecord.reportFailure(to: report, at: .execute, code: lookup) }
+            if let error = unsafe Self.checkExecutable(executables[0]!) {
+                return LaunchRecord.reportFailure(to: report, at: .execute, error: error)
+            }
             unsafe file = executables[0]!
         }
 
@@ -80,8 +81,9 @@ struct WorkloadSetup {
             // With every limit in force, a created init that could never accept
             // start (for example under RLIMIT_NOFILE 3) fails create now
             // instead of exiting right after readiness.
-            let capacity = gate.acceptCapacityError()
-            guard capacity == 0 else { return LaunchRecord.reportFailure(to: report, at: .startDescriptor, code: capacity) }
+            if let error = gate.acceptCapacityError() {
+                return LaunchRecord.reportFailure(to: report, at: .startDescriptor, error: error)
+            }
             guard LaunchRecord(.ready).write(to: report) else { return 125 }
             // EOF instead of the commit: the creator failed or died before
             // recording this init, so nothing could ever start or delete it.
@@ -140,8 +142,9 @@ struct WorkloadSetup {
             }
             guard linux_set_keep_capabilities(1) == 0 else { return LaunchRecord.reportFailure(to: report, at: .keepCapabilities) }
         }
-        let stdioCode = unsafe Self.giveStdio(to: uid_t(security.uid))
-        guard stdioCode == 0 else { return LaunchRecord.reportFailure(to: report, at: .stdioOwnership, code: stdioCode) }
+        if let error = unsafe Self.giveStdio(to: uid_t(security.uid)) {
+            return LaunchRecord.reportFailure(to: report, at: .stdioOwnership, error: error)
+        }
         // setgroups always runs, so an empty list clears the caller's groups;
         // setgid must precede setuid, which gives up the right to change groups.
         // Unless keepcaps was set above, a non-zero uid also loses every capability.
@@ -183,20 +186,20 @@ struct WorkloadSetup {
     /// for example through /dev/stdout. Like runc, this changes the host object
     /// (a pipe or terminal); /dev/null and stdio the uid already owns are left
     /// alone, and EPERM and EROFS are ignored. Unlike runc, a closed descriptor
-    /// is skipped. Returns 0 or errno.
-    private static func giveStdio(to uid: uid_t) -> Int32 {
+    /// is skipped. Returns nil or the error.
+    private static func giveStdio(to uid: uid_t) -> Errno? {
         for descriptor: Int32 in 0...2 {
             var status = stat()
             guard unsafe fstat(descriptor, &status) == 0 else {
                 if errno == EBADF { continue }
-                return errno
+                return .current
             }
             let isDevNull = status.st_mode & mode_t(LinuxAPI.S_IFMT) == mode_t(LinuxAPI.S_IFCHR)
                 && status.st_rdev == LinuxDevice.number(1, 3)
             if status.st_uid == uid || isDevNull { continue }
-            guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return errno }
+            guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return .current }
         }
-        return 0
+        return nil
     }
 
     /// runc's setupRlimits: one prlimit per entry, in order, stopping at the
@@ -214,14 +217,14 @@ struct WorkloadSetup {
 
     /// Go's findExecutable for one candidate, as runc uses it: the file must
     /// exist, must not be a directory, and must be executable with the current
-    /// (already switched) credentials. Returns 0 or errno.
+    /// (already switched) credentials. Returns nil or the error.
     @unsafe
-    private static func checkExecutable(_ path: UnsafePointer<CChar>) -> Int32 {
+    private static func checkExecutable(_ path: UnsafePointer<CChar>) -> Errno? {
         var status = stat()
-        guard unsafe stat(path, &status) == 0 else { return errno }
-        guard status.st_mode & mode_t(LinuxAPI.S_IFMT) != mode_t(LinuxAPI.S_IFDIR) else { return EISDIR }
-        guard unsafe access(path, X_OK) == 0 else { return errno }
-        return 0
+        guard unsafe stat(path, &status) == 0 else { return .current }
+        guard status.st_mode & mode_t(LinuxAPI.S_IFMT) != mode_t(LinuxAPI.S_IFDIR) else { return .isDirectory }
+        guard unsafe access(path, X_OK) == 0 else { return .current }
+        return nil
     }
 }
 #endif

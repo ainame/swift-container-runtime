@@ -76,7 +76,7 @@ private struct EventWatch: ~Copyable {
         // O_NONBLOCK and O_CLOEXEC share IN_NONBLOCK and IN_CLOEXEC's values,
         // which libc headers declare with differing C types.
         let raw = inotify_init1(O_NONBLOCK | O_CLOEXEC)
-        guard raw >= 0 else { throw RuntimeError("inotify_init1: \(Errno(rawValue: errno))") }
+        guard raw >= 0 else { throw RuntimeError("inotify_init1: \(Errno.current)") }
         let inotify = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
 
         // Watches go through /proc/self/fd paths of the pinned descriptors.
@@ -105,9 +105,9 @@ private struct EventWatch: ~Copyable {
     private static func watch(_ inotify: borrowing OwnedFileDescriptor, _ path: String, _ mask: UInt32, optional: Bool) throws -> Bool {
         let result = try inotify.withDescriptor { unsafe inotify_add_watch($0.rawValue, path, mask) }
         if result >= 0 { return true }
-        let code = errno
-        if optional && code == ENOENT { return false }
-        throw RuntimeError("unable to add inotify watch for \(path): \(Errno(rawValue: code))")
+        let error = Errno.current
+        if optional && error == .noSuchFileOrDirectory { return false }
+        throw RuntimeError("unable to add inotify watch for \(path): \(error)")
     }
 
     /// Emits OOM events as they happen and statistics every `interval`
@@ -177,7 +177,7 @@ private struct EventWatch: ~Copyable {
             var target = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
             let result = unsafe poll(&target, 1, milliseconds)
             if result < 0 {
-                guard errno == EINTR else { throw RuntimeError("poll inotify: \(Errno(rawValue: errno))") }
+                guard errno == EINTR else { throw RuntimeError("poll inotify: \(Errno.current)") }
                 return
             }
             guard result > 0 else { return }

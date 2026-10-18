@@ -110,9 +110,7 @@ extension OCIRunPlan {
                     }
                     if let status = unsafe root.prepare(report: report) { return status }
                     // Init hands off its pidfd inside the root, before credentials and readiness.
-                    if let failure = pidfdSocket?.handOff(label: .standard) {
-                        return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code)
-                    }
+                    if let failure = pidfdSocket?.handOff(label: .standard) { return LaunchRecord.reportFailure(to: report, failure) }
                     return unsafe workload.run(report: report, commit: commit, launcher: launcher, gate: gate)
                 }
             }

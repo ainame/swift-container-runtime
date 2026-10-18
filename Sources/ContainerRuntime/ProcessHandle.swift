@@ -17,7 +17,7 @@ struct ProcessHandle: ~Copyable {
         let result = try descriptor.withDescriptor { linux_pidfd_send_signal($0.rawValue, signal) }
         if result == 0 { return true }
         if errno == ESRCH { return false }
-        throw RuntimeError("signal container init \(pid): \(Errno(rawValue: errno))")
+        throw RuntimeError("signal container init \(pid): \(Errno.current)")
     }
 
     func waitForExit(milliseconds: Int32) -> Bool {
@@ -45,18 +45,18 @@ extension ProcessHandle {
         // Pin first, then compare procfs identity; a later PID reuse cannot retarget it.
         let raw = linux_pidfd_open(identity.pid)
         guard raw >= 0 else {
-            let error = errno
-            if error == ESRCH { return nil }
+            let error = Errno.current
+            if error == .noSuchProcess { return nil }
             // EINVAL also means the PID has no thread-group leader: a reaped
             // init's PID stays allocated while orphaned descendants still use it
             // as their process group or session. Without a pidfd nothing is
             // signalled; procfs only decides whether the recorded init is gone.
-            if error == EINVAL {
+            if error == .invalidArgument {
                 guard let stat = try ProcFS.processStat(identity.pid), stat.startTime == identity.startTime, !stat.hasExited else {
                     return nil
                 }
             }
-            throw RuntimeError("pidfd_open \(identity.pid): \(Errno(rawValue: error)) (requires Linux 5.3+)")
+            throw RuntimeError("pidfd_open \(identity.pid): \(error) (requires Linux 5.3+)")
         }
         let handle = ProcessHandle(pid: identity.pid, descriptor: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)))
         guard let stat = try ProcFS.processStat(identity.pid), stat.startTime == identity.startTime, !stat.hasExited else {

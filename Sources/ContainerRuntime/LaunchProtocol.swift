@@ -89,6 +89,7 @@ struct LaunchRecord {
         case failure = 1, initProcess, ready, accepted
     }
 
+    // Raw fields keep the wire layout fixed; use `error` for the errno.
     var kind: Int32 = 0
     var stage: Int32 = 0
     var code: Int32 = 0
@@ -99,19 +100,31 @@ struct LaunchRecord {
 
     init() {}
 
-    init(_ kind: Kind, stage: Int32 = 0, code: Int32 = 0, detail: Int32 = -1, value: Int64 = 0) {
+    init(_ kind: Kind, stage: Int32 = 0, error: Errno? = nil, detail: Int32 = -1, value: Int64 = 0) {
         self.kind = kind.rawValue
         self.stage = stage
-        self.code = code
+        self.code = error?.rawValue ?? 0
         self.detail = detail
         self.value = value
     }
+
+    /// The reported errno, or nil for a failure without one.
+    var error: Errno? { code == 0 ? nil : Errno(rawValue: code) }
+}
+
+/// A child-side setup failure, reported through a `LaunchRecord` before exit.
+struct LaunchFailure {
+    let stage: LaunchStage
+    /// Nil for a failure without an errno, such as a refused executable lookup.
+    let error: Errno?
+    /// Stage-specific context, such as a mount index; -1 when unused.
+    var detail: Int32 = -1
 }
 
 enum RecordRead {
     case record(LaunchRecord)
     case end
-    case failed(Int32)
+    case failed(Errno)
 }
 
 
@@ -151,42 +164,44 @@ extension LaunchRecord {
     /// Reads one whole record, or reports EOF before its first byte.
     static func read(from owner: borrowing OwnedFileDescriptor) -> RecordRead {
         var record = LaunchRecord()
-        let result: Int32?
+        // The fill reports only an early end or failure; the record itself is
+        // read after its bytes are no longer borrowed.
+        let interrupted: RecordRead?
         do {
-            result = try owner.withDescriptor { readEnd in
-                withUnsafeMutableBytes(of: &record) { bytes in
+            interrupted = try owner.withDescriptor { readEnd in
+                withUnsafeMutableBytes(of: &record) { bytes -> RecordRead? in
                     var received = 0
                     while received < bytes.count {
                         let count: Int
                         do {
                             count = unsafe try readEnd.read(into: UnsafeMutableRawBufferPointer(rebasing: bytes[received...]))
                         } catch {
-                            return (error as? Errno)?.rawValue ?? EIO
+                            return .failed((error as? Errno) ?? .ioError)
                         }
-                        if count == 0 { return received == 0 ? nil : EIO }
+                        if count == 0 { return received == 0 ? .end : .failed(.ioError) }
                         received += count
                     }
-                    return 0
+                    return nil
                 }
             }
         } catch {
-            result = (error as? Errno)?.rawValue ?? EIO
+            interrupted = .failed((error as? Errno) ?? .ioError)
         }
-        switch result {
-        case nil: return .end
-        case 0?: return .record(record)
-        case let code?: return .failed(code)
-        }
+        return interrupted ?? .record(record)
     }
 
     /// Reports a child-side failure and returns the status to pass to `_exit`.
     /// Call as `_exit(LaunchRecord.reportFailure(...))` or return it from a launch body.
     static func reportFailure(
-        to owner: borrowing OwnedFileDescriptor, at stage: LaunchStage, code: Int32 = errno, detail: Int32 = -1,
+        to owner: borrowing OwnedFileDescriptor, at stage: LaunchStage, error: Errno? = .current, detail: Int32 = -1,
         socket: Bool = false
     ) -> Int32 {
-        LaunchRecord(.failure, stage: stage.rawValue, code: code, detail: detail).write(to: owner, socket: socket)
+        LaunchRecord(.failure, stage: stage.rawValue, error: error, detail: detail).write(to: owner, socket: socket)
         return 125
+    }
+
+    static func reportFailure(to owner: borrowing OwnedFileDescriptor, _ failure: LaunchFailure) -> Int32 {
+        reportFailure(to: owner, at: failure.stage, error: failure.error, detail: failure.detail)
     }
 }
 

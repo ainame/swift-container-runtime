@@ -60,7 +60,7 @@ enum ProcFS {
             var status = stat()
             guard unsafe stat(path, &status) == 0 else {
                 if errno == ENOENT || errno == ESRCH { return nil }
-                throw RuntimeError("stat \(path): \(Errno(rawValue: errno))")
+                throw RuntimeError("stat \(path): \(Errno.current)")
             }
             return (status.st_dev, status.st_ino)
         }
