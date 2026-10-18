@@ -130,7 +130,8 @@ public struct OCIRunPlan: Sendable {
     /// The live root and namespaces are pinned separately by the lifecycle.
     static func loadExec(
         bundle: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?,
-        additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil, processFile: FilePath? = nil
+        additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil, capabilities: [String] = [],
+        processFile: FilePath? = nil
     ) throws -> OCIProcessPlan {
         if let processFile {
             return try OCIProcessPlan(OCIConfiguration.decodeProcess(readConfiguration(processFile)))
@@ -166,7 +167,35 @@ public struct OCIRunPlan: Sendable {
             configuration.process.user = staged
         }
         if let noNewPrivileges { configuration.process.noNewPrivileges = noNewPrivileges }
+        if !capabilities.isEmpty {
+            configuration.process.capabilities = try execCapabilities(configuration.process.capabilities, adding: capabilities)
+        }
         return try OCIProcessPlan(configuration.process)
+    }
+
+    /// runc's getProcess appends each --cap to bounding, effective, and
+    /// permitted, never to inheritable, and to ambient only when inheritable
+    /// is present (even empty). runc then only warns when raising an ambient
+    /// capability fails, which PR_CAP_AMBIENT_RAISE does for one that is not
+    /// inheritable; appending only those that are inheritable keeps runc's
+    /// resulting sets without tripping the strict ambient check. Unknown names
+    /// are rejected, as for config.json. A missing object, which runc would
+    /// dereference as nil, starts empty: the process then has only the
+    /// requested capabilities instead of the inherited ones.
+    static func execCapabilities(
+        _ configured: OCIConfiguration.Capabilities?, adding names: [String]
+    ) throws -> OCIConfiguration.Capabilities {
+        for name in names where CapabilitySet.number(named: name) == nil {
+            throw RuntimeError("exec --cap: unknown capability \"\(name)\"; names are exact, such as CAP_CHOWN")
+        }
+        var staged = configured ?? OCIConfiguration.Capabilities()
+        staged.bounding = (staged.bounding ?? []) + names
+        staged.effective = (staged.effective ?? []) + names
+        staged.permitted = (staged.permitted ?? []) + names
+        if let inheritable = staged.inheritable {
+            staged.ambient = (staged.ambient ?? []) + names.filter(inheritable.contains)
+        }
+        return staged
     }
 
     /// Runs the workload in the foreground and returns its shell-style exit

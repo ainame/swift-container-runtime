@@ -277,6 +277,15 @@ func execAcceptsBareAndRelativeExecutables(_ executable: String) throws {
     let plain = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "id"]) as? Exec)
     #expect(plain.additionalGids.isEmpty)
     #expect(!plain.noNewPrivs)
+    #expect(plain.cap.isEmpty)
+}
+
+@Test func execParsesRepeatedCapabilities() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot([
+        "exec", "-c", "CAP_KILL", "--cap", "CAP_CHOWN", "-c", "CAP_KILL", "box", "id", "-c", "x",
+    ]) as? Exec)
+    #expect(command.cap == ["CAP_KILL", "CAP_CHOWN", "CAP_KILL"])
+    #expect(command.arguments == ["id", "-c", "x"])
 }
 
 @Test(arguments: [

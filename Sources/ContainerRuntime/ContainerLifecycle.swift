@@ -65,7 +65,7 @@ public struct ContainerLifecycle: Sendable {
     public func exec(
         id: ContainerID, arguments: [String], environment: [String] = [],
         cwd: String? = nil, user: String? = nil, additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil,
-        detach: Bool = false, pidFile: String? = nil, processFile: String? = nil
+        capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil
     ) throws -> Int32 {
         #if os(Linux)
         // Serialize acquisition with delete/start, then pin the recorded init
@@ -80,7 +80,8 @@ public struct ContainerLifecycle: Sendable {
         guard processFile?.utf8.contains(0) != true else { throw RuntimeError("process file path contains NUL") }
         let plan = try OCIRunPlan.loadExec(
             bundle: FilePath(record.bundle), arguments: arguments, environment: environment, cwd: cwd, user: user,
-            additionalGids: additionalGids, noNewPrivileges: noNewPrivileges, processFile: processFile.map { FilePath($0) })
+            additionalGids: additionalGids, noNewPrivileges: noNewPrivileges, capabilities: capabilities,
+            processFile: processFile.map { FilePath($0) })
         let result = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { handle in
             let namespaces = try ExecNamespaceSet(process: handle)
             var hooks = LaunchHooks()

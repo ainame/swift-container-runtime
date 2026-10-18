@@ -144,6 +144,13 @@ write_config ambient-not-inheritable "$root" false \
 # Only kernel range acceptance matters here; the workload just marks that it ran.
 write_config beyond-kernel "$root" false ', "capabilities": {"bounding": ["CAP_CHECKPOINT_RESTORE"]}' \
     '["/bin/touch", "/out/probe.status"]'
+# Long-running inits for exec --cap. Root: bounding CHOWN, KILL; permitted
+# and effective KILL; inheritable KILL. Non-root: bounding CHOWN, KILL;
+# permitted, effective, and ambient CHOWN; inheritable CHOWN, KILL.
+write_config exec-root-loop "$root" false ', "capabilities": {"bounding": ["CAP_CHOWN", "CAP_KILL"],
+  "permitted": ["CAP_KILL"], "effective": ["CAP_KILL"], "inheritable": ["CAP_KILL"]}' "$loop"
+write_config exec-user-loop "$user" false ', "capabilities": {"bounding": ["CAP_CHOWN", "CAP_KILL"],
+  "permitted": ["CAP_CHOWN"], "effective": ["CAP_CHOWN"], "inheritable": ["CAP_CHOWN", "CAP_KILL"], "ambient": ["CAP_CHOWN"]}' "$loop"
 
 field() { sed -n "s/^ *\"$1\" *: *\"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}$/\1/p"; }
 status_of() { $1 state "$2" 2>/dev/null | field status; }
@@ -308,9 +315,132 @@ shared_checks() {
     echo "$impl: absent, empty, configured root, and configured non-root capability sets ok"
 }
 
+# exec_probe RT ID TAG OPTION...: execs the probe in ID and keeps its record
+# as $results/TAG.status.
+exec_probe() {
+    # Own names: sh functions share globals, and callers keep rt and id.
+    probe_rt=$1 probe_id=$2 probe_tag=$3
+    shift 3
+    reset_probe
+    runtime_step "$probe_tag" $probe_rt exec "$@" "$probe_id" /bin/sh /scripts/probe.sh \
+        < /dev/null > "$results/$probe_tag.stdout" 2> "$results/$probe_tag.stderr"
+    test -e "$out/probe.status" || { dump "$probe_tag"; fail "$probe_tag did not run the probe"; }
+    awk '{ $1 = $1; print }' "$out/probe.status" > "$results/$probe_tag.status"
+}
+# exec_fails RT TAG EXEC_ARGUMENT...: the exec fails by itself (not by
+# timeout) and runs no probe.
+exec_fails() {
+    fail_rt=$1 fail_tag=$2
+    shift 2
+    reset_probe
+    if $fail_rt exec "$@" < /dev/null > "$results/$fail_tag.stdout" 2> "$results/$fail_tag.stderr"; then
+        dump "$fail_tag"
+        fail "$fail_tag: exec succeeded"
+    else
+        fail_code=$?
+    fi
+    case "$fail_code" in 124 | 137 | 143) dump "$fail_tag"; fail "$fail_tag: exec timed out (status $fail_code)" ;; esac
+    test ! -e "$out/probe.status" || fail "$fail_tag: probe ran"
+}
+# same_init RT ID PID: the init's identity and sets are what they were at start.
+same_init() {
+    capabilities_of "$3" > "$results/$2.after"
+    cmp -s "$results/$2.before" "$results/$2.after" || {
+        diff "$results/$2.before" "$results/$2.after" >&2 || :
+        fail "$2: exec changed the init's capabilities"
+    }
+    test "$(status_of "$1" "$2")" = running || fail "$2: init no longer running"
+}
+
+# exec --cap appends to bounding, effective, and permitted, and to ambient
+# only where the init's process has inheritable set (as runc's getProcess,
+# whose failed ambient raises only warn). A process file ignores it.
+exec_checks() {
+    impl=$1 rt=$2
+    # Root: requested capabilities become effective after exec; only the
+    # inheritable CAP_KILL becomes ambient; repeats are harmless.
+    id=exec-root-$impl
+    rm -f "$out/loop.started"
+    runtime_step "$id" $rt run --detach --bundle "$bundles/exec-root-loop" "$id" < /dev/null > /dev/null 2>&1
+    wait_until "$id to run" test -e "$out/loop.started"
+    pid=$(pid_of "$rt" "$id")
+    capabilities_of "$pid" > "$results/$id.before"
+    exec_probe "$rt" "$id" exec-root-plain-$impl
+    expect exec-root-plain-$impl "Uid: 0 0 0 0" "CapInh: 0000000000000020" "CapPrm: 0000000000000021" \
+        "CapEff: 0000000000000021" "CapBnd: 0000000000000021" "CapAmb: $zero" \
+        chown=allowed sethostname=denied dac-override=denied
+    exec_probe "$rt" "$id" exec-root-cap-$impl \
+        --cap CAP_SYS_ADMIN --cap CAP_DAC_OVERRIDE --cap CAP_KILL --cap CAP_SYS_ADMIN
+    expect exec-root-cap-$impl "Uid: 0 0 0 0" "CapInh: 0000000000000020" "CapPrm: 0000000000200023" \
+        "CapEff: 0000000000200023" "CapBnd: 0000000000200023" "CapAmb: 0000000000000020" \
+        chown=allowed sethostname=allowed dac-override=allowed
+    # runc 1.4.0 refuses mixing -c and --cap in one invocation; here the
+    # mixed spelling must give the identical record.
+    if [ "$impl" = swift ]; then
+        exec_probe "$rt" "$id" exec-root-mixed-$impl -c CAP_SYS_ADMIN --cap CAP_DAC_OVERRIDE -c CAP_KILL
+        cmp -s "$results/exec-root-cap-$impl.status" "$results/exec-root-mixed-$impl.status" || {
+            diff "$results/exec-root-cap-$impl.status" "$results/exec-root-mixed-$impl.status" >&2 || :
+            fail "exec -c/--cap mixed spelling differs from --cap"
+        }
+    fi
+    # A process file is authoritative: its {} drops everything despite --cap.
+    cat > "$scratch/exec-process-$impl.json" <<'EOF'
+{"terminal": false, "user": {"uid": 0, "gid": 0}, "cwd": "/", "env": ["PATH=/bin"], "capabilities": {},
+ "args": ["/bin/sh", "/scripts/probe.sh"]}
+EOF
+    reset_probe
+    runtime_step exec-process-$impl $rt exec --cap CAP_SYS_ADMIN -p "$scratch/exec-process-$impl.json" "$id" \
+        < /dev/null > "$results/exec-process-$impl.stdout" 2> "$results/exec-process-$impl.stderr"
+    test -e "$out/probe.status" || { dump exec-process-$impl; fail "exec-process-$impl did not run the probe"; }
+    awk '{ $1 = $1; print }' "$out/probe.status" > "$results/exec-process-$impl.status"
+    expect exec-process-$impl "Uid: 0 0 0 0" "CapInh: $zero" "CapPrm: $zero" "CapEff: $zero" "CapBnd: $zero" "CapAmb: $zero" \
+        chown=denied sethostname=denied dac-override=denied
+    exec_fails "$rt" exec-missing-$impl --cap CAP_SYS_ADMIN "$id" /does/not/exist
+    same_init "$rt" "$id" "$pid"
+    runtime_step "$id" $rt delete --force "$id"
+
+    # Non-root: only ambient capabilities survive the exec; the requested
+    # CAP_KILL is inheritable, so it becomes ambient, CAP_DAC_OVERRIDE is not.
+    id=exec-user-$impl
+    rm -f "$out/loop.started"
+    runtime_step "$id" $rt run --detach --bundle "$bundles/exec-user-loop" "$id" < /dev/null > /dev/null 2>&1
+    wait_until "$id to run" test -e "$out/loop.started"
+    pid=$(pid_of "$rt" "$id")
+    capabilities_of "$pid" > "$results/$id.before"
+    exec_probe "$rt" "$id" exec-user-plain-$impl
+    expect exec-user-plain-$impl "Uid: 1000 1000 1000 1000" "CapInh: 0000000000000021" "CapPrm: 0000000000000001" \
+        "CapEff: 0000000000000001" "CapBnd: 0000000000000021" "CapAmb: 0000000000000001" \
+        chown=allowed sethostname=denied dac-override=denied
+    exec_probe "$rt" "$id" exec-user-cap-$impl --cap CAP_KILL --cap CAP_DAC_OVERRIDE
+    expect exec-user-cap-$impl "Uid: 1000 1000 1000 1000" "CapInh: 0000000000000021" "CapPrm: 0000000000000021" \
+        "CapEff: 0000000000000021" "CapBnd: 0000000000000023" "CapAmb: 0000000000000021" \
+        chown=allowed sethostname=denied dac-override=denied
+    same_init "$rt" "$id" "$pid"
+    # runc warns about and ignores unknown names; they are errors here,
+    # before any process exists.
+    if [ "$impl" = swift ]; then
+        for name in CAP_NOPE cap_kill; do
+            exec_fails "$rt" exec-unknown-$name --cap "$name" "$id" /bin/sh /scripts/probe.sh
+            grep -qF "exec --cap: unknown capability \"$name\"" "$results/exec-unknown-$name.stderr" \
+                || { dump exec-unknown-$name; fail "exec --cap $name: unexpected diagnostic"; }
+        done
+        same_init "$rt" "$id" "$pid"
+    fi
+    runtime_step "$id" $rt delete --force "$id"
+    echo "$impl: exec --cap root, non-root ambient, process file precedence, and failed exec ok"
+}
+
 shared_checks swift "$ours"
+exec_checks swift "$ours"
 if [ "$compare" = 1 ]; then
     shared_checks runc "$theirs"
+    exec_checks runc "$theirs"
+    for tag in exec-root-plain exec-root-cap exec-process exec-user-plain exec-user-cap; do
+        if ! cmp -s "$results/$tag-swift.status" "$results/$tag-runc.status"; then
+            diff "$results/$tag-runc.status" "$results/$tag-swift.status" >&2 || :
+            fail "$tag capabilities differ from runc (diff: runc -> swift)"
+        fi
+    done
     # Identical sets and operation outcomes under both runtimes, for the
     # workloads and for the created inits.
     for mode in foreground detached created; do
@@ -436,4 +566,4 @@ $ours delete fds-created
 test -z "$(ls -A "$state_root")" || { ls -A "$state_root" >&2; fail "state left behind"; }
 comparison=skipped
 test "$compare" = 1 && comparison=runc
-printf '%s\n' "Capability integration checks passed (comparison: $comparison): absent object keeps inherited sets, {} clears all five (inherited inheritable/ambient included), configured root and non-root masks with CAP_CHOWN/CAP_SYS_ADMIN/CAP_DAC_OVERRIDE operations, ambient with no_new_privs, inherited inheritable outside bounding, kernel capset refusal, created-init sets, unknown-name and ambient-subset rejection, $range_note, CAP_SETPCAP diagnosis, parent-death cleanup, detached lifetime, descriptor isolation."
+printf '%s\n' "Capability integration checks passed (comparison: $comparison): absent object keeps inherited sets, {} clears all five (inherited inheritable/ambient included), configured root and non-root masks with CAP_CHOWN/CAP_SYS_ADMIN/CAP_DAC_OVERRIDE operations, ambient with no_new_privs, inherited inheritable outside bounding, kernel capset refusal, created-init sets, unknown-name and ambient-subset rejection, exec --cap masks and operations (root, non-root ambient, process-file precedence, unchanged init), $range_note, CAP_SETPCAP diagnosis, parent-death cleanup, detached lifetime, descriptor isolation."

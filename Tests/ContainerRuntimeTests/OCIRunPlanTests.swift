@@ -416,6 +416,11 @@ private let groupedProcess = """
         #expect(appended.additionalGids == [2000, 3000, 2000, 3000])
         #expect(!appended.noNewPrivileges)
         #expect(appended.uid == 0 && appended.gid == 5)
+        // --cap reaches the validated plan through loadExec.
+        let capped = try OCIRunPlan.loadExec(
+            bundle: bundle, arguments: ["/bin/id"], environment: [], cwd: nil, user: nil, capabilities: ["CAP_KILL"])
+        #expect(capped.capabilities?.permitted == CapabilitySet(mask: 1 << 5))
+        #expect(try OCIRunPlan.loadExec(bundle: bundle, arguments: ["/bin/id"], environment: [], cwd: nil, user: nil).capabilities == nil)
     }
 }
 
@@ -458,7 +463,8 @@ func execRejectsInvalidAppendedGroups(_ count: Int, _ gid: UInt32, _ message: St
         try write(defaultProcess, to: file)
         let process = try OCIRunPlan.loadExec(
             bundle: directory.appending("missing"), arguments: ["ignored"], environment: [], cwd: nil, user: nil,
-            additionalGids: [3000], noNewPrivileges: true, processFile: file)
+            additionalGids: [3000], noNewPrivileges: true, capabilities: ["CAP_KILL", "CAP_UNKNOWN"], processFile: file)
+        #expect(process.capabilities == nil)
         #expect(process.security.additionalGids.isEmpty)
         #expect(!process.security.noNewPrivileges)
     }

@@ -50,6 +50,8 @@ struct OCIConfiguration: Decodable, Sendable {
         var permitted: [String]?
         var ambient: [String]?
 
+        init() {}
+
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
                 decoder, allowed: ["bounding", "effective", "inheritable", "permitted", "ambient"]
