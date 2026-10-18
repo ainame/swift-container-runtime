@@ -103,7 +103,7 @@ struct LaunchRecord {
         /// the start command to commit it (see `StartGate`).
         /// `runtimeHooks`: the init's mounts are in place; it waits on the
         /// commit socket until the supervisor ran prestart and createRuntime.
-        case failure = 1, initProcess, ready, accepted, runtimeHooks
+        case failure = 1, initProcess, ready, accepted, runtimeHooks, userNamespace
     }
 
     // Raw fields keep the wire layout fixed; use `error` for the errno.

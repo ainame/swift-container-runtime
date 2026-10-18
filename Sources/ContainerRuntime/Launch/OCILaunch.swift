@@ -112,12 +112,14 @@ extension OCIRunPlan {
             default: return nil
             }
         }
+        var launchHooks = hooks
+        launchHooks.mapUserNamespace = userNamespace.map { mapping in { try mapping.install(for: $0) } }
         let firstInternal = hooks.preserved.closeRangeStart
         let createsCgroupNamespace = namespaces.contains(.cgroup)
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 var root = unsafe RootFilesystemSetup(
-                    strings: pointers, starts: starts, mounts: mounts, devices: devices, deviceGroupBase: deviceGroupBase, populatesDev: populatesDev,
+                    strings: pointers, starts: starts, mounts: mounts, devices: devices, deviceGroupBase: deviceGroupBase, bindsStandardDevices: userNamespace != nil, populatesDev: populatesDev,
                     readonlyRoot: readonlyRoot, rootPropagation: rootPropagation, pathControls: pathControls, terminal: terminal)
                 // Hook buffers point into the launch strings, which outlive the launch.
                 func prepared(_ hooks: [ContainerHooks.Hook], from first: Int, defaultEnvironment: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [PreparedHook] {
@@ -147,7 +149,7 @@ extension OCIRunPlan {
                         state: hookSetup.createdState, stage: .startContainerHook)
                 }
                 // The cgroup namespace is unshared by the init itself, below.
-                return unsafe try NamespaceLauncher.run(unsharing: namespaces.filter { $0 != .cgroup }, hooks: hooks, context: context, prepareLauncher: {
+                return unsafe try NamespaceLauncher.run(unsharing: namespaces.filter { $0 != .cgroup }, hooks: launchHooks, context: context, prepareLauncher: {
                     if let failure = oom.apply() { return failure }
                     return network.join().map { LaunchFailure(stage: .joinNamespaces, error: $0) }
                 }) { report, commit, launcher in

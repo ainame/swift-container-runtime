@@ -21,6 +21,8 @@ struct RootFilesystemSetup {
     let devices: [DeviceNode]
     /// First device path in the launch string vector, prepared before fork.
     let deviceGroupBase: Int
+    /// User namespaces cannot mknod host device nodes; bind the defaults instead.
+    let bindsStandardDevices: Bool
     let populatesDev: Bool
     let readonlyRoot: Bool
     /// Final propagation for the root bind, isolated from the host before setup.
@@ -206,7 +208,7 @@ struct RootFilesystemSetup {
         let dev = unsafe group(InitStringGroup.dev)
         let error = root.failure(in: { rootDescriptor in
             unsafe Self.withDirectory(beneath: rootDescriptor, dev) { dev in
-                unsafe Self.populateDevices(dev, linkPtmx: hasDevpts)
+                unsafe Self.populateDevices(dev, linkPtmx: hasDevpts, bindDevices: bindsStandardDevices)
             }
         })
         return error.map { LaunchFailure(stage: .devices, error: $0) }
@@ -382,14 +384,37 @@ struct RootFilesystemSetup {
 
     /// Creates standard device nodes and links in a freshly mounted /dev tmpfs.
     /// Returns nil or the error. Requires CAP_MKNOD; user namespaces are not supported.
-    private static func populateDevices(_ dev: FileDescriptor, linkPtmx: Bool) -> Errno? {
+    private static func populateDevices(_ dev: FileDescriptor, linkPtmx: Bool, bindDevices: Bool) -> Errno? {
         let previousMask = Kernel.Process.setFileCreationMask(0)
         defer { Kernel.Process.setFileCreationMask(previousMask) }
-        return Errno.failure { () throws(Errno) in try unsafe makeDevices(in: dev, linkPtmx: linkPtmx) }
+        return Errno.failure { () throws(Errno) in try unsafe makeDevices(in: dev, linkPtmx: linkPtmx, bindDevices: bindDevices) }
     }
 
-    private static func makeDevices(in dev: FileDescriptor, linkPtmx: Bool) throws(Errno) {
+    private static func makeDevices(in dev: FileDescriptor, linkPtmx: Bool, bindDevices: Bool) throws(Errno) {
         for device in unsafe standardDevices {
+            if bindDevices {
+                // A fresh /dev tmpfs belongs to this init. Host source paths
+                // remain visible until pivot_root; no device is opened for I/O.
+                do {
+                    try device.name.withCString { name in
+                        try unsafe Kernel.File.makeEmptyFile(name, in: dev, permissions: FilePermissions(rawValue: 0o666))
+                    }
+                    var target = OwnedFileDescriptor()
+                    try device.name.withCString { name in
+                        target = try unsafe Kernel.File.openPath(name, in: dev, options: .noFollow)
+                    }
+                    try target.borrowDescriptor { target throws(Errno) in
+                        do {
+                            try "/dev/\(device.name)".withCString { source in
+                                try "/proc/self/fd/\(target.rawValue)".withCString { path in
+                                    try unsafe Kernel.Mount.mount(source: source, target: path, type: nil, flags: .bind)
+                                }
+                            }
+                        } catch { throw (error as? Errno) ?? .ioError }
+                    }
+                } catch { throw (error as? Errno) ?? .ioError }
+                continue
+            }
             do {
                 try unsafe Kernel.File.makeCharacterDevice(
                     device.name, in: dev, permissions: FilePermissions(rawValue: 0o666),

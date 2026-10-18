@@ -283,9 +283,25 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
+    /// One Linux user-namespace mapping extent, decoded before fork.
+    struct IDMapping: Decodable, Sendable {
+        let containerID: UInt32
+        let hostID: UInt32
+        let size: UInt32
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["containerID", "hostID", "size"])
+            containerID = try object.required("containerID")
+            hostID = try object.required("hostID")
+            size = try object.required("size")
+        }
+    }
+
     struct Linux: Decodable, Sendable {
         var namespaces: [Namespace]
         var devices: [Device]?
+        var uidMappings: [IDMapping]?
+        var gidMappings: [IDMapping]?
         var rootfsPropagation: String?
         var maskedPaths: [String]?
         var readonlyPaths: [String]?
@@ -301,9 +317,11 @@ struct OCIConfiguration: Decodable, Sendable {
                 decoder,
                 allowed: [
                     "namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources", "seccomp",
-                    "mountLabel", "sysctl", "devices",
+                    "mountLabel", "sysctl", "devices", "uidMappings", "gidMappings",
                 ]
             )
+            uidMappings = try object.optional("uidMappings")
+            gidMappings = try object.optional("gidMappings")
             devices = try object.optional("devices")
             sysctl = try object.optional("sysctl")
             mountLabel = try object.optional("mountLabel")
