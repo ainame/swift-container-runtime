@@ -141,7 +141,9 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
 
 @Test(arguments: [
     // Unknown or unimplemented fields are rejected wherever they appear.
-    (config(extra: #""hooks": {}"#), "hooks"),
+    (config(extra: #""hooks": {"prestart": [{"path": "relative"}]}"#), "hooks.prestart[0].path must be absolute"),
+    (config(extra: #""hooks": {"poststop": [{"path": "/bin/true", "timeout": 0}]}"#), "hooks.poststop[0].timeout must be positive"),
+    (config(extra: #""hooks": {"onCreate": []}"#), "hooks.onCreate"),
     (config(extra: #""futureField": 1"#), "futureField"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "capabilities": {"permited": []}}"#), "process.capabilities.permited"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "oomScoreAdj": 1001}"#), "process.oomScoreAdj"),

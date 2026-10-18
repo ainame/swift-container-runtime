@@ -83,8 +83,7 @@ public struct RuntimeFeatures: Codable, Equatable, Sendable {
         return RuntimeFeatures(
             ociVersionMin: RuntimeMetadata.ociVersionMin,
             ociVersionMax: RuntimeMetadata.ociVersion,
-            // No hook stage runs yet.
-            hooks: [],
+            hooks: linux ? ContainerHooks.Phase.allCases.map(\.rawValue) : [],
             // Generic flags the mount planner maps to MS_* bits. Filesystem data options such as
             // mode= or size= are excluded, as the schema requires.
             mountOptions: linux ? ["nodev", "noexec", "nosuid", "strictatime", "ro", "rw", "dev", "exec", "suid", "bind", "rbind", "private", "rprivate"] : [],

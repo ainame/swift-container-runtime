@@ -27,6 +27,9 @@ struct LaunchHooks {
     /// Caller descriptors the workload inherits; everything from
     /// `firstInternal` up is marked close-on-exec in the child.
     var preserved = PreservedDescriptors.none
+    /// prestart and createRuntime hooks, run in the runtime namespace with
+    /// the init's PID while the init waits after its mounts. Nil when none.
+    var runtimeHooks: ((pid_t) throws -> Void)? = nil
 }
 
 /// Synchronous namespace launch choreography; each fork branch closes its own descriptors.
@@ -228,7 +231,7 @@ enum NamespaceLauncher {
         if let thrown { throw thrown }
         if let failure = progress.failure {
             let stage = LaunchStage(rawValue: failure.stage) ?? .protocolRead
-            throw RuntimeError.launch(stage, failure.error, context: context(stage, failure.detail))
+            throw RuntimeError.launch(stage, failure.error, context: context(stage, failure.detail), detail: failure.detail)
         }
         return hooks.detached ? 0 : exitCode(status)
     }
@@ -327,6 +330,18 @@ private struct LaunchProgress: ~Copyable {
                     }
                     ready = true
                     if initPID != 0 { return }
+                case .runtimeHooks?:
+                    guard initPID != 0, let run = hooks.runtimeHooks else {
+                        thrown = RuntimeError.launch(.protocolRead, .protocolError)
+                        continue
+                    }
+                    // The init resumes only after every hook succeeded.
+                    do {
+                        try run(initPID)
+                        try LaunchControl.proceed.send(over: channels.commitWrite)
+                    } catch {
+                        thrown = error
+                    }
                 case .accepted?, nil:
                     // `accepted` belongs only to the start connection.
                     thrown = RuntimeError.launch(.protocolRead, .protocolError)

@@ -216,7 +216,7 @@ private func decode(_ bytes: [UInt8]) throws -> DefaultSpecification {
     let linux = RuntimeFeatures.report(linux: true)
     #expect(linux.ociVersionMin == "1.0.0")
     #expect(linux.ociVersionMax == RuntimeMetadata.ociVersion)
-    #expect(linux.hooks == [])
+    #expect(linux.hooks == ["prestart", "createRuntime", "createContainer", "startContainer", "poststart", "poststop"])
     #expect(linux.mountOptions == ["nodev", "noexec", "nosuid", "strictatime", "ro", "rw", "dev", "exec", "suid", "bind", "rbind", "private", "rprivate"])
     let section = try #require(linux.linux)
     #expect(section.namespaces == ["pid", "mount", "uts", "ipc", "network", "cgroup"])

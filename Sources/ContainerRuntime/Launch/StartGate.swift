@@ -76,7 +76,8 @@ final class StartGate {
     func serve(
         file: UnsafePointer<CChar>,
         arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>,
-        environment: UnsafePointer<UnsafeMutablePointer<CChar>?>
+        environment: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+        beforeExecute: () -> LaunchFailure? = { nil }
     ) -> Int32 {
         while true {
             // Steps 1-2: a live client's request, acknowledged.
@@ -121,6 +122,8 @@ final class StartGate {
             // close-on-exec lifetime reports the outcome.
             try? marker.close()
             try? listener.close()
+            // startContainer hooks; a failure reaches the start command.
+            if let failure = beforeExecute() { return LaunchRecord.reportFailure(to: connection, failure, socket: true) }
             let error = unsafe Kernel.Process.execute(file, arguments: arguments, environment: environment)
             return LaunchRecord.reportFailure(to: connection, at: .execute, error: error, socket: true)
         }
@@ -246,7 +249,7 @@ extension StartProtocol {
         case let .record(record):
             let kind = LaunchRecord.Kind(rawValue: record.kind)
             if kind == .failure {
-                throw RuntimeError.launch(LaunchStage(rawValue: record.stage) ?? .startRequest, record.error)
+                throw RuntimeError.launch(LaunchStage(rawValue: record.stage) ?? .startRequest, record.error, detail: record.detail)
             }
             guard let expected, kind == expected else { throw RuntimeError.launch(.startRequest, .protocolError) }
         case .end:

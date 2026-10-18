@@ -140,6 +140,8 @@ public struct OCIRunPlan: Sendable {
     let seccomp: SeccompProfile?
     /// AppArmor and SELinux contexts for init, recorded for every exec.
     let securityLabels: SecurityLabels
+    /// OCI hooks, validated; recorded for poststart and poststop.
+    let hooks: ContainerHooks
     /// `process.terminal`; requires a detached launch with `--console-socket`.
     public let terminal: Bool
     /// The terminal's initial size, when both dimensions are nonzero.
@@ -363,6 +365,7 @@ public struct OCIRunPlan: Sendable {
         self.networkNamespacePath = networkNamespacePath
         self.seccomp = configuration.linux.seccomp
         self.securityLabels = process.securityLabels
+        self.hooks = try (configuration.hooks ?? ContainerHooks()).validated()
         self.terminal = process.terminal
         self.consoleSize = process.consoleSize
         self.oomScoreAdjustment = process.oomScoreAdjustment

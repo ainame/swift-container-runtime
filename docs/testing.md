@@ -45,6 +45,7 @@ suite because a shared file was touched:
 | Supplied network namespace | `network-namespace oci lifecycle preserve-fds`. |
 | Session keyrings / default launch security | `keyring oci lifecycle credentials capabilities preserve-fds`, plus the opt-in keyring and seccomp image gates. |
 | OOM adjustment | `oom network-namespace seccomp oci lifecycle preserve-fds`. |
+| Hooks | `hooks lifecycle oci console`; launch-handshake changes also need `pidfd-socket preserve-fds`. |
 | Sysctls / cgroup namespaces | `sysctl cgroupns oci lifecycle`; `readonly` checks the namespace refusal. |
 | Docker-facing contract | The opt-in `docker-integration.sh RUNTIME IMAGE` gate on a host with Docker and the cgroupfs driver; run it with `runc` too. |
 | Terminals/console socket | `console pidfd-socket lifecycle oci`; the opt-in `containerd-console-integration.sh` gate checks attached engine terminals. |

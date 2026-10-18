@@ -48,7 +48,7 @@ struct Features: RuntimeLoggingCommand {
         discussion: "Prints an OCI runtime-spec features document. It lists what this build implements, "
             + "not what the running kernel provides: a cgroup v2 mount, the capabilities the kernel knows, "
             + "and any requested AppArmor profile or SELinux label are checked when a container runs. Surfaces "
-            + "that are not implemented, such as hooks and idmapped mounts, are reported as empty or disabled. Non-Linux builds "
+            + "that are not implemented, such as idmapped mounts, are reported as empty or disabled. Non-Linux builds "
             + "cannot run containers, so they omit the linux section.")
 
     @OptionGroup var globals: GlobalOptions

@@ -252,6 +252,7 @@ public struct ContainerLifecycle: Sendable {
         let record = try container.readRecord()
         _ = try LifecycleOperation.start.action(for: try container.status(of: record), id: id)
         try StartProtocol.start(container)
+        if let record { try Self.runPoststart(record) }
     }
 
     /// runc's `pause`: freezes every process of a running container (or of a
@@ -437,6 +438,7 @@ public struct ContainerLifecycle: Sendable {
             try Self.removeCgroup(record, killRemaining: action != .destroy || !record.pidNamespace)
         }
         try container.destroy()
+        if let record { Self.runPoststop(record) }
     }
 
     /// runc's `list`: every container under the root, sorted by ID.
@@ -561,6 +563,42 @@ extension ContainerLifecycle {
         return preserved
     }
 
+    /// runc's procHooks: prestart then createRuntime in the runtime namespace,
+    /// with the init's host PID, while the init waits after its mounts.
+    private static func runtimeHooks(_ plan: OCIRunPlan, record: ContainerRecord) -> ((pid_t) throws -> Void)? {
+        guard !plan.hooks.prestart.isEmpty || !plan.hooks.createRuntime.isEmpty else { return nil }
+        return { pid in
+            try plan.hooks.run([.prestart, .createRuntime], state: HookState(record: record, status: .creating, pid: pid))
+        }
+    }
+
+    /// runc's poststart: after the workload started. A failing hook kills the
+    /// container and fails the command.
+    private static func runPoststart(_ record: ContainerRecord) throws {
+        guard let hooks = record.hooks, !hooks.poststart.isEmpty else { return }
+        do {
+            try hooks.run([.poststart], state: HookState(record: record, status: .running, pid: record.initProcess?.pid))
+        } catch {
+            if let process = record.initProcess {
+                _ = try? ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace) {
+                    try $0.signal(Kernel.Signal.kill)
+                }
+            }
+            throw error
+        }
+    }
+
+    /// poststop after the container is gone. As the runtime spec requires,
+    /// a failure is only a warning: nothing is left to clean up.
+    private static func runPoststop(_ record: ContainerRecord) {
+        guard let hooks = record.hooks, !hooks.poststop.isEmpty else { return }
+        do {
+            try hooks.run([.poststop], state: HookState(record: record, status: .stopped, pid: nil))
+        } catch {
+            RuntimeDiagnostics.writeError("swift-container-runtime: warning: \(error)")
+        }
+    }
+
     /// runc's checkTerminal: a console socket goes with exactly a detached
     /// process that requests a terminal. A foreground terminal, which runc
     /// proxies through its own stdio, is not implemented.
@@ -606,7 +644,7 @@ extension ContainerLifecycle {
             // Recorded before the commit: an init that outlives this command
             // is always findable by later commands.
             hooks.ready = { try container.writeRecord(record) }
-            // Commit readiness before asking the waiting init to execute.
+            hooks.runtimeHooks = Self.runtimeHooks(plan, record: record)
             // Dialled after the ID is reserved, just before the fork, so an
             // invalid or duplicate ID never consumes a connection. A relative
             // path resolves in the bundle, as runc resolves it after chdir.
@@ -619,8 +657,12 @@ extension ContainerLifecycle {
             defer { terminal?.close() }
             _ = try plan.runOnLinux(
                 hooks: hooks, gate: gate, pidfdSocket: pidfd,
-                keyring: SessionKeyringSetup(id: id, disabled: noNewKeyring, isExec: false), terminal: terminal)
-            if start { try StartProtocol.start(container) }
+                keyring: SessionKeyringSetup(id: id, disabled: noNewKeyring, isExec: false), terminal: terminal,
+                hookSetup: try InitHookSetup(hooks: plan.hooks, id: id, plan: plan))
+            if start {
+                try StartProtocol.start(container)
+                try Self.runPoststart(record)
+            }
             if let pidFile, let process = record.initProcess {
                 try PIDFile.write(process.pid, to: pidFile)
             }
@@ -661,12 +703,17 @@ extension ContainerLifecycle {
                     try PIDFile.write(process.pid, to: pidFile)
                 }
                 try container.writeRecord(record)
+                // A failing poststart fails the launch, which kills the init.
+                try Self.runPoststart(record)
                 container.unlock()
             }
+            hooks.runtimeHooks = Self.runtimeHooks(plan, record: record)
             // As in createOnLinux: after the ID is reserved, before the fork.
             let pidfd = try pidfdSocket.map { try PidfdSocket(connectingTo: $0, relativeTo: plan.bundle.string) }
             defer { pidfd?.close() }
-            status = try plan.runOnLinux(hooks: hooks, pidfdSocket: pidfd, keyring: SessionKeyringSetup(id: id, disabled: noNewKeyring, isExec: false))
+            status = try plan.runOnLinux(
+                hooks: hooks, pidfdSocket: pidfd, keyring: SessionKeyringSetup(id: id, disabled: noNewKeyring, isExec: false),
+                hookSetup: try InitHookSetup(hooks: plan.hooks, id: id, plan: plan))
         } catch {
             // Recover setup failures only if this generation still owns its ID.
             let reported = Self.explainingOOM(error, leaf)
@@ -682,6 +729,7 @@ extension ContainerLifecycle {
             try container.lock()
             try Self.removeCgroup(record, killRemaining: true)
             try container.destroy()
+            Self.runPoststop(record)
         } catch LifecycleError.notFound(_) {
         } catch {
             RuntimeDiagnostics.writeError("swift-container-runtime: warning: remove container \(id.rawValue) (its state is kept for delete): \(error)")

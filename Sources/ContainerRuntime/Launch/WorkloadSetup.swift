@@ -17,6 +17,8 @@ struct WorkloadSetup {
     let seccomp: PreparedSeccomp?
     /// AppArmor/SELinux exec contexts staged before the credential change.
     let labels: SecurityLabelSetup
+    /// startContainer hooks, run after start and right before execve.
+    var startContainerHooks: InitHooks = unsafe .none
     let foreground: Bool
 
     /// The caller has entered the root and arranged all mounts.
@@ -91,8 +93,12 @@ struct WorkloadSetup {
             // EOF instead of the commit: the creator failed or died before
             // recording this init, so nothing could ever start or delete it.
             guard (LaunchControl.receive(from: commit) == .commit) else { return 125 }
-            return unsafe gate.serve(file: file, arguments: argv, environment: environment)
+            let startHooks = unsafe startContainerHooks
+            return unsafe gate.serve(file: file, arguments: argv, environment: environment, beforeExecute: { unsafe startHooks.run() })
         }
+        // As runc: startContainer hooks run with the workload's credentials,
+        // after its seccomp filter, right before execve.
+        if let failure = unsafe startContainerHooks.run() { return LaunchRecord.reportFailure(to: report, failure) }
         let error = unsafe Kernel.Process.execute(file, arguments: argv, environment: environment)
         return LaunchRecord.reportFailure(to: report, at: .execute, error: error)
     }

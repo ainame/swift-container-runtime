@@ -23,18 +23,22 @@ struct RootFilesystemSetup {
     let pathControls: PathControls
     /// `process.terminal`: set up once the new root is in place.
     let terminal: TerminalSetup?
+    /// Pause after the mounts for the supervisor's prestart/createRuntime hooks.
+    var runsRuntimeHooks = false
+    /// createContainer hooks, run in this mount namespace before pivot_root.
+    var createContainerHooks: InitHooks = unsafe .none
 
     /// Runs after namespace creation, before credentials and workload execution.
     /// Returns nil on success, or the child exit status after reporting a failure.
     @unsafe
-    func prepare(report: borrowing OwnedFileDescriptor) -> Int32? {
-        guard let failure = unsafe prepareSteps() else { return nil }
+    func prepare(report: borrowing OwnedFileDescriptor, commit: borrowing OwnedFileDescriptor) -> Int32? {
+        guard let failure = unsafe prepareSteps(report: report, commit: commit) else { return nil }
         return LaunchRecord.reportFailure(to: report, failure)
     }
 
     /// The setup steps in runc's order; each returns its failure.
     @unsafe
-    private func prepareSteps() -> LaunchFailure? {
+    private func prepareSteps(report: borrowing OwnedFileDescriptor, commit: borrowing OwnedFileDescriptor) -> LaunchFailure? {
         let sources: [BindMountSource?]
         do { sources = try unsafe pinBindSources() }
         catch { return error }
@@ -43,6 +47,21 @@ struct RootFilesystemSetup {
         if let failure = unsafe Self.bindRootfs(rootfs, pinningInto: &root) { return failure }
         if let failure = unsafe mountAll(beneath: root, sources: sources) { return failure }
         if unsafe populatesDev, let failure = unsafe populateDev(beneath: root) { return failure }
+        // runc's procHooks: with every mount in place, the supervisor runs
+        // prestart and createRuntime hooks while this init waits.
+        if unsafe runsRuntimeHooks {
+            guard LaunchRecord(.runtimeHooks).write(to: report), LaunchControl.receive(from: commit) == .proceed else {
+                return LaunchFailure(stage: .runtimeHooks, error: nil)
+            }
+        }
+        // createContainer hooks run here, before pivot_root, with the rootfs
+        // as the working directory, as in runc.
+        if unsafe !createContainerHooks.hooks.isEmpty {
+            if let error = root.failure(in: { root in Errno.failure { () throws(Errno) in try Kernel.Process.changeDirectory(to: root) } }) {
+                return HookOutcome.spawnFailed(error).failure(at: .createContainerHook, index: 0)
+            }
+            if let failure = unsafe createContainerHooks.run() { return failure }
+        }
         if let failure = unsafe Self.switchRoot(to: root) { return failure }
         // runc's setupConsole: after every configured mount, so /dev/pts is
         // the container's, and before the root may become read-only.

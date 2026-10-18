@@ -23,7 +23,7 @@ extension OCIRunPlan {
     /// right after pivot_root, as runc does.
     func runOnLinux(
         hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil,
-        keyring: SessionKeyringSetup? = nil, terminal: TerminalSetup? = nil
+        keyring: SessionKeyringSetup? = nil, terminal: TerminalSetup? = nil, hookSetup: InitHookSetup? = nil
     ) throws -> Int32 {
         var groups: [[String]] = [
             arguments,
@@ -40,6 +40,15 @@ extension OCIRunPlan {
             groups.append([mount.source, mount.type.kernelName, mount.data])
             groups.append(mount.type == .bind
                 ? mount.destination.indices.map { "/" + mount.destination[...$0].joined(separator: "/") } : [])
+        }
+        // Each container-namespace hook adds [path], its argv and its environment.
+        let hookGroupBase = groups.count
+        let createContainer = hookSetup?.hooks.createContainer ?? []
+        let startContainer = hookSetup?.hooks.startContainer ?? []
+        for hook in createContainer + startContainer {
+            groups.append([hook.path])
+            groups.append(hook.argv)
+            groups.append(hook.env ?? [])
         }
         var strings = try CStringVector(groups: groups)
         let starts = strings.groupStarts
@@ -104,15 +113,36 @@ extension OCIRunPlan {
         let createsCgroupNamespace = namespaces.contains(.cgroup)
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
-                let root = unsafe RootFilesystemSetup(
+                var root = unsafe RootFilesystemSetup(
                     strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
                     readonlyRoot: readonlyRoot, pathControls: pathControls, terminal: terminal)
-                let workload = unsafe WorkloadSetup(
+                // Hook buffers point into the launch strings, which outlive the launch.
+                func prepared(_ hooks: [ContainerHooks.Hook], from first: Int, defaultEnvironment: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [PreparedHook] {
+                    unsafe hooks.enumerated().map { offset, hook in
+                        let group = hookGroupBase + 3 * (first + offset)
+                        return unsafe PreparedHook(
+                            path: (pointers + starts[group])[0]!, arguments: pointers + starts[group + 1],
+                            environment: hook.env == nil ? defaultEnvironment : pointers + starts[group + 2], timeout: hook.duration)
+                    }
+                }
+                if let hookSetup {
+                    unsafe root.runsRuntimeHooks = hookSetup.runsRuntimeHooks
+                    unsafe root.createContainerHooks = unsafe InitHooks(
+                        hooks: prepared(createContainer, from: 0, defaultEnvironment: nil),
+                        state: hookSetup.creatingState, stage: .createContainerHook)
+                }
+                var workload = unsafe WorkloadSetup(
                     argv: pointers + starts[InitStringGroup.arguments], environment: pointers + starts[InitStringGroup.environment],
                     executables: pointers + starts[InitStringGroup.executable], searchesPath: searchesPath,
                     directory: (pointers + starts[InitStringGroup.cwdPrefixes])[max(0, cwdCount - 1)],
                     security: security, supplementaryGids: gidBuffer, capabilities: capabilities,
                     lastCapability: lastCapability, resourceLimits: resourceLimits, seccomp: filter, labels: labels, foreground: !hooks.detached)
+                if let hookSetup {
+                    // runc's default: startContainer hooks without env get the workload's.
+                    unsafe workload.startContainerHooks = unsafe InitHooks(
+                        hooks: prepared(startContainer, from: createContainer.count, defaultEnvironment: pointers + starts[InitStringGroup.environment]),
+                        state: hookSetup.createdState, stage: .startContainerHook)
+                }
                 // The cgroup namespace is unshared by the init itself, below.
                 return unsafe try NamespaceLauncher.run(unsharing: namespaces.filter { $0 != .cgroup }, hooks: hooks, context: context, prepareLauncher: {
                     if let failure = oom.apply() { return failure }
@@ -130,7 +160,7 @@ extension OCIRunPlan {
                         return LaunchRecord.reportFailure(to: report, at: .cgroupNamespace, error: error)
                     }
                     if let failure = keyring?.apply(labels: labels) { return LaunchRecord.reportFailure(to: report, failure) }
-                    if let status = unsafe root.prepare(report: report) { return status }
+                    if let status = unsafe root.prepare(report: report, commit: commit) { return status }
                     // Init hands off its pidfd inside the root, before credentials and readiness.
                     if let failure = pidfdSocket?.handOff(label: .standard) { return LaunchRecord.reportFailure(to: report, failure) }
                     return unsafe workload.run(report: report, commit: commit, launcher: launcher, gate: gate)

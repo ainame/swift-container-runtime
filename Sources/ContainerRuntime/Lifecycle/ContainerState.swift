@@ -156,6 +156,9 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     /// Container AppArmor/SELinux labels that exec inherits unless its
     /// process overrides them. Nil in legacy records, which had none.
     var securityLabels: SecurityLabels?
+    /// Hooks for start (poststart) and delete (poststop). Nil in legacy
+    /// records, which had none.
+    var hooks: ContainerHooks?
     /// Raw resource configuration, independent of the source bundle. Nil
     /// distinguishes legacy records from new containers with empty settings.
     var resourceConfiguration: OCIConfiguration.Resources?
@@ -177,6 +180,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         self.noNewKeyring = noNewKeyring
         oomScoreAdjustment = plan.oomScoreAdjustment
         securityLabels = plan.securityLabels
+        hooks = plan.hooks.isEmpty ? nil : plan.hooks
     }
 
     func encoded() throws -> [UInt8] {

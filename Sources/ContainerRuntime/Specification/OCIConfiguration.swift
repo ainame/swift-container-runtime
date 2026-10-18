@@ -300,11 +300,13 @@ struct OCIConfiguration: Decodable, Sendable {
     var mounts: [Mount]
     var linux: Linux
     var annotations: [String: String]
+    var hooks: ContainerHooks?
 
     init(from decoder: any Decoder) throws {
         let object = try StrictObject(
-            decoder, allowed: ["ociVersion", "root", "process", "hostname", "mounts", "linux", "annotations"]
+            decoder, allowed: ["ociVersion", "root", "process", "hostname", "mounts", "linux", "annotations", "hooks"]
         )
+        hooks = try object.optional("hooks")
         ociVersion = try object.required("ociVersion")
         root = try object.required("root")
         process = try object.required("process")

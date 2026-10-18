@@ -111,6 +111,33 @@ because Docker maps a failed create containing `no such file or directory` to ex
 127 and `permission denied` to 126 (for example `exec workload: no such file or
 directory (errno 2)`).
 
+## Hooks
+
+All six OCI hook phases run, at runc's points and with the OCI state JSON on
+stdin (`ociVersion`, `id`, `status`, `pid`, `bundle`, `annotations`):
+
+| Phase | Runs | State |
+| --- | --- | --- |
+| `prestart`, `createRuntime` | By the runtime in its own namespaces, after every configured mount and `/dev` entry, while the init waits before `pivot_root` | `creating`, the init's host PID |
+| `createContainer` | By the init in the container's mount namespace before `pivot_root`, with the rootfs as cwd; the path resolves in the runtime's view | `creating`, the init's own PID |
+| `startContainer` | By the init after `start` (or immediately for `run`), with the workload's credentials and seccomp filter, right before `execve`; the path resolves in the container | `created`, the init's own PID |
+| `poststart` | By `start` or `run --detach` once started, or by foreground `run` once the workload's exec is confirmed | `running` |
+| `poststop` | By `delete` (and foreground `run` cleanup) after the state is gone | `stopped`, no PID |
+
+A hook's argv is its `args`, or just its path. Its environment is its `env`, or
+the runtime's own when unset, except that startContainer hooks without `env` get
+the workload's environment, as in runc. Stdout and stderr are combined and
+included in the error. A `timeout` (seconds, positive) kills the hook. Hooks of
+one phase run in order; descriptors from 3 up are closed in the hook where glibc
+supports it (2.34+). A failing prestart, createRuntime or createContainer hook
+fails `create`/`run` without leaving state; a failing startContainer hook fails
+`start` before the workload runs; a failing poststart hook kills the container
+and fails the command; a failing poststop hook only prints a warning, as the
+runtime spec requires. Hooks are recorded with the container, so later `start`
+and `delete` do not reread the bundle. Unlike runc 1.4, which runs poststart as
+soon as `start` releases the init (racing startContainer, with status `created`),
+poststart here follows the confirmed start.
+
 ## Session keyrings
 
 `create` and `run` create/join `_ses.<container-id>` in the init, after namespace
@@ -258,7 +285,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `/dev` | With a tmpfs at `/dev`, creates `null`, `zero`, `full`, `random`, `urandom`, `tty` (via `mknod`) and the `fd`, `stdin`, `stdout`, `stderr` links, plus `ptmx` when devpts is mounted. Without a `/dev` tmpfs, `/dev` is left as the rootfs provides it. |
 | `annotations` | Accepted and ignored. They do not affect behavior. |
 
-Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.oomScoreAdj`. This includes hooks, a nonempty `linux.mountLabel`, seccomp notification/listener fields, resources outside the memory/pids/CPU/device subset above, custom device entries, a `blockIO` with any setting, user/time namespaces, ID mappings, other filesystem types and shared/slave propagation.
+Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.oomScoreAdj`. This includes a nonempty `linux.mountLabel`, seccomp notification/listener fields, resources outside the memory/pids/CPU/device subset above, custom device entries, a `blockIO` with any setting, user/time namespaces, ID mappings, other filesystem types and shared/slave propagation.
 
 ### Setup sequence
 

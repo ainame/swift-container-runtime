@@ -175,7 +175,8 @@ Docker's error-to-exit-code wording, the Docker acceptance gate passes with Dock
 29.1.3 defaults on an Ubuntu 26.04 arm64 cgroupfs VM, matching runc (release
 build). The full debug/release Linux matrix (32 suites) passes on the 6.12 guest with the `8c29c37` sources. x86_64 has no local
 host; CI's hosted x86_64 runner provides that profile instead (its own Docker,
-AppArmor and kernel, cgroupfs driver; see the `docker` job). Next: milestone 7
-(broader kontainer functionality), starting with the OCI hook phases, then user
-namespace mapping, then distribution.
+AppArmor and kernel, cgroupfs driver; see the `docker` job). Milestone 7
+(broader kontainer functionality) has begun: all six OCI hook phases now run at
+runc's points and pass a runc comparison. Next: user namespace mapping, then the
+remaining breadth items and distribution.
 Never discard requested security fields to advance it.

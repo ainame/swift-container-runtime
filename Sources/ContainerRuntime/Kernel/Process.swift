@@ -5,6 +5,9 @@ import Glibc
 #elseif canImport(Darwin)
 import Darwin
 #endif
+#if os(Linux)
+import LinuxAPI
+#endif
 import SystemPackage
 
 extension Kernel {
@@ -98,6 +101,37 @@ extension Kernel {
                 unsafe posix_spawnp(&pid, pointers[0]!, &actions, nil, pointers, environment)
             })
             return pid
+        }
+
+        /// posix_spawn(3) of an OCI hook at the exact `path` with `arguments`
+        /// (argv, including argv[0]) and `environment`, or this process's
+        /// environment when nil. `input` becomes stdin and `output` stdout and
+        /// stderr; descriptors from 3 up are closed where glibc supports it.
+        /// Usable between fork and exec with prepared buffers.
+        @unsafe
+        static func spawnHook(
+            _ path: UnsafePointer<CChar>, arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+            environment: UnsafePointer<UnsafeMutablePointer<CChar>?>?, input: FileDescriptor, output: FileDescriptor
+        ) throws(Errno) -> pid_t {
+            #if os(Linux)
+            var pid: pid_t = 0
+            let error = unsafe linux_spawn_hook(
+                path, UnsafeMutablePointer(mutating: arguments), environment.map { unsafe UnsafeMutablePointer(mutating: $0) },
+                input.rawValue, output.rawValue, &pid)
+            guard error == 0 else { throw Errno(rawValue: error) }
+            return pid
+            #else
+            throw .noFunction
+            #endif
+        }
+
+        /// waitpid(2) without blocking: the wait status once `pid` has exited, else nil.
+        static func reapIfExited(_ pid: pid_t) throws(Errno) -> Int32? {
+            var status: Int32 = 0
+            var result: pid_t
+            repeat { result = unsafe waitpid(pid, &status, WNOHANG) } while result < 0 && errno == EINTR
+            guard result >= 0 else { throw .current }
+            return result == 0 ? nil : status
         }
 
         private static var environment: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> { unsafe environ }

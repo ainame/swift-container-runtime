@@ -13,6 +13,7 @@ enum LaunchStage: Int32 {
     case openMountSource, seccomp, oomScoreAdjustment, sessionKeyring, keyringPermissions
     case keyCreationLabel, appArmorProfile, selinuxLabel
     case openTerminal, bindConsole, sendTerminal, terminalStdio, sysctl, cgroupNamespace
+    case runtimeHooks, createContainerHook, startContainerHook
 
     var description: String {
         switch self {
@@ -85,6 +86,9 @@ enum LaunchStage: Int32 {
         case .terminalStdio: "make the terminal stdio and the controlling terminal"
         case .sysctl: "write linux.sysctl"
         case .cgroupNamespace: "create the cgroup namespace"
+        case .runtimeHooks: "wait for prestart and createRuntime hooks"
+        case .createContainerHook: "run createContainer hook"
+        case .startContainerHook: "run startContainer hook"
         }
     }
 }
@@ -97,7 +101,9 @@ struct LaunchRecord {
     enum Kind: Int32 {
         /// `accepted`: a created init took a start request and waits for
         /// the start command to commit it (see `StartGate`).
-        case failure = 1, initProcess, ready, accepted
+        /// `runtimeHooks`: the init's mounts are in place; it waits on the
+        /// commit socket until the supervisor ran prestart and createRuntime.
+        case failure = 1, initProcess, ready, accepted, runtimeHooks
     }
 
     // Raw fields keep the wire layout fixed; use `error` for the errno.
@@ -231,8 +237,8 @@ extension LaunchRecord {
         return 125
     }
 
-    static func reportFailure(to owner: borrowing OwnedFileDescriptor, _ failure: LaunchFailure) -> Int32 {
-        reportFailure(to: owner, at: failure.stage, error: failure.error, detail: failure.detail)
+    static func reportFailure(to owner: borrowing OwnedFileDescriptor, _ failure: LaunchFailure, socket: Bool = false) -> Int32 {
+        reportFailure(to: owner, at: failure.stage, error: failure.error, detail: failure.detail, socket: socket)
     }
 }
 

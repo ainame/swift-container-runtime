@@ -21,6 +21,7 @@
 #include <sys/resource.h>
 /* struct statfs and fstatfs, which identify the cgroup v2 mount. */
 #include <sys/statfs.h>
+#include <spawn.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -347,6 +348,32 @@ static inline int linux_set_controlling_terminal(int fd) {
 }
 /* dup3 is a GNU extension of <unistd.h>; glibc and musl both provide it. */
 extern int dup3(int oldfd, int newfd, int flags);
+
+/* posix_spawn of an OCI hook: `input` becomes stdin and `output` both stdout
+ * and stderr; with glibc 2.34+ every other descriptor from 3 up is closed, as
+ * Go's exec does for runc's hooks. A nil envp inherits this process's
+ * environment. Returns 0 or the error number. */
+extern char **environ;
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
+extern int posix_spawn_file_actions_addclosefrom_np(posix_spawn_file_actions_t *actions, int from);
+#define LINUX_SPAWN_CLOSEFROM 1
+#endif
+static inline int linux_spawn_hook(const char *path, char *const argv[], char *const envp[],
+                                   int input, int output, pid_t *pid) {
+    posix_spawn_file_actions_t actions;
+    int error = posix_spawn_file_actions_init(&actions);
+    if (error) return error;
+    if (!(error = posix_spawn_file_actions_adddup2(&actions, input, 0))
+        && !(error = posix_spawn_file_actions_adddup2(&actions, output, 1))
+        && !(error = posix_spawn_file_actions_adddup2(&actions, output, 2))) {
+#ifdef LINUX_SPAWN_CLOSEFROM
+        error = posix_spawn_file_actions_addclosefrom_np(&actions, 3);
+#endif
+        if (!error) error = posix_spawn(pid, path, &actions, NULL, argv, envp ? envp : environ);
+    }
+    posix_spawn_file_actions_destroy(&actions);
+    return error;
+}
 
 /* nsfs ioctl, Linux 4.11+: returns the CLONE_NEW* type of a namespace FD. */
 static inline int linux_namespace_type(int fd) {
