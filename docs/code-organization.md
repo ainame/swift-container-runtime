@@ -11,6 +11,22 @@ for example `Duration(parsing:)` for intervals and `debugDescription` for quotin
 values in diagnostics. Match runc's observable behavior where parity matters, not
 Go's internal quirks or error wording.
 
+## Directories
+
+`Sources/ContainerRuntime` groups files by runtime phase:
+
+| Directory | Responsibility |
+|---|---|
+| `Specification/` | Bundle and `config.json` decoding, validation into `OCIRunPlan`/`OCIProcessPlan`, the starter spec, features metadata |
+| `Launch/` | The fork handshake, rootfs and workload setup, the start gate, pidfd hand-off, descriptor preservation |
+| `Lifecycle/` | Container commands, state records and their directories, live observation, PID files, `ps` |
+| `Cgroups/` | cgroup v2 placement, resource plans and updates, interface-file parsing, statistics |
+| `Events/` | Event snapshots and JSON, the inotify watch, tick scheduling, timestamps and duration text |
+| `System/` | Owned descriptors, procfs, verified processes, errno and runtime errors |
+
+A file belongs where its main type's responsibility lies; a Linux extension of a
+type sits beside that type.
+
 ## Boundaries
 
 - `ProcFS` reads kernel information. `ProcessHandle` verifies and pins a live
