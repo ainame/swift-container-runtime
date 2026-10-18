@@ -351,3 +351,12 @@ func lifecycleRejectsInvalidRoots(_ root: String) {
     #expect(LifecycleOperation.execAdmission(status: .stopped, ignorePaused: true) == .reject("cannot exec in a stopped container"))
     #expect(LifecycleOperation.execAdmission(status: .creating, ignorePaused: true) == .reject("cannot exec in a creating container"))
 }
+
+@Test func inheritedMountCleanupAuthorityRoundTrips() throws {
+    var original = record()
+    let json = #"{"originalMountID":123,"root":{"device":1,"inode":2},"namespace":{"device":3,"inode":4},"bootID":"\#(bootID)"}"#
+    original.sharedRootfsMount = try JSONDecoder().decode(SharedRootfsMount.self, from: Data(json.utf8))
+    #expect(try ContainerRecord.decode(try original.encoded(), expectedID: box) == original)
+    original.rootfs = "/"
+    #expect(throws: RuntimeError.self) { try ContainerRecord.decode(try original.encoded(), expectedID: box) }
+}

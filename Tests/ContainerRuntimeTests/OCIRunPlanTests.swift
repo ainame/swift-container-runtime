@@ -152,7 +152,6 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(linux: #"{"namespaces": [{"type": "mount"}], "mountLabel": "system_u:object_r:container_file_t:s0"}"#), "linux.mountLabel"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "resources": {"cpu": {"realtimeRuntime": 950000}}}"#), "linux.resources.cpu.realtimeRuntime"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "seccomp": {"defaultAction":"SCMP_ACT_NOTIFY"}}"#), "linux.seccomp.defaultAction"),
-    (config(linux: #"{"namespaces": [{"type": "mount", "path": "/proc/1/ns/mnt"}]}"#), "path"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "uidMappings": []}]"#), "uidMappings"),
     // Known fields with unimplemented values.
     (config(process: #"{"user": {"uid": 4294967295, "gid": 0}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),
@@ -179,10 +178,8 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(version: "\"2.0.0\""), "ociVersion"),
     (config(hostname: "\"\""), "hostname"),
     (config(linux: #"{"namespaces": [{"type": "mount"}]}"#), "uts namespace"),
-    (config(linux: #"{"namespaces": [{"type": "uts"}, {"type": "pid"}]}"#), "mount namespace"),
     (config(linux: #"{"namespaces": [{"type": "pid"}, {"type": "mount"}, {"type": "uts"}, {"type": "user"}]}"#), "uidMappings"),
     (config(linux: #"{"namespaces": [{"type": "pid"}, {"type": "mount"}, {"type": "uts"}, {"type": "user"}]}"#), "uidMappings"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "cgroup", "path": "/proc/1/ns/cgroup"}]}"#), "only network paths"),
     (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup", "source": "cgroup"}]"#), "requires a cgroup namespace"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "mount"}]}"#), "duplicate"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "rootfsPropagation": "invalid"}"#), "rootfsPropagation"),
@@ -199,7 +196,6 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(mounts: #"[{"destination": "relative", "type": "tmpfs"}]"#), "absolute"),
     (config(mounts: #"[{"destination": "/", "type": "tmpfs"}]"#), "must not be /"),
     (config(mounts: #"[{"destination": "/other", "type": "proc"}]"#), "/proc"),
-    (config(mounts: #"[{"destination": "/proc", "type": "proc"}]"#, linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}]}"#), "pid namespace"),
     (#"{"ociVersion": "1.2.0"}"#, "missing required field"),
     (#"{"ociVersion": 1}"#, "invalid value"),
     ("not json", "invalid JSON"),
@@ -542,7 +538,6 @@ func emptyNetworkNamespacePathsKeepCreateSemantics(_ path: String) throws {
 @Test(arguments: [
     (#"[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"/proc/1/ns/net"},{"type":"network"}]"#, "duplicate network"),
     (#"[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"bad\u0000path"}]"#, "must not contain NUL"),
-    (#"[{"type":"pid"},{"type":"mount"},{"type":"uts","path":"/proc/1/ns/uts"}]"#, "only network paths"),
     (#"[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"network","path":"relative/net"}]"#, "must be absolute"),
 ])
 func rejectsConflictingOrUnsupportedNamespacePaths(_ entries: String, _ reason: String) {
@@ -608,4 +603,20 @@ func rejectsInvalidDeviceNodes(_ device: String) {
 func rejectsInvalidUserNamespaceMappings(_ mappings: String) {
     let linux = #"{"namespaces":[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"user"}],"uidMappings":\#(mappings),"gidMappings":[{"containerID":0,"hostID":1000,"size":1000}]}"#
     #expect(throws: RuntimeError.self) { try plan(config(linux: linux)) }
+}
+
+@Test(arguments: ["pid", "mount", "uts", "ipc", "network", "cgroup", "user"])
+func plansSuppliedNamespacePaths(_ namespace: String) throws {
+    let entries = namespace == "mount" ? "" : #"{"type":"mount"},"#
+    let linux = #"{"namespaces":[\#(entries){"type":"\#(namespace)","path":"/namespace"}]}"#
+    let value = try plan(config(hostname: "null", mounts: "[]", linux: linux))
+    #expect(value.namespacePaths[OCIRunPlan.Namespace(rawValue: namespace)!] == "/namespace")
+    #expect(!value.namespaces.contains { $0.rawValue == namespace })
+}
+
+@Test func omittedNamespaceListInheritsCallerNamespaces() throws {
+    let value = try plan(config(hostname: "null", linux: "{}"))
+    #expect(value.namespaces.isEmpty)
+    #expect(value.namespacePaths.isEmpty)
+    #expect(!value.usesPivotRoot)
 }

@@ -433,3 +433,18 @@ namespace handles. The rootfs and its host ancestors must be searchable by
 the mapped root. Rootless operation and mapping-helper delegation remain
 unimplemented. Standard devices are bind-mounted because a user namespace
 cannot create host device nodes with `mknod`.
+
+### Supplied namespaces
+
+Every supported namespace type accepts an absolute `path`. The supervisor pins
+and checks the namespace type before fork; the launcher enters user namespaces
+first and PID namespaces last. An already-current namespace is left in place.
+Host UTS, IPC and network properties cannot be changed through container hostname
+or sysctl settings. A joined mount namespace remains owned by its external
+creator; mount setup occurs inside it.
+
+When the mount namespace is inherited, setup uses `chroot` and requires a private
+parent mount so that rootfs setup cannot propagate into peer namespaces. The
+runtime records the original mount ID, root inode, mount-namespace identity and
+boot ID. Foreground completion, failed setup and `delete` detach its root bind;
+a replaced root or a delete from another mount namespace is refused.

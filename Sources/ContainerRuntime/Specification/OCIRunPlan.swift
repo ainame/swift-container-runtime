@@ -124,6 +124,10 @@ public struct OCIRunPlan: Sendable {
     /// A supplied network namespace to join; nil creates one only when listed
     /// in namespaces. Supplied paths must be absolute host paths.
     public let networkNamespacePath: String?
+    /// Namespace paths pinned before fork and entered only by the launcher.
+    let namespacePaths: [Namespace: String]
+    /// False means rootfs setup must use chroot and explicitly clean its mounts.
+    let usesPivotRoot: Bool
     /// Non-nil only when init creates a mapped, rootful user namespace.
     let userNamespace: UserNamespace?
     /// The UTS hostname; nil keeps the inherited one.
@@ -314,35 +318,29 @@ public struct OCIRunPlan: Sendable {
 
         var namespaces = Set<Namespace>()
         var seenNamespaces = Set<Namespace>()
-        var networkNamespacePath: String?
+        var namespacePaths: [Namespace: String] = [:]
         for entry in configuration.linux.namespaces {
             guard let namespace = Namespace(rawValue: entry.type) else {
-                throw RuntimeError("config.json: namespace type \(entry.type) is not implemented; supported: pid, mount, uts, ipc, network, cgroup")
+                throw RuntimeError("config.json: namespace type \(entry.type) is not implemented; supported: pid, mount, uts, ipc, network, cgroup, user")
             }
             guard seenNamespaces.insert(namespace).inserted else {
                 throw RuntimeError("config.json: duplicate \(entry.type) namespace")
             }
             if let path = entry.path, !path.isEmpty {
-                guard namespace == .network else {
-                    throw RuntimeError("config.json: \(entry.type) namespace path is not implemented; only network paths may be joined")
-                }
-                guard !path.utf8.contains(0) else { throw RuntimeError("config.json: network namespace path must not contain NUL") }
-                let file = FilePath(path)
-                guard file.isAbsolute else { throw RuntimeError("config.json: network namespace path must be absolute") }
-                networkNamespacePath = path
+                guard !path.utf8.contains(0) else { throw RuntimeError("config.json: namespace path must not contain NUL") }
+                guard FilePath(path).isAbsolute else { throw RuntimeError("config.json: namespace path must be absolute") }
+                namespacePaths[namespace] = path
             } else {
                 namespaces.insert(namespace)
             }
         }
-        guard namespaces.contains(.mount) else {
-            throw RuntimeError("config.json: a mount namespace is required for pivot_root")
-        }
+
         guard let rootPropagation = BindPropagation(rawValue: configuration.linux.rootfsPropagation ?? "rprivate") else {
             throw RuntimeError("config.json: invalid linux.rootfsPropagation")
         }
 
         if let hostname = configuration.hostname {
-            guard namespaces.contains(.uts) else {
+            guard namespaces.contains(.uts) || namespacePaths[.uts] != nil else {
                 throw RuntimeError("config.json: hostname requires a uts namespace")
             }
             do { try NamespaceCommand.validateHostname(hostname) } catch {
@@ -350,11 +348,12 @@ public struct OCIRunPlan: Sendable {
             }
         }
 
+        let networkNamespacePath = namespacePaths[.network]
         let mounts = try configuration.mounts.enumerated().map { index, mount in
-            try Self.mount(mount, index: index, namespaces: namespaces, bundle: bundle)
+            try Self.mount(mount, index: index, namespaces: namespaces.union(namespacePaths.keys), bundle: bundle)
         }
         let sysctls = try Sysctl.validated(
-            configuration.linux.sysctl ?? [:], creating: namespaces, joinsNetwork: networkNamespacePath != nil)
+            configuration.linux.sysctl ?? [:], creating: namespaces.union(namespacePaths.keys), joinsNetwork: networkNamespacePath != nil)
         // Written through the container's own procfs, which must be mounted.
         if !sysctls.isEmpty, !mounts.contains(where: { $0.type == .proc && $0.destination == ["proc"] }) {
             throw RuntimeError("config.json: linux.sysctl needs a proc mount at /proc")
@@ -382,6 +381,8 @@ public struct OCIRunPlan: Sendable {
         self.annotations = configuration.annotations
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.networkNamespacePath = networkNamespacePath
+        self.namespacePaths = namespacePaths
+        usesPivotRoot = namespaces.contains(.mount) || namespacePaths[.mount] != nil
         self.seccomp = configuration.linux.seccomp
         self.securityLabels = process.securityLabels
         self.hooks = try (configuration.hooks ?? ContainerHooks()).validated()
@@ -469,9 +470,7 @@ public struct OCIRunPlan: Sendable {
         switch type {
         case .proc:
             guard destination == ["proc"] else { throw RuntimeError("config.json: \(field): proc is only supported at /proc") }
-            guard namespaces.contains(.pid) else {
-                throw RuntimeError("config.json: \(field): proc requires a pid namespace in this runtime")
-            }
+
         case .devpts:
             guard destination == ["dev", "pts"] else { throw RuntimeError("config.json: \(field): devpts is only supported at /dev/pts") }
         case .bind:

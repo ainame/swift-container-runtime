@@ -8,7 +8,7 @@ import Darwin
 import SystemPackage
 
 /// The device and inode that identify a file while it exists.
-struct FileIdentity: Equatable, Sendable {
+struct FileIdentity: Codable, Equatable, Sendable {
     let device: UInt64
     let inode: UInt64
 }

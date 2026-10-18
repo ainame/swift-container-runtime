@@ -325,7 +325,7 @@ struct OCIConfiguration: Decodable, Sendable {
             devices = try object.optional("devices")
             sysctl = try object.optional("sysctl")
             mountLabel = try object.optional("mountLabel")
-            namespaces = try object.required("namespaces")
+            namespaces = try object.optional("namespaces") ?? []
             rootfsPropagation = try object.optional("rootfsPropagation")
             maskedPaths = try object.optional("maskedPaths")
             readonlyPaths = try object.optional("readonlyPaths")

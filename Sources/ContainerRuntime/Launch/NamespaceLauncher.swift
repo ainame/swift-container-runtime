@@ -105,6 +105,10 @@ enum NamespaceLauncher {
 
         // Apply process bootstrap settings and enter the namespaces init will start in.
         if let failure = prepare() { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, failure)) }
+        // Joining a user namespace in prepare may also change credentials.
+        if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.setParentDeathSignal(Kernel.Signal.kill) }) {
+            Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime, error: error))
+        }
         let createsUserNamespace = namespaceFlags & OCIRunPlan.Namespace.user.cloneFlag != 0
         if createsUserNamespace {
             if let error = Errno.failure({ () throws(Errno) in try Kernel.Namespace.unshare(OCIRunPlan.Namespace.user.cloneFlag) }) {
