@@ -22,8 +22,8 @@ opts into inheriting the caller's session if that is required.
 macOS 27+ supports building and unit tests; running containers requires Linux.
 
 ```sh
-swift build
-sudo .build/debug/swift-container-runtime run --bundle /path/to/bundle mybox
+swift build --product srunc
+sudo .build/debug/srunc run --bundle /path/to/bundle mybox
 ```
 
 A bundle contains `config.json` and a root filesystem. Start with the
@@ -36,8 +36,8 @@ Use `--detach` to return after startup or `--keep` to retain stopped state.
 For command options:
 
 ```sh
-.build/debug/swift-container-runtime --help
-.build/debug/swift-container-runtime run --help
+.build/debug/srunc --help
+.build/debug/srunc run --help
 ```
 
 ## What works
@@ -52,7 +52,7 @@ The `namespace-run` command offers a smaller experiment without an OCI bundle
 or separate root filesystem:
 
 ```sh
-sudo .build/debug/swift-container-runtime namespace-run --hostname swiftbox -- /bin/sh -c 'hostname; echo $$'
+sudo .build/debug/srunc namespace-run --hostname swiftbox -- /bin/sh -c 'hostname; echo $$'
 ```
 
 It prints `swiftbox` and `1`: the command runs in new UTS, PID, and mount namespaces.

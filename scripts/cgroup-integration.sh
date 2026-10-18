@@ -28,7 +28,7 @@
 # RUNC_COMPARE=auto (default) runs the shared checks under runc when it is
 # installed; 1 requires runc; 0 skips the comparison.
 set -eu
-runtime=${1:-.build/debug/swift-container-runtime}
+runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 busybox=${BUSYBOX:-/bin/busybox}

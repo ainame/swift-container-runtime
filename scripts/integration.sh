@@ -1,7 +1,7 @@
 #!/bin/sh
 # Run inside a disposable Linux VM with namespace/mount privileges.
 set -eu
-runtime=${1:-.build/debug/swift-container-runtime}
+runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM

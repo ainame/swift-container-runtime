@@ -70,7 +70,7 @@ private func decode(_ bytes: [UInt8]) throws -> DefaultSpecification {
 
 @Test func versionTextFollowsRuncLayoutWithoutInventingACommit() {
     let lines = RuntimeMetadata.versionText.split(separator: "\n").map(String.init)
-    #expect(lines.first == "swift-container-runtime version \(RuntimeMetadata.version)")
+    #expect(lines.first == "srunc version \(RuntimeMetadata.version)")
     #expect(lines.last == "spec: 1.3.0")
     #expect(lines.contains { $0.hasPrefix("commit:") } == (RuntimeMetadata.commit != nil))
     #expect(!RuntimeMetadata.version.isEmpty)

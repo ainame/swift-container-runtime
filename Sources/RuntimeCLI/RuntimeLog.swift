@@ -41,18 +41,18 @@ struct RuntimeLog: ~Copyable {
             }
             _ = try (file ?? .standardError).writeAll((line + "\n").utf8)
         } catch {
-            RuntimeDiagnostics.writeError("swift-container-runtime: cannot write runtime log: \(error)")
+            RuntimeDiagnostics.writeError("srunc: cannot write runtime log: \(error)")
         }
     }
 
     func failure(_ message: String) {
         if file == nil, format == .text {
-            RuntimeDiagnostics.writeError("swift-container-runtime: \(message)")
+            RuntimeDiagnostics.writeError("srunc: \(message)")
             return
         }
         write(level: "error", message: message)
         if file != nil {
-            RuntimeDiagnostics.writeError("swift-container-runtime: \(message)")
+            RuntimeDiagnostics.writeError("srunc: \(message)")
         }
     }
 
@@ -116,7 +116,7 @@ extension RuntimeCommand {
                 logParseFailure(error, arguments: arguments)
             }
             if let failure = error as? CommandFailure {
-                RuntimeDiagnostics.writeError("swift-container-runtime: \(failure.message)")
+                RuntimeDiagnostics.writeError("srunc: \(failure.message)")
                 exit(withError: ExitCode(failure.status))
             }
             exit(withError: error)
@@ -145,7 +145,7 @@ extension RuntimeCommand {
             let log = try RuntimeLog(options: options)
             log.write(level: "error", message: message(for: error))
         } catch {
-            RuntimeDiagnostics.writeError("swift-container-runtime: \(error)")
+            RuntimeDiagnostics.writeError("srunc: \(error)")
         }
     }
 }

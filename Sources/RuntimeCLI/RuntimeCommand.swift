@@ -5,7 +5,7 @@ import SystemPackage
 @main
 struct RuntimeCommand: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
-        commandName: "swift-container-runtime",
+        commandName: "srunc",
         abstract: "An educational Linux container runtime.",
         discussion: "Educational subset of an OCI runtime; not a security sandbox.",
         version: VersionOutput.text,
@@ -293,7 +293,7 @@ struct List: RuntimeLoggingCommand {
         do {
             let (reports, warnings) = try globals.lifecycle().list()
             for warning in warnings {
-                RuntimeDiagnostics.writeError("swift-container-runtime: \(warning)")
+                RuntimeDiagnostics.writeError("srunc: \(warning)")
             }
             if quiet {
                 output = reports.map { $0.id + "\n" }.joined()

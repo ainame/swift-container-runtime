@@ -1,7 +1,7 @@
 #!/bin/sh
 # Consumer-facing diagnostics; no privileged kernel operations are needed.
 set -eu
-runtime=${1:-.build/debug/swift-container-runtime}
+runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
@@ -58,7 +58,7 @@ expect_failure 125 run --bundle "$scratch/missing" box
 "$scratch/check" "$log" "config.json" 6
 [ -s "$scratch/features.json" ] || fail "missing features output"
 "$runtime" --log "$log" --log-format json --version > "$scratch/version"
-grep -q '^swift-container-runtime version ' "$scratch/version" || fail "version format"
+grep -q '^srunc version ' "$scratch/version" || fail "version format"
 
 # Open failure must prevent spec from writing its output.
 mkdir "$scratch/bundle"
@@ -70,7 +70,7 @@ grep -q 'cannot open log file' "$scratch/err" || fail "missing log open diagnosi
 
 # Plain diagnostics keep the existing stderr contract; text logging escapes newlines.
 if "$runtime" --root "$root" start box > "$scratch/out" 2> "$scratch/err"; then fail "missing state accepted"; fi
-grep -q '^swift-container-runtime: container box does not exist' "$scratch/err" || fail "plain stderr changed"
+grep -q '^srunc: container box does not exist' "$scratch/err" || fail "plain stderr changed"
 if "$runtime" --root "$root" --log "$scratch/log.txt" start box 2>/dev/null; then fail "missing state accepted"; fi
 grep -q 'level=error msg="container box does not exist"' "$scratch/log.txt" || fail "text log missing"
 # A newly opened log must never stand in for a missing preserved caller FD.

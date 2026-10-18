@@ -87,7 +87,7 @@ scripts/test-linux.sh --list
 scripts/test-linux.sh --configuration debug lifecycle update
 ```
 
-With no suite arguments the script runs every integration in debug. Use `scripts/test-linux.sh --configuration all` for the complete review gate; CI also runs both configurations. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/swift-container-runtime update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
+With no suite arguments the script runs every integration in debug. Use `scripts/test-linux.sh --configuration all` for the complete review gate; CI also runs both configurations. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/srunc update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
 
 Inside the VM it also installs `busybox-static` and `runc` and runs `scripts/oci-integration.sh`. That script builds a static BusyBox rootfs and runs the same bundles through this runtime and runc. Both must satisfy the shared checks: PID 1, rootfs contents and isolation from host files, hostname, cwd, environment replacement, device nodes, separate stdout/stderr, exit 42, and missing executables. Runtime-specific checks cover exit 125 diagnostics, rejected configurations, symlink escapes from mount destinations (absolute and relative), and setup failures after partial mounting. Those failures must not run the workload or change host mounts and hostname. Set `RUNC_COMPARE=0` to skip runc, or `RUNC_COMPARE=1` to require it.
 
@@ -178,7 +178,7 @@ requires an installed, running daemon and the pinned profile in
 [engine baseline](engine-baseline.md):
 
 ```sh
-sh scripts/containerd-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock
+sh scripts/containerd-integration.sh .build/linux-6.4.1/debug/srunc /tmp/sct-engine/containerd.sock
 ```
 
 It selects the supplied binary explicitly, creates its own containerd namespace,
@@ -199,7 +199,7 @@ explicit namespace, with `native` snapshotter available. It never downloads an
 image or changes the daemon default:
 
 ```sh
-sh scripts/containerd-image-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+sh scripts/containerd-image-integration.sh .build/linux-6.4.1/debug/srunc /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
 ```
 
 It checks image-backed readonly config and writable volume mounts, init/exec,
@@ -218,7 +218,7 @@ The opt-in image/network gate wraps the same image test with an externally
 prepared private namespace and checks actual TCP from engine exec:
 
 ```sh
-sh scripts/containerd-network-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+sh scripts/containerd-network-integration.sh .build/linux-6.4.1/debug/srunc /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
 ```
 
 The wrapper owns and removes the listener; the image gate owns task/snapshot
@@ -242,7 +242,7 @@ explicit getcwd/EACCES profile, verifies init filter mode and exec enforcement,
 and retains the existing image/lifecycle/cleanup checks:
 
 ```sh
-sh scripts/containerd-seccomp-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+sh scripts/containerd-seccomp-integration.sh .build/linux-6.4.1/debug/srunc /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
 ```
 
 `containerd-seccomp-capture.sh SOCKET NAMESPACE IMAGE@sha256:DIGEST NEW_OUTPUT_DIR`
@@ -279,7 +279,7 @@ opt-out skips unavailable setup. Keyring-unavailable hosts fail rather than skip
 The opt-in image identity gate binds the same diagnostic probe into Alpine:
 
 ```sh
-sh scripts/containerd-keyring-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+sh scripts/containerd-keyring-integration.sh .build/linux-6.4.1/debug/srunc /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
 ```
 
 Init writes its session ID through the volume, then two engine execs add/read a

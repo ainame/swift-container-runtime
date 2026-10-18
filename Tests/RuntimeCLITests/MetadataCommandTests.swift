@@ -40,7 +40,7 @@ import Testing
 
 @Test func versionOutputUsesRuntimeMetadata() {
     #expect(VersionOutput.text == RuntimeMetadata.versionText)
-    #expect(VersionOutput.text.hasPrefix("swift-container-runtime version "))
+    #expect(VersionOutput.text.hasPrefix("srunc version "))
 }
 
 @Test func metadataCommandsAreRegisteredAtTheRoot() throws {

@@ -5,7 +5,7 @@
 # Run as root inside a disposable Linux VM with BusyBox (BUSYBOX).
 # RUNC_COMPARE=1 also runs runc.
 set -eu
-runtime=${1:-.build/debug/swift-container-runtime}
+runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 busybox=${BUSYBOX:-/bin/busybox}
 compare=${RUNC_COMPARE:-0}

@@ -31,7 +31,7 @@ if [ "${CONSOLE_SUITE_SUBREAPED:-}" != 1 ]; then
     rm -rf "$outer"
     exit "$suite_status"
 fi
-runtime=${1:-.build/debug/swift-container-runtime}
+runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 busybox=${BUSYBOX:-/bin/busybox}
 compare=${RUNC_COMPARE:-0}

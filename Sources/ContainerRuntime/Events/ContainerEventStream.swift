@@ -138,7 +138,7 @@ private struct EventWatch: ~Copyable {
                 do {
                     stats = try source.stats()
                 } catch {
-                    RuntimeDiagnostics.writeError("swift-container-runtime: error: \(error)")
+                    RuntimeDiagnostics.writeError("srunc: error: \(error)")
                     stats = nil
                 }
                 if let stats { try emit(.stats(stats)) }

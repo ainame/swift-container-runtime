@@ -304,7 +304,7 @@ public struct ContainerLifecycle: Sendable {
         } catch {
             let original = error
             do { try CgroupLeaf.update(identity, resources: CgroupPlan.converted(previous)) }
-            catch { RuntimeDiagnostics.writeError("swift-container-runtime: warning: resource rollback failed: \(error)") }
+            catch { RuntimeDiagnostics.writeError("srunc: warning: resource rollback failed: \(error)") }
             throw original
         }
         // Persist only after the kernel accepts the new settings. The
@@ -510,7 +510,7 @@ extension ContainerLifecycle {
     private static func removeCgroup(_ record: ContainerRecord, killRemaining: Bool) throws {
         guard let cgroup = record.cgroup else { return }
         if let warning = try CgroupLeaf.remove(cgroup, killRemaining: killRemaining) {
-            RuntimeDiagnostics.writeError("swift-container-runtime: warning: container \(record.id): \(warning)")
+            RuntimeDiagnostics.writeError("srunc: warning: container \(record.id): \(warning)")
         }
     }
 
@@ -548,7 +548,7 @@ extension ContainerLifecycle {
             try removeCgroup(record, killRemaining: true)
         } catch {
             RuntimeDiagnostics.writeError(
-                "swift-container-runtime: warning: container \(record.id) kept for delete: \(error)"
+                "srunc: warning: container \(record.id) kept for delete: \(error)"
             )
             return
         }
@@ -595,7 +595,7 @@ extension ContainerLifecycle {
         do {
             try hooks.run([.poststop], state: HookState(record: record, status: .stopped, pid: nil))
         } catch {
-            RuntimeDiagnostics.writeError("swift-container-runtime: warning: \(error)")
+            RuntimeDiagnostics.writeError("srunc: warning: \(error)")
         }
     }
 
@@ -732,7 +732,7 @@ extension ContainerLifecycle {
             Self.runPoststop(record)
         } catch LifecycleError.notFound(_) {
         } catch {
-            RuntimeDiagnostics.writeError("swift-container-runtime: warning: remove container \(id.rawValue) (its state is kept for delete): \(error)")
+            RuntimeDiagnostics.writeError("srunc: warning: remove container \(id.rawValue) (its state is kept for delete): \(error)")
         }
         return status
     }

@@ -51,6 +51,6 @@ container run --rm --cpus 4 --memory 4G \
         for configuration in $configurations; do
             swift test -c "$configuration" --disable-automatic-resolution --scratch-path .build/linux-6.4.1
             sh scripts/run-integration.sh \
-                ".build/linux-6.4.1/$configuration/swift-container-runtime" "$@"
+                ".build/linux-6.4.1/$configuration/srunc" "$@"
         done
     ' test-linux "$configuration" "$@"

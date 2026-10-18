@@ -18,7 +18,7 @@ Use this route first:
 ```text
 Docker CLI → dockerd → containerd → containerd-shim-runc-v2
                                       ↓ runc CLI contract
-                               swift-container-runtime
+                               srunc
                                       ↓
                                 Linux workload
 ```
@@ -138,7 +138,7 @@ procedure. Keep runc as the default runtime:
 {
   "runtimes": {
     "swift": {
-      "path": "/usr/local/bin/swift-container-runtime"
+      "path": "/usr/local/bin/srunc"
     }
   }
 }

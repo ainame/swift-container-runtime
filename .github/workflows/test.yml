@@ -32,11 +32,11 @@ jobs:
       - name: Unit tests with strict memory diagnostics
         run: swift test --disable-automatic-resolution
       - name: Debug integration suites
-        run: sh scripts/run-integration.sh .build/debug/swift-container-runtime
+        run: sh scripts/run-integration.sh .build/debug/srunc
       - name: Optimized unit and integration tests
         run: |
           swift test -c release --disable-automatic-resolution
-          sh scripts/run-integration.sh .build/release/swift-container-runtime
+          sh scripts/run-integration.sh .build/release/srunc
 
   docker:
     # x86_64 engine profile on the hosted runner: its Docker, AppArmor and
@@ -52,8 +52,8 @@ jobs:
           docker run --rm -v "$PWD:/workspace" -w /workspace swift:6.4.1-noble /bin/sh -euc '
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libseccomp-dev > /dev/null
-            swift build -c release --static-swift-stdlib --product swift-container-runtime --scratch-path .build/noble'
-          sudo install -m 755 .build/noble/release/swift-container-runtime /usr/local/bin/swift-container-runtime
+            swift build -c release --static-swift-stdlib --product srunc --scratch-path .build/noble'
+          sudo install -m 755 .build/noble/release/srunc /usr/local/bin/srunc
       - name: Register the runtime with Docker
         run: |
           sudo apt-get update -qq
@@ -61,7 +61,7 @@ jobs:
           config=/etc/docker/daemon.json
           [ -f "$config" ] || echo '{}' | sudo tee "$config" > /dev/null
           sudo jq '. + {"exec-opts": ["native.cgroupdriver=cgroupfs"],
-                        "runtimes": ((.runtimes // {}) + {"swift": {"path": "/usr/local/bin/swift-container-runtime"}})}' \
+                        "runtimes": ((.runtimes // {}) + {"swift": {"path": "/usr/local/bin/srunc"}})}' \
             "$config" | sudo tee "$config.new" > /dev/null
           sudo mv "$config.new" "$config"
           sudo systemctl restart docker
@@ -73,4 +73,4 @@ jobs:
           sudo sh scripts/docker-integration.sh runc "$IMAGE"
           sudo sh scripts/docker-integration.sh swift "$IMAGE"
       - name: AppArmor confinement gate
-        run: sudo sh scripts/apparmor-integration.sh /usr/local/bin/swift-container-runtime
+        run: sudo sh scripts/apparmor-integration.sh /usr/local/bin/srunc

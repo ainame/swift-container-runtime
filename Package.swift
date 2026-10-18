@@ -11,7 +11,7 @@ let package = Package(
     platforms: [.macOS(.v27)],
     products: [
         .library(name: "ContainerRuntime", targets: ["ContainerRuntime"]),
-        .executable(name: "swift-container-runtime", targets: ["RuntimeCLI"]),
+        .executable(name: "srunc", targets: ["RuntimeCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),

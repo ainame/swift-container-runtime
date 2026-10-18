@@ -6,7 +6,7 @@ import Foundation
 
 /// Identity reported by `--version` and the bounds reported by `features`.
 public enum RuntimeMetadata {
-    public static let name = "swift-container-runtime"
+    public static let name = "srunc"
     /// The project has no release tags yet, so builds identify as a development version.
     public static let version = "0.0.0-dev"
     /// SwiftPM offers no reproducible way to inject `git describe` without build plugins or

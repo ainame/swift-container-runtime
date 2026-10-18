@@ -4,7 +4,7 @@
 # RUNC_COMPARE=auto (default) compares generated specs with runc spec when runc
 # is installed; 1 requires runc; 0 skips the comparison.
 set -eu
-runtime=${1:-.build/debug/swift-container-runtime}
+runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 compare=${RUNC_COMPARE:-auto}
 scratch=$(mktemp -d)
@@ -51,7 +51,7 @@ for command in spec features; do
     printf '%s\n' "$help" | grep -q "^ *$command " || fail "--help does not list $command"
 done
 version=$("$runtime" --version)
-printf '%s\n' "$version" | head -n 1 | grep -q '^swift-container-runtime version ..*' \
+printf '%s\n' "$version" | head -n 1 | grep -q '^srunc version ..*' \
     || fail "unexpected --version output: $version"
 printf '%s\n' "$version" | tail -n 1 | grep -q '^spec: 1\.[0-9][0-9]*\.[0-9][0-9]*$' \
     || fail "--version lacks the spec line: $version"

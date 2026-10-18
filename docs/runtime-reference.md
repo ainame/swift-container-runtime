@@ -7,7 +7,7 @@ For an introduction, see the [README](../README.md). Run commands from the repos
 
 ```sh
 swift build
-sudo .build/debug/swift-container-runtime run --bundle /path/to/bundle mybox
+sudo .build/debug/srunc run --bundle /path/to/bundle mybox
 ```
 
 Requires root and Linux 5.11 or later: `close_range` with `CLOSE_RANGE_CLOEXEC` (5.11; plain `close_range` is 5.9). `namespace-run` still needs only 5.3. `--bundle` (`-b`) defaults to the current directory, like runc. The runtime reads `config.json`, sets up the container, waits for the workload, and exits with its status. While it runs, the container is visible to `state`, `kill`, and `delete --force`; its state is removed when the workload exits or setup fails, as with runc. `run --keep` retains stopped state and its cgroup until `delete`. `create` and `run` accept `--pid-file PATH`, which atomically replaces PATH with the decimal host init PID (without a newline); relative paths use the caller’s working directory. The PID file remains after exit and deletion. Publication failures fail the launch and clean it up. Setup failures exit 125 and print the failing step. Usage errors exit 64.
@@ -15,7 +15,7 @@ Requires root and Linux 5.11 or later: `close_range` with `CLOSE_RANGE_CLOEXEC` 
 ## Container lifecycle
 
 ```sh
-rt="sudo .build/debug/swift-container-runtime"
+rt="sudo .build/debug/srunc"
 $rt create --bundle /path/to/bundle mybox < /dev/null > mybox.log 2>&1
 $rt state mybox          # status "created"; the workload has not run
 $rt start mybox          # returns once the workload's execve succeeded
@@ -317,7 +317,7 @@ Requires Swift 6.4 (Linux validation uses Swift 6.4.1) and Linux with permission
 
 ```sh
 swift build
-sudo .build/debug/swift-container-runtime namespace-run --hostname swiftbox -- /bin/sh -c 'hostname; echo $$'
+sudo .build/debug/srunc namespace-run --hostname swiftbox -- /bin/sh -c 'hostname; echo $$'
 ```
 
 The executable after `--` must be an absolute path. Expected output:

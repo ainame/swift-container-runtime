@@ -279,7 +279,7 @@ public struct OCIRunPlan: Sendable {
             throw leaf.oomKilledSincePrepare ? RuntimeError("container init was OOM-killed (memory limit too low?): \(error)") : error
         }
         if let warning = try CgroupLeaf.remove(leaf.identity, killRemaining: true) {
-            RuntimeDiagnostics.writeError("swift-container-runtime: warning: \(warning)")
+            RuntimeDiagnostics.writeError("srunc: warning: \(warning)")
         }
         return ExitStatus(shellStatus: status)
     }
