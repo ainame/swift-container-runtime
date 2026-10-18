@@ -1,3 +1,4 @@
+import Foundation
 import SystemPackage
 import Testing
 @testable import ContainerRuntime
@@ -161,7 +162,7 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
     (#"{"cpu": {"realtimePeriod": 1000000}}"#, "unsupported field(s): linux.resources.cpu.realtimePeriod"),
     (#"{"cpu": {"weight": 100}}"#, "unsupported field(s): linux.resources.cpu.weight"),
     (#"{"devices": [{"allow": false, "access": "invalid"}]}"#, "devices[0].access"),
-    (#"{"blockIO": {}}"#, "linux.resources.blockIO"),
+    (#"{"blockIO": {"weight": 100}}"#, "linux.resources.blockIO.weight"),
     (#"{"hugepageLimits": []}"#, "linux.resources.hugepageLimits"),
     (#"{"unified": {}}"#, "linux.resources.unified"),
     (#"{"memory": {"swappiness": 0}}"#, "linux.resources.memory.swappiness"),
@@ -402,4 +403,9 @@ func burstRefusalWithoutRetryFailsAtOnce(_ json: String, _ error: Errno, _ write
 ])
 func validatesCgroupIdentities(_ path: String, _ inode: UInt64, _ bootID: String, _ valid: Bool) {
     #expect(CgroupIdentity(path: path, inode: inode, bootID: bootID, created: true).isValid == valid)
+}
+
+@Test func emptyBlockIOFromEnginesRequestsNothing() throws {
+    let resources = try JSONDecoder().decode(OCIConfiguration.Resources.self, from: Data(#"{"blockIO": {}}"#.utf8))
+    #expect(resources == OCIConfiguration.Resources())
 }

@@ -30,7 +30,7 @@ private func configuration(_ text: String) throws -> OCIConfiguration.Resources 
     #expect(try CgroupPlan.converted(unlimited).swapMax == .max)
 }
 
-@Test(arguments: [#"{"cpu":{"quota":"bad"}}"#, #"{"memory":{"checkBeforeUpdate":"true"}}"#, #"{"blockIO":{}}"#, #"{"devices":[]}"#, "[]"])
+@Test(arguments: [#"{"cpu":{"quota":"bad"}}"#, #"{"memory":{"checkBeforeUpdate":"true"}}"#, #"{"blockIO":{"weight":10}}"#, #"{"devices":[]}"#, "[]"])
 func rejectsMalformedUpdateResources(_ json: String) {
     #expect(throws: RuntimeError.self) { try ResourceUpdate(json: Array(json.utf8)) }
 }

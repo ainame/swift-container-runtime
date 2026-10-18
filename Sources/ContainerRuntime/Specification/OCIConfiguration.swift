@@ -242,11 +242,22 @@ struct OCIConfiguration: Decodable, Sendable {
         var devices: [DeviceRule]?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["memory", "pids", "cpu", "devices"])
+            let object = try StrictObject(decoder, allowed: ["memory", "pids", "cpu", "devices", "blockIO"])
             memory = try object.optional("memory")
             pids = try object.optional("pids")
             cpu = try object.optional("cpu")
             devices = try object.optional("devices")
+            // Docker always writes an empty blockIO object. It requests
+            // nothing; any weight or throttle inside is still rejected.
+            _ = try object.optional("blockIO") as EmptyObject?
+        }
+    }
+
+    /// An object that must have no keys, accepted where an engine writes an
+    /// empty section of an unimplemented feature.
+    private struct EmptyObject: Decodable {
+        init(from decoder: any Decoder) throws {
+            _ = try StrictObject(decoder, allowed: [])
         }
     }
 
