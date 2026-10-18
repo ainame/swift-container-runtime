@@ -126,4 +126,23 @@ for failure in missing mismatch magic dangling; do
     [ ! -d "$cg$path" ] || fail "failed bind leaked cgroup"
     cmp "$results/host-mounts" /proc/self/mountinfo || fail "failed bind changed host mounts"
 done
+# Propagation is a second mount operation, for both filesystem and bind
+# mounts. Shared clones must stay inside the private container namespace.
+for propagation in shared rshared private rprivate unbindable runbindable slave rslave; do
+    mounts=$(printf '%s' "$base_mounts" | sed '$s/]$//')',
+ {"destination":"/prop-tmpfs","type":"tmpfs","source":"tmpfs","options":["'"$propagation"'"]},
+ {"destination":"/prop-bind","type":"bind","source":"'"$sources/tree"'","options":["rbind","'"$propagation"'"]}]'
+    tag=propagation-$propagation path=/$fixture/$tag
+    # mountinfo's optional fields identify shared/unbindable. A slave of
+    # a private source stays private, so no master ID is required for slave.
+    case "$propagation" in
+        shared|rshared) expected=shared: ;;
+        unbindable|runbindable) expected=unbindable ;;
+        *) expected='' ;;
+    esac
+    args='["/bin/sh","-ec","for p in /prop-tmpfs /prop-bind; do grep \" $p \" /proc/self/mountinfo | grep -q \"'"$expected"'\"; done"]'
+    write_config "$tag" "$root" "$(cgroup_fields "$path" '{}')" "$args"
+    step "$tag" $ours run --bundle "$bundles/$tag" "$tag"
+    cmp "$results/host-mounts" /proc/self/mountinfo || fail "propagation changed host mounts"
+done
 echo 'Bind integration passed.'

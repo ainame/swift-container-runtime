@@ -39,10 +39,20 @@ final class BindMountSource {
                     // Before the clone is visible. As in runc, rbind,ro changes
                     // the top mount only; submounts keep their own flags.
                     try Kernel.Mount.changeFlags(tree, set: mount.flags.kernelFlags, clear: mount.clearedFlags.kernelFlags)
-                    if let propagation = mount.propagation {
-                        try Kernel.Mount.makePrivate(tree, recursive: propagation == .recursivePrivate)
-                    }
                     try target.borrowDescriptor { target throws(Errno) in try Kernel.Mount.attach(tree, onto: target) }
+                    // Shared/unbindable changes require an attached mount. Reopen
+                    // through the pinned parent after move_mount; the old O_PATH
+                    // handle still names the covered inode, not the new mount.
+                    if let propagation = mount.propagation {
+                        let mounted = try root.borrowDescriptor { root throws(Errno) in
+                            try unsafe Self.resolve(components, prefixes, isDirectory: isDirectory, root: root, parent: root)
+                        }
+                        try mounted.borrowDescriptor { mounted throws(Errno) in
+                            try "/proc/self/fd/\(mounted.rawValue)".withCString { path throws(Errno) in
+                                try unsafe Kernel.Mount.mount(source: nil, target: path, type: nil, flags: propagation.kernelFlags)
+                            }
+                        }
+                    }
                 }
             }
         } catch {

@@ -20,6 +20,8 @@ struct RootFilesystemSetup {
     let mounts: [OCIRunPlan.Mount]
     let populatesDev: Bool
     let readonlyRoot: Bool
+    /// Final propagation for the root bind, isolated from the host before setup.
+    let rootPropagation: OCIRunPlan.BindPropagation
     let pathControls: PathControls
     /// `process.terminal`: set up once the new root is in place.
     let terminal: TerminalSetup?
@@ -63,6 +65,22 @@ struct RootFilesystemSetup {
             if let failure = unsafe createContainerHooks.run() { return failure }
         }
         if let failure = unsafe Self.switchRoot(to: root) { return failure }
+        // pivot_root refuses a shared new root. Set its final propagation only
+        // after pivot, then restore explicit child modes that a recursive root
+        // mode may have reset. All targets are now resolved inside the new root.
+        if let error = Errno.failure({ () throws(Errno) in
+            try unsafe Kernel.Mount.mount(source: nil, target: "/", type: nil, flags: rootPropagation.kernelFlags)
+        }) { return LaunchFailure(stage: .propagation, error: error) }
+        for (index, mount) in unsafe mounts.enumerated() {
+            guard let propagation = mount.propagation else { continue }
+            let error = mount.destinationPath.withCString { path in
+                Errno.failure { () throws(Errno) in
+                    try unsafe Kernel.Mount.mount(source: nil, target: path, type: nil, flags: propagation.kernelFlags)
+                }
+            }
+            if let error { return LaunchFailure(stage: .mount, error: error, detail: Int32(index)) }
+        }
+
         // runc's setupConsole: after every configured mount, so /dev/pts is
         // the container's, and before the root may become read-only.
         if let failure = unsafe terminal?.setUp() { return failure }
@@ -156,7 +174,7 @@ struct RootFilesystemSetup {
                 let filesystem = unsafe group(InitStringGroup.filesystem(index))
                 failure = unsafe Self.mount(
                     root, destination, source: unsafe filesystem[0]!, type: unsafe filesystem[1]!,
-                    flags: mount.flags.kernelFlags, data: unsafe filesystem[2]!)
+                    flags: mount.flags.kernelFlags, data: unsafe filesystem[2]!, propagation: mount.propagation)
             }
             if var failure {
                 failure.detail = Int32(index)
@@ -261,7 +279,8 @@ struct RootFilesystemSetup {
     private static func mount(
         _ root: borrowing OwnedFileDescriptor,
         _ destination: UnsafePointer<UnsafeMutablePointer<CChar>?>,
-        source: UnsafePointer<CChar>, type: UnsafePointer<CChar>, flags: MountFlags, data: UnsafePointer<CChar>
+        source: UnsafePointer<CChar>, type: UnsafePointer<CChar>, flags: MountFlags, data: UnsafePointer<CChar>,
+        propagation: OCIRunPlan.BindPropagation?
     ) -> LaunchFailure? {
         var mountError: Errno? = nil
         let walkError = root.failure(in: { rootDescriptor in
@@ -273,6 +292,7 @@ struct RootFilesystemSetup {
                         try unsafe Kernel.Mount.mount(
                             source: source, target: targetPath, type: type, flags: flags,
                             data: unsafe data[0] == 0 ? nil : UnsafeRawPointer(data))
+
                     }
                 }
                 return nil
@@ -280,6 +300,18 @@ struct RootFilesystemSetup {
         })
         if let walkError { return LaunchFailure(stage: .resolveMount, error: walkError) }
         if let mountError { return LaunchFailure(stage: .mount, error: mountError) }
+        if let propagation {
+            let error = root.failure(in: { rootDescriptor in
+                unsafe withDirectory(beneath: rootDescriptor, destination) { mounted in
+                    "/proc/self/fd/\(mounted.rawValue)".withCString { path in
+                        Errno.failure { () throws(Errno) in
+                            try unsafe Kernel.Mount.mount(source: nil, target: path, type: nil, flags: propagation.kernelFlags)
+                        }
+                    }
+                }
+            })
+            if let error { return LaunchFailure(stage: .mount, error: error) }
+        }
         return nil
     }
 
