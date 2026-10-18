@@ -63,7 +63,8 @@ struct Create: RuntimeDescriptorCommand {
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             try globals.lifecycle().create(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
-                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring)
+                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring,
+                consoleSocket: descriptors.consoleSocket)
         } catch {
             throw CommandFailure.report(error)
         }
@@ -315,7 +316,8 @@ struct Run: RuntimeDescriptorCommand {
         discussion: "Supports an educational subset of config.json and rejects anything else. "
             + "In the foreground it exits with the workload's status and removes the container state. "
             + "With --detach it returns after the workload started and keeps the state for state, kill, and delete. "
-            + "Seccomp, rootless operation, and terminal support are not implemented; this is not a security boundary."
+            + "A terminal (process.terminal) needs --detach and --console-socket; foreground terminals and rootless "
+            + "operation are not implemented; this is not a security boundary."
     )
 
     @OptionGroup var globals: GlobalOptions
@@ -352,7 +354,8 @@ struct Run: RuntimeDescriptorCommand {
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             status = try globals.lifecycle().run(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
-                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring
+                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring,
+                consoleSocket: descriptors.consoleSocket
             )
         } catch {
             throw CommandFailure.report(error, status: 125)

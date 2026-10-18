@@ -80,11 +80,13 @@ extension OCIProcessPlan {
     /// recorded settings: the filter is compiled here before fork, the score
     /// is written by the launcher and the keyring is joined by the child.
     /// `securityLabels` are the effective exec labels (see
-    /// ``SecurityLabels/overridden(by:)``).
+    /// ``SecurityLabels/overridden(by:)``). With `terminal`, the process
+    /// hands its new pseudoterminal to the console socket after entering the
+    /// root, as runc's setns init does before its pidfd handoff.
     func execOnLinux(
         namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil,
         seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil, keyring: SessionKeyringSetup? = nil,
-        securityLabels: SecurityLabels = SecurityLabels()
+        securityLabels: SecurityLabels = SecurityLabels(), terminal: TerminalSetup? = nil
     ) throws -> Int32 {
         var strings = try CStringVector(
             groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
@@ -126,6 +128,7 @@ extension OCIProcessPlan {
                     if let error = namespaces.enterRoot() { return LaunchRecord.reportFailure(to: report, at: .enterRoot, error: error) }
                     // As runc's setns init: inside the container, before
                     // no_new_privs and the credential switch.
+                    if let failure = terminal?.setUp() { return LaunchRecord.reportFailure(to: report, failure) }
                     if let failure = pidfdSocket?.handOff(label: .setns) { return LaunchRecord.reportFailure(to: report, failure) }
                     return unsafe workload.run(report: report, commit: commit, launcher: launcher, gate: nil)
                 }

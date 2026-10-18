@@ -14,6 +14,11 @@ struct OCIProcessPlan: Sendable {
     /// `process.oomScoreAdj`, validated for both inputs. As in runc, only the
     /// container's value applies: exec reuses the recorded init setting.
     let oomScoreAdjustment: Int32?
+    /// `process.terminal`: the process gets a new pseudoterminal as its
+    /// stdio and controlling terminal, handed to `--console-socket`.
+    let terminal: Bool
+    /// The terminal's initial size; nil keeps the kernel's default.
+    let consoleSize: OCIConfiguration.ConsoleSize?
     /// AppArmor and SELinux exec contexts. For exec, the recorded container
     /// labels apply where these are unset.
     let securityLabels: SecurityLabels
@@ -27,9 +32,9 @@ struct OCIProcessPlan: Sendable {
             oomScoreAdjustment = nil
         }
         securityLabels = try SecurityLabels(process)
-        guard process.terminal != true else {
-            throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
-        }
+        terminal = process.terminal ?? false
+        // runc applies a size only when both dimensions are nonzero.
+        consoleSize = process.consoleSize.flatMap { $0.height == 0 || $0.width == 0 ? nil : $0 }
         guard let name = process.args.first, !name.isEmpty else {
             throw RuntimeError("config.json: process.args[0] must be a non-empty executable name or path")
         }

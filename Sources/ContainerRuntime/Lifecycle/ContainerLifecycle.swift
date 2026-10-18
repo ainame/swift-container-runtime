@@ -40,15 +40,21 @@ public struct ContainerLifecycle: Sendable {
     ///     workload inherits, as runc's `--preserve-fds`.
     ///   - pidfdSocket: A Unix socket address that receives the init's pidfd.
     ///   - noNewKeyring: Inherit the caller's session keyring instead of creating a container session.
+    ///   - consoleSocket: A Unix socket address that receives the terminal
+    ///     master; required exactly when `plan` requests a terminal.
     /// - Throws: ``LifecycleError/alreadyExists(_:)`` for a taken ID, or
     ///   `RuntimeError` for a setup failure; no state is left behind then.
     @available(*, noasync, message: "create containers before starting async work")
     public func create(
-        id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0, pidfdSocket: String? = nil, noNewKeyring: Bool = false
+        id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0, pidfdSocket: String? = nil,
+        noNewKeyring: Bool = false, consoleSocket: String? = nil
     ) throws {
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
-        let address = try pidfdSocket.map(PidfdSocketAddress.init)
-        try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved, pidfdSocket: address, noNewKeyring: noNewKeyring)
+        let address = try pidfdSocket.map { try UnixSocketAddress($0) }
+        let console = try Self.consoleAddress(consoleSocket, terminal: plan.terminal, detached: true)
+        try createOnLinux(
+            id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved, pidfdSocket: address,
+            noNewKeyring: noNewKeyring, consoleSocket: console)
     }
 
     /// runc's `run`: creates and starts a container in one step.
@@ -67,6 +73,9 @@ public struct ContainerLifecycle: Sendable {
     ///     workload inherits, as runc's `--preserve-fds`.
     ///   - pidfdSocket: A Unix socket address that receives the init's pidfd.
     ///   - noNewKeyring: Inherit the caller's session keyring instead of creating a container session.
+    ///   - consoleSocket: A Unix socket address that receives the terminal
+    ///     master; required exactly when a detached `plan` requests a terminal.
+    ///     A foreground terminal is not implemented.
     /// - Returns: The workload's shell-style ``ExitStatus``: its exit code
     ///   (0...255), or 128 plus the signal number when a signal killed it.
     ///   Signal interpretation is conventional: an explicit exit code can
@@ -77,19 +86,22 @@ public struct ContainerLifecycle: Sendable {
     @available(*, noasync, message: "launch containers before starting async work")
     public func run(
         id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil,
-        preserveDescriptors: Int = 0, pidfdSocket: String? = nil, noNewKeyring: Bool = false
+        preserveDescriptors: Int = 0, pidfdSocket: String? = nil, noNewKeyring: Bool = false, consoleSocket: String? = nil
     ) throws -> ExitStatus {
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
-        let address = try pidfdSocket.map(PidfdSocketAddress.init)
+        let address = try pidfdSocket.map { try UnixSocketAddress($0) }
+        let console = try Self.consoleAddress(consoleSocket, terminal: plan.terminal, detached: detach)
         if detach {
-            try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile, preserved: preserved, pidfdSocket: address, noNewKeyring: noNewKeyring)
+            try createOnLinux(
+                id: id, plan: plan, start: true, pidFile: pidFile, preserved: preserved, pidfdSocket: address,
+                noNewKeyring: noNewKeyring, consoleSocket: console)
             return .success
         }
         return ExitStatus(shellStatus: try runForegroundOnLinux(
             id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved, pidfdSocket: address, noNewKeyring: noNewKeyring))
     }
 
-    /// runc's `exec`: runs another (non-terminal) process in the namespaces,
+    /// runc's `exec`: runs another process in the namespaces,
     /// root and cgroup of a created or running container. The container's
     /// state and init are unchanged; the overrides apply to this process only.
     ///
@@ -109,6 +121,10 @@ public struct ContainerLifecycle: Sendable {
     ///   - preserveDescriptors: How many caller descriptors from 3 up the
     ///     process inherits, as runc's `--preserve-fds`.
     ///   - pidfdSocket: A Unix socket address that receives the process's pidfd.
+    ///   - terminal: Give a command exec a terminal (runc's `--tty`); a
+    ///     process file sets its own `terminal`.
+    ///   - consoleSocket: A Unix socket address that receives the terminal
+    ///     master; required exactly when a detached exec has a terminal.
     /// - Returns: The workload's shell-style ``ExitStatus``: its exit code
     ///   (0...255), or 128 plus the signal number when a signal killed it.
     ///   Signal interpretation is conventional: an explicit exit code can
@@ -122,10 +138,11 @@ public struct ContainerLifecycle: Sendable {
         id: ContainerID, arguments: [String], environment: [String] = [],
         cwd: String? = nil, user: String? = nil, additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil,
         capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil,
-        ignorePaused: Bool = false, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
+        ignorePaused: Bool = false, preserveDescriptors: Int = 0, pidfdSocket: String? = nil,
+        terminal: Bool = false, consoleSocket: String? = nil
     ) throws -> ExitStatus {
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
-        let address = try pidfdSocket.map(PidfdSocketAddress.init)
+        let address = try pidfdSocket.map { try UnixSocketAddress($0) }
         // Serialize acquisition with delete/start, then pin the recorded init
         // and all kernel handles before releasing any new child.
         let container = try lock(id)
@@ -161,7 +178,8 @@ public struct ContainerLifecycle: Sendable {
         let plan = try OCIRunPlan.loadExec(
             bundle: FilePath(record.bundle), arguments: arguments, environment: environment, cwd: cwd, user: user,
             additionalGids: additionalGids, noNewPrivileges: noNewPrivileges, capabilities: capabilities,
-            processFile: processFile.map { FilePath($0) })
+            processFile: processFile.map { FilePath($0) }, terminal: terminal)
+        let console = try Self.consoleAddress(consoleSocket, terminal: plan.terminal, detached: detach)
         let result = try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace) { handle in
             let namespaces = try ExecNamespaceSet(process: handle)
             var hooks = LaunchHooks()
@@ -184,6 +202,12 @@ public struct ContainerLifecycle: Sendable {
                 try PidfdSocket(connectingTo: $0, relativeTo: processFile == nil ? record.bundle : nil)
             }
             defer { pidfd?.close() }
+            let terminalSetup = try console.map {
+                try TerminalSetup(
+                    connectingTo: $0, relativeTo: processFile == nil ? record.bundle : nil,
+                    size: plan.consoleSize, bindsConsole: false)
+            }
+            defer { terminalSetup?.close() }
             // Security settings come from the record, never the (mutable)
             // bundle; legacy records without a keyring setting keep the
             // caller's session keyring, as they did before.
@@ -194,7 +218,8 @@ public struct ContainerLifecycle: Sendable {
                 .overridden(by: processFile == nil ? SecurityLabels() : plan.securityLabels)
             return try plan.execOnLinux(
                 namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd, seccomp: record.seccomp,
-                oomScoreAdjustment: record.oomScoreAdjustment, keyring: keyring, securityLabels: labels)
+                oomScoreAdjustment: record.oomScoreAdjustment, keyring: keyring, securityLabels: labels,
+                terminal: terminalSetup)
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
         return detach ? .success : ExitStatus(shellStatus: result)
@@ -536,12 +561,29 @@ extension ContainerLifecycle {
         return preserved
     }
 
+    /// runc's checkTerminal: a console socket goes with exactly a detached
+    /// process that requests a terminal. A foreground terminal, which runc
+    /// proxies through its own stdio, is not implemented.
+    private static func consoleAddress(_ path: String?, terminal: Bool, detached: Bool) throws -> UnixSocketAddress? {
+        let address = try path.map { try UnixSocketAddress($0, option: "--console-socket") }
+        if terminal && !detached {
+            throw RuntimeError("process.terminal in the foreground is not implemented; detach and pass --console-socket")
+        }
+        if terminal && address == nil {
+            throw RuntimeError("process.terminal needs --console-socket when the runtime detaches")
+        }
+        if !terminal && address != nil {
+            throw RuntimeError("--console-socket needs a detached process with process.terminal")
+        }
+        return address
+    }
+
     /// `create`, and with `start` a detached `run`. Holding the lock for the
     /// whole command means no other command observes a half-made container;
     /// any failure kills the init and removes the state.
     private func createOnLinux(
         id: ContainerID, plan: OCIRunPlan, start: Bool, pidFile: String?, preserved: PreservedDescriptors,
-        pidfdSocket: PidfdSocketAddress?, noNewKeyring: Bool
+        pidfdSocket: UnixSocketAddress?, noNewKeyring: Bool, consoleSocket: UnixSocketAddress?
     ) throws {
         // Reserve and pin the generation before recording or launching an init.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
@@ -570,7 +612,14 @@ extension ContainerLifecycle {
             // path resolves in the bundle, as runc resolves it after chdir.
             let pidfd = try pidfdSocket.map { try PidfdSocket(connectingTo: $0, relativeTo: plan.bundle.string) }
             defer { pidfd?.close() }
-            _ = try plan.runOnLinux(hooks: hooks, gate: gate, pidfdSocket: pidfd, keyring: SessionKeyringSetup(id: id, disabled: noNewKeyring, isExec: false))
+            // Dialled like the pidfd socket; a relative path resolves in the bundle.
+            let terminal = try consoleSocket.map {
+                try TerminalSetup(connectingTo: $0, relativeTo: plan.bundle.string, size: plan.consoleSize, bindsConsole: true)
+            }
+            defer { terminal?.close() }
+            _ = try plan.runOnLinux(
+                hooks: hooks, gate: gate, pidfdSocket: pidfd,
+                keyring: SessionKeyringSetup(id: id, disabled: noNewKeyring, isExec: false), terminal: terminal)
             if start { try StartProtocol.start(container) }
             if let pidFile, let process = record.initProcess {
                 try PIDFile.write(process.pid, to: pidFile)
@@ -589,7 +638,7 @@ extension ContainerLifecycle {
     /// removed when the workload exits or setup fails, as runc does.
     private func runForegroundOnLinux(
         id: ContainerID, plan: OCIRunPlan, keep: Bool, pidFile: String?, preserved: PreservedDescriptors,
-        pidfdSocket: PidfdSocketAddress?, noNewKeyring: Bool
+        pidfdSocket: UnixSocketAddress?, noNewKeyring: Bool
     ) throws -> Int32 {
         // Keep the directory locked throughout setup, then publish the init
         // and unlock only after execution has been confirmed.

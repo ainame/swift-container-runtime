@@ -84,7 +84,7 @@ private func fdinfoPid(_ descriptor: Int32) throws -> String? {
 func handOffSendsTheLabelWithOnePidfd(_ label: PidfdLabel) throws {
     let (sender, receiverRaw) = try streamPair()
     let receiver = owned(receiverRaw)
-    let socket = PidfdSocket(connected: owned(sender), address: try PidfdSocketAddress("/unused"))
+    let socket = PidfdSocket(connected: owned(sender), address: try UnixSocketAddress("/unused"))
     #expect(socket.handOff(label: label) == nil)
     // The connection is closed after the hand-off, whatever the outcome.
     #expect(socket.isClosed)
@@ -103,7 +103,7 @@ func handOffSendsTheLabelWithOnePidfd(_ label: PidfdLabel) throws {
 @Test func handOffReportsAClosedListenerAndClosesItsConnection() throws {
     let (sender, receiver) = try streamPair()
     _ = close(receiver)
-    let socket = PidfdSocket(connected: owned(sender), address: try PidfdSocketAddress("/unused"))
+    let socket = PidfdSocket(connected: owned(sender), address: try UnixSocketAddress("/unused"))
     // MSG_NOSIGNAL: EPIPE is returned rather than SIGPIPE killing the test.
     let failure = socket.handOff(label: .standard)
     #expect(failure?.stage == .pidfdSend)

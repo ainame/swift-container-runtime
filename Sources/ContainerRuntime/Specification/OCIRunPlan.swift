@@ -132,6 +132,10 @@ public struct OCIRunPlan: Sendable {
     let seccomp: SeccompProfile?
     /// AppArmor and SELinux contexts for init, recorded for every exec.
     let securityLabels: SecurityLabels
+    /// `process.terminal`; requires a detached launch with `--console-socket`.
+    public let terminal: Bool
+    /// The terminal's initial size, when both dimensions are nonzero.
+    let consoleSize: OCIConfiguration.ConsoleSize?
     /// The workload's user, groups, umask and no_new_privs.
     public let security: ProcessSecurity
     /// `process.capabilities`; nil leaves the inherited sets, as in runc.
@@ -168,14 +172,14 @@ public struct OCIRunPlan: Sendable {
     static func loadExec(
         bundle: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?,
         additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil, capabilities: [String] = [],
-        processFile: FilePath? = nil
+        processFile: FilePath? = nil, terminal: Bool = false
     ) throws -> OCIProcessPlan {
         if let processFile {
             return try OCIProcessPlan(OCIConfiguration.decodeProcess(BundleConfiguration.read(processFile)))
         }
         var configuration = try OCIConfiguration.decode(BundleConfiguration.read(bundle.appending("config.json")))
         configuration.process.args = arguments
-        configuration.process.terminal = false
+        configuration.process.terminal = terminal
         configuration.process.env = (configuration.process.env ?? []) + environment
         if let cwd { configuration.process.cwd = cwd }
         if let user {
@@ -345,6 +349,8 @@ public struct OCIRunPlan: Sendable {
         self.networkNamespacePath = networkNamespacePath
         self.seccomp = configuration.linux.seccomp
         self.securityLabels = process.securityLabels
+        self.terminal = process.terminal
+        self.consoleSize = process.consoleSize
         self.oomScoreAdjustment = process.oomScoreAdjustment
         self.hostname = configuration.hostname
         self.mounts = mounts

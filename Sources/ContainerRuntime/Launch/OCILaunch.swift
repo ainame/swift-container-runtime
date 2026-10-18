@@ -19,9 +19,11 @@ extension OCIRunPlan {
     /// has been committed. With `pidfdSocket`, the init sends its own pidfd,
     /// labelled `standard`, before it drops privileges or reports readiness.
     /// With `keyring`, the init joins the container's session keyring first.
+    /// With `terminal`, it hands a new pseudoterminal to the console socket
+    /// right after pivot_root, as runc does.
     func runOnLinux(
         hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil,
-        keyring: SessionKeyringSetup? = nil
+        keyring: SessionKeyringSetup? = nil, terminal: TerminalSetup? = nil
     ) throws -> Int32 {
         var groups: [[String]] = [
             arguments,
@@ -94,7 +96,7 @@ extension OCIRunPlan {
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 let root = unsafe RootFilesystemSetup(
                     strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
-                    readonlyRoot: readonlyRoot, pathControls: pathControls)
+                    readonlyRoot: readonlyRoot, pathControls: pathControls, terminal: terminal)
                 let workload = unsafe WorkloadSetup(
                     argv: pointers + starts[InitStringGroup.arguments], environment: pointers + starts[InitStringGroup.environment],
                     executables: pointers + starts[InitStringGroup.executable], searchesPath: searchesPath,

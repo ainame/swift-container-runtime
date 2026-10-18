@@ -1,48 +1,5 @@
 import SystemPackage
 
-/// A `--pidfd-socket` address, accepted as runc accepts it on Linux: a
-/// filesystem path of at most 107 bytes, which leaves room for the
-/// terminating NUL in `sun_path`, or an abstract name written
-/// with a leading `@` of at most 108 bytes including the `@`. Where a relative
-/// path resolves is decided by the command, as in runc (see `PidfdSocket`).
-/// Unlike runc, which treats an empty value as an absent option, an empty
-/// value is rejected.
-public struct PidfdSocketAddress: Sendable, Equatable {
-    /// The size of `sun_path` on Linux.
-    static let sunPathCapacity = 108
-
-    /// The address as given: a path, or `@` and an abstract name.
-    public let path: String
-
-    /// - Throws: `RuntimeError` for an empty address, NUL, or one too long
-    ///   for `sun_path`.
-    public init(_ path: String) throws {
-        let bytes = Array(path.utf8)
-        guard !bytes.isEmpty else { throw RuntimeError("--pidfd-socket must not be empty") }
-        guard !bytes.contains(0) else { throw RuntimeError("--pidfd-socket must not contain NUL") }
-        let limit = bytes[0] == UInt8(ascii: "@") ? Self.sunPathCapacity : Self.sunPathCapacity - 1
-        guard bytes.count <= limit else {
-            throw RuntimeError("--pidfd-socket \(path) is \(bytes.count) bytes; a Unix socket address allows \(limit)")
-        }
-        self.path = path
-    }
-
-    /// An abstract-namespace name (written with a leading `@`), not a path.
-    public var isAbstract: Bool { path.utf8.first == UInt8(ascii: "@") }
-
-    /// A filesystem path that does not start with `/`.
-    public var isRelative: Bool { !isAbstract && path.utf8.first != UInt8(ascii: "/") }
-
-    /// The exact `sun_path` bytes passed to connect: a filesystem path with
-    /// its terminating NUL, or an abstract name whose `@` becomes the leading
-    /// NUL and which counts exactly its bytes (as in runc).
-    var sunPath: [UInt8] {
-        var bytes = Array(path.utf8)
-        if isAbstract { bytes[0] = 0 } else { bytes.append(0) }
-        return bytes
-    }
-}
-
 /// The label sent with the pidfd, naming runc's init type: `standard` for a
 /// container's init (`run`, `create`), `setns` for an `exec` process.
 enum PidfdLabel: String {
@@ -66,45 +23,17 @@ enum PidfdLabel: String {
 /// connection until it exits.
 final class PidfdSocket {
     private(set) var connection: OwnedFileDescriptor
-    let address: PidfdSocketAddress
+    let address: UnixSocketAddress
 
-    /// Connects to `address`. A relative path resolves against `base` when
-    /// given, as runc resolves it after changing to the bundle directory
-    /// (`run`, `create`, and command-form `exec`: runc `utils_linux.go`
-    /// setupSpec and `exec.go` getProcess), and against the working directory
-    /// otherwise (`exec --process`, which runc loads before changing
-    /// directory). Absolute paths and abstract names are used as given.
-    ///
-    /// The process-wide working directory is never changed. A relative socket
-    /// under `base` is pinned with an O_PATH handle and connected through its
-    /// short `/proc/self/fd/N` name, so the 107-byte limit applies to `path`
-    /// alone, as in runc, and never to `base`.
-    init(connectingTo address: PidfdSocketAddress, relativeTo base: String?) throws {
-        let connection: OwnedFileDescriptor
-        do { connection = try Kernel.Socket.unixStream() } catch { throw RuntimeError("create --pidfd-socket connection: \(error)") }
-        var target = address
-        var pinned = OwnedFileDescriptor()
-        if let base, address.isRelative {
-            let resolved = base.hasSuffix("/") ? base + address.path : base + "/" + address.path
-            do {
-                pinned = try Kernel.File.openPath(resolved)
-            } catch {
-                throw RuntimeError("connect to --pidfd-socket \(address.path) in \(base): \(error)")
-            }
-            let handle = try pinned.withDescriptor { $0.rawValue }
-            target = try PidfdSocketAddress("/proc/self/fd/\(handle)")
-        }
-        let error = connection.failure(in: { socket in
-            Errno.failure { () throws(Errno) in try Kernel.Socket.connect(socket, sunPath: target.sunPath) }
-        })
-        try? pinned.close()
-        if let error { throw RuntimeError("connect to --pidfd-socket \(address.path): \(error)") }
-        self.connection = connection
+    /// Connects to `address`; see ``UnixSocketAddress/connect(relativeTo:)``
+    /// for where a relative path resolves.
+    init(connectingTo address: UnixSocketAddress, relativeTo base: String?) throws {
+        connection = try address.connect(relativeTo: base)
         self.address = address
     }
 
     /// Adopts a stream that is already connected.
-    init(connected connection: consuming OwnedFileDescriptor, address: PidfdSocketAddress) {
+    init(connected connection: consuming OwnedFileDescriptor, address: UnixSocketAddress) {
         self.connection = connection
         self.address = address
     }

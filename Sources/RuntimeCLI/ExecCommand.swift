@@ -5,10 +5,11 @@ import ContainerRuntime
 /// workload, including flags such as --help, --env and --root.
 struct Exec: RuntimeDescriptorCommand {
     static let configuration = CommandConfiguration(
-        commandName: "exec", abstract: "Run another nonterminal process in a container.",
+        commandName: "exec", abstract: "Run another process in a container.",
         discussion: "Inherits process settings from the source bundle. Options must precede the container ID. "
-            + "--preserve-fds passes caller descriptors and --pidfd-socket receives a pidfd labelled setns; "
-            + "terminal, socket activation, and console socket options are not implemented."
+            + "--preserve-fds passes caller descriptors and --pidfd-socket receives a pidfd labelled setns. "
+            + "A terminal (--tty or process.terminal) needs --detach and --console-socket, which receives its master; "
+            + "foreground terminals and socket activation are not implemented."
     )
     @ParentCommand var parent: RuntimeCommand
     @OptionGroup var logging: PassthroughLoggingOptions
@@ -27,6 +28,7 @@ struct Exec: RuntimeDescriptorCommand {
     @Option(name: [.customShort("p"), .customLong("process")], help: "OCI process JSON file; overrides the bundle and process CLI settings.") var processFile: String?
     @OptionGroup var descriptors: DescriptorOptions
     @Flag(name: [.customShort("d"), .long], help: "Return once exec succeeds.") var detach = false
+    @Flag(name: [.customShort("t"), .long], help: "Allocate a terminal for a command exec; a --process file sets its own.") var tty = false
     @Flag(name: .customLong("ignore-paused"), help: "Wait for a paused container to resume instead of failing.")
     var ignorePaused = false
     @Argument(parsing: .captureForPassthrough, help: "Container ID, executable (a name found through the process PATH, or a path), and its arguments.") var operands: [String] = []
@@ -65,7 +67,7 @@ struct Exec: RuntimeDescriptorCommand {
                 additionalGids: additionalGids, noNewPrivileges: noNewPrivs ? true : nil,
                 capabilities: cap, detach: detach, pidFile: pidFile, processFile: processFile,
                 ignorePaused: ignorePaused, preserveDescriptors: descriptors.preserveFDs,
-                pidfdSocket: descriptors.pidfdSocket)
+                pidfdSocket: descriptors.pidfdSocket, terminal: tty, consoleSocket: descriptors.consoleSocket)
         } catch { throw CommandFailure.report(error) }
         throw ExitCode(status.shellStatus)
     }

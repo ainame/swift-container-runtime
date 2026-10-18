@@ -91,14 +91,16 @@ struct OCIConfiguration: Decodable, Sendable {
         var oomScoreAdj: Int64?
         var apparmorProfile: String?
         var selinuxLabel: String?
+        var consoleSize: ConsoleSize?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
                 decoder, allowed: [
                     "terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities", "rlimits", "oomScoreAdj",
-                    "apparmorProfile", "selinuxLabel",
+                    "apparmorProfile", "selinuxLabel", "consoleSize",
                 ]
             )
+            consoleSize = try object.optional("consoleSize")
             apparmorProfile = try object.optional("apparmorProfile")
             selinuxLabel = try object.optional("selinuxLabel")
             rlimits = try object.optional("rlimits")
@@ -110,6 +112,18 @@ struct OCIConfiguration: Decodable, Sendable {
             cwd = try object.required("cwd")
             noNewPrivileges = try object.optional("noNewPrivileges")
             capabilities = try object.optional("capabilities")
+        }
+    }
+
+    /// `process.consoleSize`, in character cells.
+    struct ConsoleSize: Decodable, Sendable, Equatable {
+        var height: UInt16
+        var width: UInt16
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["height", "width"])
+            height = try object.required("height")
+            width = try object.required("width")
         }
     }
 

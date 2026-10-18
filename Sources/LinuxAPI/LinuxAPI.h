@@ -322,6 +322,32 @@ static inline int linux_set_keyring_permissions(int key, uint32_t permissions) {
     return syscall(SYS_keyctl, KEYCTL_SETPERM, key, permissions);
 }
 
+/* Pseudoterminal ioctls (ioctl is variadic in C). TIOCGPTPEER (Linux 4.13)
+ * opens the peer of a master without a path lookup; older C library headers
+ * may lack its number, which asm-generic defines as _IO('T', 0x41). */
+#ifndef TIOCGPTPEER
+#define TIOCGPTPEER _IO('T', 0x41)
+#endif
+static inline int linux_unlock_pty(int master) {
+    int unlock = 0;
+    return ioctl(master, TIOCSPTLCK, &unlock);
+}
+static inline int linux_open_pty_peer(int master) {
+    return ioctl(master, TIOCGPTPEER, O_RDWR | O_NOCTTY | O_CLOEXEC);
+}
+static inline int linux_set_window_size(int fd, unsigned short rows, unsigned short columns) {
+    struct winsize size;
+    memset(&size, 0, sizeof size);
+    size.ws_row = rows;
+    size.ws_col = columns;
+    return ioctl(fd, TIOCSWINSZ, &size);
+}
+static inline int linux_set_controlling_terminal(int fd) {
+    return ioctl(fd, TIOCSCTTY, 0);
+}
+/* dup3 is a GNU extension of <unistd.h>; glibc and musl both provide it. */
+extern int dup3(int oldfd, int newfd, int flags);
+
 /* nsfs ioctl, Linux 4.11+: returns the CLONE_NEW* type of a namespace FD. */
 static inline int linux_namespace_type(int fd) {
     return ioctl(fd, NS_GET_NSTYPE);

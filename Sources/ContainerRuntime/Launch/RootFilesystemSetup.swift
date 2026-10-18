@@ -19,6 +19,8 @@ struct RootFilesystemSetup {
     let populatesDev: Bool
     let readonlyRoot: Bool
     let pathControls: PathControls
+    /// `process.terminal`: set up once the new root is in place.
+    let terminal: TerminalSetup?
 
     /// Runs after namespace creation, before credentials and workload execution.
     /// Returns nil on success, or the child exit status after reporting a failure.
@@ -40,6 +42,9 @@ struct RootFilesystemSetup {
         if let failure = unsafe mountAll(beneath: root, sources: sources) { return failure }
         if unsafe populatesDev, let failure = unsafe populateDev(beneath: root) { return failure }
         if let failure = unsafe Self.switchRoot(to: root) { return failure }
+        // runc's setupConsole: after every configured mount, so /dev/pts is
+        // the container's, and before the root may become read-only.
+        if let failure = unsafe terminal?.setUp() { return failure }
         if let hostname = unsafe group(InitStringGroup.hostname)[0],
            let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Process.setHostname(hostname) }) {
             return LaunchFailure(stage: .hostname, error: error)

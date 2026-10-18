@@ -154,7 +154,6 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(linux: #"{"namespaces": [{"type": "mount", "path": "/proc/1/ns/mnt"}]}"#), "path"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "uidMappings": []}]"#), "uidMappings"),
     // Known fields with unimplemented values.
-    (config(process: #"{"terminal": true, "args": ["/bin/sh"], "cwd": "/"}"#), "terminal"),
     (config(process: #"{"user": {"uid": 4294967295, "gid": 0}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),
     (config(process: #"{"user": {"uid": 0, "gid": 4294967295}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),
     (config(process: #"{"user": {"uid": 0, "gid": 0, "additionalGids": [4294967295]}, "args": ["/bin/sh"], "cwd": "/"}"#), "unchanged"),

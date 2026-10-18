@@ -23,9 +23,10 @@ enum CommandValidation {
     }
 
     /// Rejects values runc's dial could not use as a Unix socket address.
-    static func pidfdSocket(_ path: String?) throws {
+    /// A `--pidfd-socket` or `--console-socket` address that fits `sun_path`.
+    static func socketAddress(_ path: String?, option: String) throws {
         guard let path else { return }
-        do { _ = try PidfdSocketAddress(path) } catch { throw ValidationError("\(error)") }
+        do { _ = try UnixSocketAddress(path, option: option) } catch { throw ValidationError("\(error)") }
     }
 
     /// Rejects negative counts and counts whose first internal descriptor, 3+N, leaves Int32.

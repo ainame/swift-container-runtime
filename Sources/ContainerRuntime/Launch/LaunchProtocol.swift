@@ -12,6 +12,7 @@ enum LaunchStage: Int32 {
     case findExecutable, relativeExecutable, pidfdOpen, pidfdSend
     case openMountSource, seccomp, oomScoreAdjustment, sessionKeyring, keyringPermissions
     case keyCreationLabel, appArmorProfile, selinuxLabel
+    case openTerminal, bindConsole, sendTerminal, terminalStdio
 
     var description: String {
         switch self {
@@ -78,6 +79,10 @@ enum LaunchStage: Int32 {
         case .keyCreationLabel: "set the SELinux key creation context (process.selinuxLabel)"
         case .appArmorProfile: "stage process.apparmorProfile for exec (ENOENT: the profile is not loaded)"
         case .selinuxLabel: "stage process.selinuxLabel for exec (the container needs a /proc mount)"
+        case .openTerminal: "open a pseudoterminal for process.terminal (needs a devpts mount at /dev/pts)"
+        case .bindConsole: "bind the terminal onto /dev/console"
+        case .sendTerminal: "send the terminal to --console-socket"
+        case .terminalStdio: "make the terminal stdio and the controlling terminal"
         }
     }
 }

@@ -255,7 +255,7 @@ func rejectsInvalidMemoryUnits(_ input: String) {
     #expect(command.arguments == ["/bin/echo", "--help", "--root", "workload"])
 }
 
-@Test(arguments: [["exec"], ["exec", "box"], ["exec", "box", ""], ["exec", "--tty", "box", "/bin/sh"]])
+@Test(arguments: [["exec"], ["exec", "box"], ["exec", "box", ""], ["exec", "--tty", "--console-socket", "", "box", "/bin/sh"]])
 func rejectsUnsupportedOrIncompleteExec(_ arguments: [String]) {
     #expect(throws: (any Error).self) { _ = try RuntimeCommand.parseAsRoot(arguments) }
 }

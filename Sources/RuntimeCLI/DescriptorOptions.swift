@@ -8,8 +8,12 @@ struct DescriptorOptions: ParsableArguments {
     @Option(name: .customLong("pidfd-socket"), help: "Send a pidfd for the new process, with a runc-compatible label, to the AF_UNIX stream listener at this path (or @abstract name).")
     var pidfdSocket: String?
 
+    @Option(name: .customLong("console-socket"), help: "With process.terminal, send the new terminal's master to the AF_UNIX stream listener at this path (or @abstract name). Requires a detached process.")
+    var consoleSocket: String?
+
     func validate() throws {
-        try CommandValidation.pidfdSocket(pidfdSocket)
+        try CommandValidation.socketAddress(pidfdSocket, option: "--pidfd-socket")
+        try CommandValidation.socketAddress(consoleSocket, option: "--console-socket")
         _ = try CommandValidation.preservedDescriptors(preserveFDs)
     }
 }
