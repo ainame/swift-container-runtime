@@ -9,11 +9,19 @@ import Foundation
 public struct ResourceUpdate: Sendable {
     var configuration: OCIConfiguration.Resources
 
+    /// An update from an OCI `linux.resources` JSON object, as `update -r`
+    /// reads it. Unsupported fields are rejected rather than ignored.
+    ///
+    /// - Throws: `RuntimeError` for malformed JSON or unsupported fields.
     public init(json: [UInt8]) throws {
         do { configuration = try JSONDecoder().decode(OCIConfiguration.Resources.self, from: Data(json)) }
         catch { throw RuntimeError("resources JSON: \(error)") }
     }
 
+    /// An update from individual values, as `update`'s flags give them.
+    /// Nil leaves a field out of the patch. Memory values are bytes (-1 is
+    /// unlimited), `cpuQuota`/`cpuPeriod`/`cpuBurst` are microseconds, and
+    /// `cpusetCpus`/`cpusetMems` are lists such as `0-3,5`.
     public init(
         memory: Int64? = nil, memorySwap: Int64? = nil, memoryReservation: Int64? = nil,
         cpuQuota: Int64? = nil, cpuPeriod: UInt64? = nil, cpuShares: UInt64? = nil,

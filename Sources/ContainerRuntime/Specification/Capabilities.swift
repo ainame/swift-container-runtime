@@ -1,5 +1,6 @@
 /// A set of Linux capabilities as the kernel's bit mask: bit n is capability n.
 public struct CapabilitySet: Sendable, Hashable, CustomStringConvertible {
+    /// The kernel's capability mask.
     public let mask: UInt64
 
     public init(mask: UInt64) { self.mask = mask }
@@ -21,10 +22,13 @@ public struct CapabilitySet: Sendable, Hashable, CustomStringConvertible {
         knownNames.firstIndex(of: name)
     }
 
+    /// The OCI name of capability `number`, or `capability N` for one newer
+    /// than ``knownNames``.
     public static func name(of number: Int) -> String {
         knownNames.indices.contains(number) ? knownNames[number] : "capability \(number)"
     }
 
+    /// Whether capability `number` is in the set.
     public func contains(_ number: Int) -> Bool {
         (0..<64).contains(number) && mask & (1 << UInt64(number)) != 0
     }
@@ -35,6 +39,7 @@ public struct CapabilitySet: Sendable, Hashable, CustomStringConvertible {
 
     /// Member numbers in ascending order.
     public var numbers: [Int] { (0..<64).filter { contains($0) } }
+    /// Member names in ascending number order.
     public var names: [String] { numbers.map(Self.name(of:)) }
     public var description: String { isEmpty ? "none" : names.joined(separator: ", ") }
 }

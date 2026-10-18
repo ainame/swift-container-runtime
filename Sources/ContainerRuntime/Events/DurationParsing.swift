@@ -1,6 +1,8 @@
 /// Why a duration text was refused.
 public struct DurationParseError: Error, CustomStringConvertible, Sendable {
+    /// The refused text.
     public let text: String
+    /// What was wrong, such as `missing unit`.
     public let reason: String
 
     public var description: String { "invalid duration \(text.debugDescription): \(reason)" }

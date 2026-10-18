@@ -3,8 +3,11 @@ import SystemPackage
 /// A container ID with runc's accepted character set. Lifecycle commands use
 /// it as a single directory name below the state root.
 public struct ContainerID: Sendable, Equatable {
+    /// The ID as given.
     public let rawValue: String
 
+    /// - Throws: `RuntimeError` unless `rawValue` has 1...1024 characters from
+    ///   `[A-Za-z0-9_+.-]` and is not `.` or `..`.
     public init(_ rawValue: String) throws {
         let allowed = rawValue.unicodeScalars.allSatisfy { scalar in
             scalar.isASCII && (scalar.properties.isAlphabetic || ("0"..."9").contains(scalar) || "_+-.".unicodeScalars.contains(scalar))
@@ -22,14 +25,17 @@ public struct ContainerID: Sendable, Equatable {
 /// mount namespace. Path *resolution* inside the rootfs happens later, from a
 /// rootfs descriptor, so that symlinks in the bundle cannot redirect setup.
 public struct OCIRunPlan: Sendable {
+    /// A namespace the container gets newly created (`linux.namespaces`).
     public enum Namespace: String, Sendable, CaseIterable {
         case pid, mount, uts, ipc, network
     }
 
+    /// The filesystems a configured mount may create.
     public enum FilesystemType: String, Sendable {
         case proc, tmpfs, devpts
     }
 
+    /// The supported mount options that map to mount flags.
     public struct MountFlags: OptionSet, Sendable, Hashable {
         public let rawValue: UInt8
         public init(rawValue: UInt8) { self.rawValue = rawValue }
@@ -39,8 +45,10 @@ public struct OCIRunPlan: Sendable {
         public static let strictatime = MountFlags(rawValue: 1 << 3)
     }
 
+    /// One validated entry of `mounts`.
     public struct Mount: Sendable, Equatable {
         public let type: FilesystemType
+        /// The mount source, such as `proc` or `tmpfs`.
         public let source: String
         /// Destination components below the rootfs, without `.` or `..`.
         public let destination: [String]
@@ -48,18 +56,22 @@ public struct OCIRunPlan: Sendable {
         /// Comma-separated filesystem data (for example `mode=755`).
         public let data: String
 
+        /// The destination as an absolute container path.
         public var destinationPath: String { "/" + destination.joined(separator: "/") }
     }
 
     /// `process.user` and `process.noNewPrivileges`, applied in the init
     /// before the workload can execute.
     public struct ProcessSecurity: Sendable, Equatable {
+        /// The workload's user ID.
         public let uid: UInt32
+        /// The workload's primary group ID.
         public let gid: UInt32
         /// Replaces the caller's supplementary groups; empty clears them.
         public let additionalGids: [UInt32]
         /// Defaults to 0o022 as in runc, not to the caller's mask.
         public let umask: UInt32
+        /// Sets no_new_privs, so exec can never gain privileges.
         public let noNewPrivileges: Bool
 
         /// Linux's NGROUPS_MAX.
@@ -68,20 +80,27 @@ public struct OCIRunPlan: Sendable {
         static let unchangedID = UInt32.max
     }
 
+    /// The configuration's `ociVersion`, a 1.x version.
     public let ociVersion: String
+    /// The resolved absolute bundle directory.
     public let bundle: FilePath
+    /// The resolved absolute root filesystem directory.
     public let rootfs: FilePath
     /// `root.readonly`: after setup, the container's root mount (not its
     /// child mounts, and not the host's mount of the rootfs) is read-only.
     public let readonlyRoot: Bool
     /// Recorded in container state; they do not affect setup.
     public let annotations: [String: String]
+    /// The namespaces created for the container; others are shared with the host.
     public let namespaces: [Namespace]
+    /// The UTS hostname; nil keeps the inherited one.
     public let hostname: String?
+    /// The configured mounts, in order.
     public let mounts: [Mount]
     /// True when a tmpfs is mounted at /dev; the runtime then creates the
     /// standard device nodes and /dev symlinks inside it.
     public let populatesDev: Bool
+    /// `process.args`: the workload command and its arguments.
     public let arguments: [String]
     /// The complete workload environment; nothing is inherited from the caller.
     public let environment: [String]
@@ -89,6 +108,7 @@ public struct OCIRunPlan: Sendable {
     let executable: ExecutableLookup
     /// Components of process.cwd below the container root.
     public let cwd: [String]
+    /// The workload's user, groups, umask and no_new_privs.
     public let security: ProcessSecurity
     /// `process.capabilities`; nil leaves the inherited sets, as in runc.
     public let capabilities: ProcessCapabilities?
@@ -191,10 +211,14 @@ public struct OCIRunPlan: Sendable {
         return staged
     }
 
-    /// Runs the workload in the foreground and returns its shell-style exit
-    /// status. Like `NamespaceCommand.run`, this rejects multithreaded callers.
-    /// Without a container ID or state, a default-path cgroup gets a name
-    /// unique to this run, and the cgroup is removed whenever the run ends.
+    /// Runs the workload in the foreground without any container state, and
+    /// waits for it. Like `NamespaceCommand.run`, this rejects multithreaded
+    /// callers. A default-path cgroup gets a name unique to this run and is
+    /// removed whenever the run ends.
+    ///
+    /// - Returns: The workload's shell-style exit status: its exit code
+    ///   (0...255), or 128 plus the signal number when a signal killed it.
+    /// - Throws: `RuntimeError` when setup fails before the workload runs.
     @available(*, noasync, message: "launch containers before starting async work")
     public func run() throws -> Int32 {
         // A transient ID from this process and a monotonic timestamp, so a

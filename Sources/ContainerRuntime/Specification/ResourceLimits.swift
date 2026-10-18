@@ -39,8 +39,11 @@ public struct ResourceLimit: Sendable, Equatable, CustomStringConvertible {
     /// `RLIM64_INFINITY`, the OCI and kernel spelling of "unlimited".
     public static let infinity = UInt64.max
 
+    /// The limited resource.
     public let resource: Resource
+    /// The soft limit, which the kernel enforces; ``infinity`` is unlimited.
     public let soft: UInt64
+    /// The hard limit, the ceiling for the soft limit; ``infinity`` is unlimited.
     public let hard: UInt64
 
     public init(resource: Resource, soft: UInt64, hard: UInt64) {

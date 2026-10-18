@@ -3,6 +3,7 @@
 /// numbers, as runc's `--preserve-fds`. The runtime never wraps, closes,
 /// renumbers, or chowns them; their type and target are not checked.
 public struct PreservedDescriptors: Sendable, Equatable {
+    /// How many descriptors, from 3 up, the workload inherits.
     public let count: Int32
 
     /// The first descriptor the workload must not inherit.
@@ -12,6 +13,7 @@ public struct PreservedDescriptors: Sendable, Equatable {
     /// conversion cannot trap: `init` keeps it in 3...Int32.max.
     var closeRangeStart: UInt32 { UInt32(firstInternal) }
 
+    /// No preserved descriptors beyond stdin, stdout and stderr.
     public static let none = PreservedDescriptors(validated: 0)
 
     private init(validated count: Int32) { self.count = count }
@@ -54,6 +56,10 @@ public struct PreservedDescriptors: Sendable, Equatable {
         }
     }
 
+    /// The descriptor flags of an open descriptor, from `fcntl(F_GETFD)`.
+    ///
+    /// - Returns: The `FD_*` flag bits (such as `FD_CLOEXEC`), or nil when
+    ///   `descriptor` is not open.
     public static func descriptorFlags(_ descriptor: Int32) -> Int32? {
         Kernel.File.descriptorFlags(descriptor)
     }

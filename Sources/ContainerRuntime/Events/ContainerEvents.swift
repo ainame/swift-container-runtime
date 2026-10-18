@@ -73,9 +73,13 @@ public struct ContainerStats: Equatable, Sendable {
 
 /// One line of `events` output, with runc's field names and omitted fields.
 public enum ContainerEvent: Equatable, Sendable {
+    /// A cgroup statistics snapshot.
     case stats(ContainerStats)
+    /// The kernel killed a process in the container for exceeding memory.
     case oom
 
+    /// The event as one line of runc-compatible JSON (without a newline),
+    /// labelled with the container `id`.
     public func json(id: String) throws -> String {
         let line: EventLine
         switch self {

@@ -9,11 +9,16 @@ import SystemPackage
 /// 1), and every command derives the status from the recorded init identity
 /// and the live system, so a vanished init reads as stopped.
 public struct ContainerLifecycle: Sendable {
-    /// Like runc's `/run/runc`.
+    /// The default state root, like runc's `/run/runc`.
     public static let defaultRoot = "/run/swift-container-runtime"
 
+    /// The state root: one subdirectory per container, like runc's `--root`.
     public let root: FilePath
 
+    /// Uses `root` for container state. Nothing is opened or created here;
+    /// commands that need the root create it with mode 0700 or require it.
+    ///
+    /// - Throws: `RuntimeError` when `root` is empty or contains NUL.
     public init(root: String = ContainerLifecycle.defaultRoot) throws {
         guard !root.isEmpty, !root.utf8.contains(0) else {
             throw RuntimeError("--root must be non-empty and contain no NUL")
@@ -23,8 +28,19 @@ public struct ContainerLifecycle: Sendable {
 
     private var usesDefaultRoot: Bool { root == FilePath(Self.defaultRoot) }
 
-    /// Prepares the container and leaves its init waiting for `start`. The
-    /// workload inherits this process's stdin, stdout, and stderr, as in runc.
+    /// runc's `create`: prepares the container (namespaces, cgroup, rootfs,
+    /// credentials) and leaves its init waiting for ``start(id:)``. The
+    /// workload will inherit this process's stdin, stdout, and stderr.
+    ///
+    /// - Parameters:
+    ///   - id: The new container's ID; no container with it may exist.
+    ///   - plan: The validated bundle configuration.
+    ///   - pidFile: A path that receives the init's host PID, or nil.
+    ///   - preserveDescriptors: How many caller descriptors from 3 up the
+    ///     workload inherits, as runc's `--preserve-fds`.
+    ///   - pidfdSocket: A Unix socket address that receives the init's pidfd.
+    /// - Throws: ``LifecycleError/alreadyExists(_:)`` for a taken ID, or
+    ///   `RuntimeError` for a setup failure; no state is left behind then.
     @available(*, noasync, message: "create containers before starting async work")
     public func create(
         id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
@@ -34,9 +50,27 @@ public struct ContainerLifecycle: Sendable {
         try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
     }
 
-    /// Runs a container. In the foreground this waits for the workload and
-    /// removes its state afterwards, returning the workload status. Detached,
-    /// it returns 0 after a confirmed start and keeps the state.
+    /// runc's `run`: creates and starts a container in one step.
+    ///
+    /// In the foreground this waits for the workload and then removes the
+    /// container's state, unless `keep` is set. Detached, it returns once the
+    /// workload has started and leaves the container running.
+    ///
+    /// - Parameters:
+    ///   - id: The new container's ID; no container with it may exist.
+    ///   - plan: The validated bundle configuration.
+    ///   - detach: Return after the start instead of waiting for the workload.
+    ///   - keep: In the foreground, keep the stopped container's state.
+    ///   - pidFile: A path that receives the init's host PID, or nil.
+    ///   - preserveDescriptors: How many caller descriptors from 3 up the
+    ///     workload inherits, as runc's `--preserve-fds`.
+    ///   - pidfdSocket: A Unix socket address that receives the init's pidfd.
+    /// - Returns: The workload's shell-style exit status: its exit code
+    ///   (0...255), or 128 plus the signal number when a signal killed it, as
+    ///   a shell's `$?` reports. A CLI can pass it straight to `exit`.
+    ///   Always 0 when `detach` is set.
+    /// - Throws: ``LifecycleError/alreadyExists(_:)`` for a taken ID, or
+    ///   `RuntimeError` when setup fails before the workload starts.
     @available(*, noasync, message: "launch containers before starting async work")
     public func run(
         id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil,
@@ -52,8 +86,33 @@ public struct ContainerLifecycle: Sendable {
             id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
     }
 
-    /// Runs a nonterminal process in the live container, without changing
-    /// its init identity or state. CLI overrides apply to this process only.
+    /// runc's `exec`: runs another (non-terminal) process in the namespaces,
+    /// root and cgroup of a created or running container. The container's
+    /// state and init are unchanged; the overrides apply to this process only.
+    ///
+    /// - Parameters:
+    ///   - id: The container to enter.
+    ///   - arguments: The command and its arguments; ignored with `processFile`.
+    ///   - environment: `NAME=value` entries added to the process environment.
+    ///   - cwd: The working directory inside the container.
+    ///   - user: `uid[:gid]` to run as.
+    ///   - additionalGids: Supplementary groups appended to the process's.
+    ///   - noNewPrivileges: Overrides the process's `noNewPrivileges` when set.
+    ///   - capabilities: Capability names added to the process's sets.
+    ///   - detach: Return once the process has executed instead of waiting.
+    ///   - pidFile: A path that receives the process's host PID, or nil.
+    ///   - processFile: An OCI `process` JSON file replacing the command.
+    ///   - ignorePaused: Wait for a paused container to resume instead of failing.
+    ///   - preserveDescriptors: How many caller descriptors from 3 up the
+    ///     process inherits, as runc's `--preserve-fds`.
+    ///   - pidfdSocket: A Unix socket address that receives the process's pidfd.
+    /// - Returns: The workload's shell-style exit status: its exit code
+    ///   (0...255), or 128 plus the signal number when a signal killed it, as
+    ///   a shell's `$?` reports. A CLI can pass it straight to `exit`.
+    ///   Always 0 when `detach` is set.
+    /// - Throws: ``LifecycleError/notFound(_:)`` for a missing container, or
+    ///   `RuntimeError` when it is stopped (or paused, without `ignorePaused`)
+    ///   or the process cannot be started.
     @available(*, noasync, message: "exec processes before starting async work")
     public func exec(
         id: ContainerID, arguments: [String], environment: [String] = [],
@@ -144,7 +203,11 @@ public struct ContainerLifecycle: Sendable {
         guard thawed == true else { throw RuntimeError("container init is no longer running") }
     }
 
-    /// Executes the workload of a created container exactly once.
+    /// runc's `start`: lets a created container's init execute its workload.
+    /// Returns once the workload has executed; the start happens exactly once.
+    ///
+    /// - Throws: ``LifecycleError`` when the container is missing or not in
+    ///   the created state, or `RuntimeError` when the exec fails.
     public func start(id: ContainerID) throws {
         let container = try lock(id)
         let record = try container.readRecord()
@@ -152,12 +215,20 @@ public struct ContainerLifecycle: Sendable {
         try StartProtocol.start(container)
     }
 
-    /// Freezes a running container, or a created init still at its start
-    /// gate, as runc does. Resume restores the live gate-derived status.
+    /// runc's `pause`: freezes every process of a running container (or of a
+    /// created one still waiting for `start`) through the cgroup freezer.
+    ///
+    /// - Throws: ``LifecycleError`` when the container is missing or in
+    ///   another state, or `RuntimeError` when the cgroup cannot be frozen.
     public func pause(id: ContainerID) throws {
         try changeFreezer(id: id, frozen: true)
     }
 
+    /// runc's `resume`: thaws a paused container, which then reads as
+    /// running again (or created, when its init is still waiting for `start`).
+    ///
+    /// - Throws: ``LifecycleError`` when the container is missing or not
+    ///   paused, or `RuntimeError` when the cgroup cannot be thawed.
     public func resume(id: ContainerID) throws {
         try changeFreezer(id: id, frozen: false)
     }
@@ -171,8 +242,12 @@ public struct ContainerLifecycle: Sendable {
         try CgroupLeaf.setFrozen(identity, frozen: frozen)
     }
 
-    /// Updates limits under the per-container cross-process lock. Kernel
-    /// writes are not atomic; failure attempts runc's best-effort rollback.
+    /// runc's `update`: changes the resource limits of a live container and
+    /// records them in its state. The kernel writes are not atomic; when one
+    /// fails, the earlier ones are rolled back on a best-effort basis, as runc does.
+    ///
+    /// - Throws: ``LifecycleError`` when the container is missing or stopped,
+    ///   or `RuntimeError` when a limit is refused.
     public func update(id: ContainerID, resources: ResourceUpdate) throws {
         let container = try lock(id)
         guard var record = try container.readRecord(), let identity = record.cgroup else {
@@ -198,8 +273,12 @@ public struct ContainerLifecycle: Sendable {
         try container.writeRecord(record)
     }
 
-    /// A snapshot of host PIDs in the recorded cgroup and its descendants.
-    /// The state lock is released before invoking the external ps program.
+    /// The host PIDs of every process in the container's cgroup and its
+    /// descendant cgroups, as a snapshot.
+    ///
+    /// - Returns: Host process IDs (`pid_t`); empty once the cgroup is gone.
+    /// - Throws: ``LifecycleError/notFound(_:)`` for a missing container, or
+    ///   `RuntimeError` for one that never recorded a cgroup.
     public func processIDs(id: ContainerID) throws -> [Int32] {
         let container = try lock(id)
         guard let record = try container.readRecord(), let identity = record.cgroup else {
@@ -208,20 +287,37 @@ public struct ContainerLifecycle: Sendable {
         return try CgroupLeaf.processes(identity)
     }
 
+    /// runc's `ps`: the host `ps` output (`ps -ef` by default, otherwise
+    /// `ps` with `arguments`) filtered to the container's processes, keeping
+    /// the header and the caller's column layout.
+    ///
+    /// - Throws: ``LifecycleError/notFound(_:)`` for a missing container, or
+    ///   `RuntimeError` when `ps` fails or prints no PID column.
     public func processTable(id: ContainerID, arguments: [String] = []) throws -> String {
         let pids = try processIDs(id: id)
         return try ProcessTable.filter(ProcessTable.readHost(arguments: arguments), pids: pids)
     }
 
+    /// runc's `state`: the container's OCI state with its live status.
+    /// Reads without taking the container lock.
+    ///
+    /// - Throws: ``LifecycleError/notFound(_:)`` for a missing container.
     public func state(id: ContainerID) throws -> ContainerStateReport {
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }
         return try snapshot(root, id)
     }
 
-    /// runc's `events`: with `statsOnly`, one statistics event; otherwise
-    /// statistics every `interval` nanoseconds and OOM events as they
-    /// happen, until the container's cgroup empties or its state is deleted
-    /// or recreated. Holds no container lock while waiting.
+    /// runc's `events`: reports a live container's events through `emit`.
+    ///
+    /// With `statsOnly`, emits one statistics event and returns. Otherwise
+    /// emits statistics every `interval` (the first one interval after the
+    /// start) and an OOM event whenever the kernel kills a process for
+    /// memory, until the container's cgroup empties or its state is deleted
+    /// or recreated. Blocks the calling thread and holds no lock while waiting.
+    ///
+    /// - Throws: ``LifecycleError/notFound(_:)`` for a missing container,
+    ///   `RuntimeError` for a stopped container or a nonpositive `interval`,
+    ///   or whatever `emit` throws, which ends the stream.
     @available(*, noasync, message: "events blocks the calling thread while it waits")
     public func events(
         id: ContainerID, interval: Duration, statsOnly: Bool, emit: (ContainerEvent) throws -> Void
@@ -229,7 +325,15 @@ public struct ContainerLifecycle: Sendable {
         try eventsOnLinux(id: id, interval: interval, statsOnly: statsOnly, emit: emit)
     }
 
-    /// Signals the verified init of a created or running container.
+    /// runc's `kill`: sends `signal` to the container's init.
+    ///
+    /// - Parameters:
+    ///   - id: A created, running or paused container.
+    ///   - signal: A Linux signal number, such as 15 for SIGTERM; see
+    ///     ``SignalName/parse(_:)`` for names. SIGKILL also thaws a paused
+    ///     container so that the kill takes effect, as runc does.
+    /// - Throws: ``LifecycleError`` when the container is missing, stopped, or
+    ///   its init has already exited.
     public func kill(id: ContainerID, signal: Int32) throws {
         let container = try lock(id)
         let record = try container.readRecord()
@@ -243,10 +347,15 @@ public struct ContainerLifecycle: Sendable {
         }
     }
 
-    /// Removes a stopped container. A created container's waiting init is
-    /// killed first, as in runc; a running one requires `force`, which sends
-    /// SIGKILL and waits up to 10 seconds for the init to exit. Forcing the
-    /// deletion of a missing container succeeds, as in runc.
+    /// runc's `delete`: removes a stopped container's state and cgroup.
+    ///
+    /// A created container's waiting init is killed first, as in runc. A
+    /// running or paused one requires `force`, which sends SIGKILL and waits
+    /// up to 10 seconds for the init to exit.
+    ///
+    /// - Throws: ``LifecycleError`` when the container is missing (unless
+    ///   `force` is set, which then succeeds as in runc) or running without
+    ///   `force`; `RuntimeError` when the init outlives SIGKILL.
     public func delete(id: ContainerID, force: Bool) throws {
         let container: LockedContainer
         do {
@@ -270,9 +379,12 @@ public struct ContainerLifecycle: Sendable {
         try container.destroy()
     }
 
-    /// Every container under the root, sorted by ID. Entries that cannot be
-    /// read are reported as warnings and skipped, as in runc. A missing
-    /// default root lists nothing; a missing custom root is an error.
+    /// runc's `list`: every container under the root, sorted by ID.
+    ///
+    /// - Returns: The containers' states, and one warning per entry that could
+    ///   not be read (skipped, as in runc).
+    /// - Throws: `RuntimeError` when a custom root does not exist; a missing
+    ///   default root lists nothing.
     public func list() throws -> (reports: [ContainerStateReport], warnings: [String]) {
         guard let root = try StateRoot.open(root, create: false) else {
             if usesDefaultRoot { return ([], []) }

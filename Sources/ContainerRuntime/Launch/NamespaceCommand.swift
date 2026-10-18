@@ -2,9 +2,13 @@ import SystemPackage
 
 /// A namespace experiment. This does not isolate the root filesystem or privileges.
 public struct NamespaceCommand: Sendable {
+    /// The hostname set in the new UTS namespace.
     public let hostname: String
+    /// The absolute executable path followed by its arguments.
     public let arguments: [String]
 
+    /// - Throws: `RuntimeError` for a hostname outside 1...64 bytes, a
+    ///   relative executable, or an argument containing NUL.
     public init(hostname: String, arguments: [String]) throws {
         try NamespaceCommand.validateHostname(hostname)
         guard let executable = arguments.first, executable.hasPrefix("/") else {
@@ -17,8 +21,13 @@ public struct NamespaceCommand: Sendable {
         self.arguments = arguments
     }
 
-    /// Namespace setup runs before background work begins. The Linux
-    /// launch rejects multithreaded callers before executing Swift in a child.
+    /// Runs `arguments` in new UTS, PID and mount namespaces with a fresh
+    /// `/proc` and `hostname`, and waits for it. Call this before starting
+    /// background work: the launch rejects multithreaded callers.
+    ///
+    /// - Returns: The command's shell-style exit status: its exit code
+    ///   (0...255), or 128 plus the signal number when a signal killed it.
+    /// - Throws: `RuntimeError` when the namespaces cannot be set up.
     @available(*, noasync, message: "launch namespaces before starting async work")
     public func run() throws -> Int32 {
         var argv = try CStringVector(arguments)

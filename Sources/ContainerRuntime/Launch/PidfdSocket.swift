@@ -1,7 +1,8 @@
 import SystemPackage
 
-/// A `--pidfd-socket` address, accepted as runc accepts it on Linux: a filesystem path of at most 107 bytes, which leaves
-/// room for the terminating NUL in `sun_path`, or an abstract name written
+/// A `--pidfd-socket` address, accepted as runc accepts it on Linux: a
+/// filesystem path of at most 107 bytes, which leaves room for the
+/// terminating NUL in `sun_path`, or an abstract name written
 /// with a leading `@` of at most 108 bytes including the `@`. Where a relative
 /// path resolves is decided by the command, as in runc (see `PidfdSocket`).
 /// Unlike runc, which treats an empty value as an absent option, an empty
@@ -10,8 +11,11 @@ public struct PidfdSocketAddress: Sendable, Equatable {
     /// The size of `sun_path` on Linux.
     static let sunPathCapacity = 108
 
+    /// The address as given: a path, or `@` and an abstract name.
     public let path: String
 
+    /// - Throws: `RuntimeError` for an empty address, NUL, or one too long
+    ///   for `sun_path`.
     public init(_ path: String) throws {
         let bytes = Array(path.utf8)
         guard !bytes.isEmpty else { throw RuntimeError("--pidfd-socket must not be empty") }
@@ -23,6 +27,7 @@ public struct PidfdSocketAddress: Sendable, Equatable {
         self.path = path
     }
 
+    /// An abstract-namespace name (written with a leading `@`), not a path.
     public var isAbstract: Bool { path.utf8.first == UInt8(ascii: "@") }
 
     /// A filesystem path that does not start with `/`.

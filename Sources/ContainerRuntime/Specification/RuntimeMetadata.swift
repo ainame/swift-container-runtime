@@ -30,6 +30,7 @@ public enum RuntimeMetadata {
 /// implements. Kernel-dependent availability (for example a cgroup v2 mount) is checked when a
 /// container runs, not here, matching runc. Absent (nil) lists mean "unknown"; empty lists mean
 /// "none supported". When a surface is implemented, flip its entry in `current` and add a test.
+/// Nested types and properties mirror the OCI features document's JSON keys of the same names.
 public struct RuntimeFeatures: Codable, Equatable, Sendable {
     public struct Linux: Codable, Equatable, Sendable {
         public struct Cgroup: Codable, Equatable, Sendable {

@@ -5,9 +5,19 @@ import Foundation
 #endif
 import SystemPackage
 
-/// Runtime status, including runc's cgroup-freezer `paused` extension.
+/// Runtime status, including runc's cgroup-freezer `paused` extension. It is
+/// derived from the live system on every read, never stored.
 public enum ContainerStatus: String, Sendable, Codable, CaseIterable {
-    case creating, created, running, paused, stopped
+    /// `create` or `run` is still setting the container up.
+    case creating
+    /// The init waits for `start`.
+    case created
+    /// The workload has executed and the init is alive.
+    case running
+    /// The cgroup freezer has frozen the container.
+    case paused
+    /// The init has exited (or never existed); only `delete` remains.
+    case stopped
 }
 
 /// A lifecycle command whose permitted source states follow runc.
@@ -80,8 +90,11 @@ public enum LifecycleOperation: Sendable, Equatable {
 
 /// Lifecycle failures with stable, testable wording.
 public enum LifecycleError: Error, Equatable, CustomStringConvertible, Sendable {
+    /// `operation` is not permitted while the container has `status`.
     case invalidTransition(id: ContainerID, operation: String, status: ContainerStatus)
+    /// No container with this ID exists under the state root.
     case notFound(ContainerID)
+    /// A container with this ID already exists.
     case alreadyExists(ContainerID)
 
     public var description: String {
@@ -191,14 +204,21 @@ struct ContainerRecord: Codable, Sendable, Equatable {
 
 /// The OCI state of one container, as printed by `state` and `list`.
 public struct ContainerStateReport: Sendable, Equatable {
+    /// The OCI runtime specification version of the bundle's `config.json`.
     public let ociVersion: String
+    /// The container ID.
     public let id: String
+    /// The live status.
     public let status: ContainerStatus
-    /// The init PID, retained while paused; 0 when stopped, as in runc.
+    /// The init's host PID (`pid_t`), kept while paused; 0 when stopped, as in runc.
     public let pid: Int32
+    /// The absolute bundle directory.
     public let bundle: String
+    /// The absolute root filesystem directory.
     public let rootfs: String
+    /// The creation time, RFC 3339 in UTC with millisecond precision.
     public let created: String
+    /// The `config.json` annotations.
     public let annotations: [String: String]
     /// The state directory owner, shown only by `list`.
     public let owner: String
@@ -310,8 +330,7 @@ struct ProcessStat: Equatable {
     }
 }
 
-/// Linux signal numbers (identical on x86_64 and arm64). Names are accepted
-/// with or without `SIG` in any case; numbers 0...64 are accepted as is.
+/// Linux signal names and numbers (identical on x86_64 and arm64).
 public enum SignalName {
     static let numbers: [String: Int32] = [
         "HUP": 1, "INT": 2, "QUIT": 3, "ILL": 4, "TRAP": 5, "ABRT": 6, "IOT": 6, "BUS": 7, "FPE": 8,
@@ -321,6 +340,11 @@ public enum SignalName {
         "POLL": 29, "PWR": 30, "SYS": 31,
     ]
 
+    /// The signal number for `text`: a name with or without `SIG` in any case
+    /// (`TERM`, `sigkill`) or a number in 0...64.
+    ///
+    /// - Returns: A Linux signal number for ``ContainerLifecycle/kill(id:signal:)``.
+    /// - Throws: `RuntimeError` for an unknown name or an out-of-range number.
     public static func parse(_ text: String) throws -> Int32 {
         if let number = Int32(text) {
             guard (0...64).contains(number) else { throw RuntimeError("signal number \(text) is outside 0...64") }
