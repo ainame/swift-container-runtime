@@ -11,7 +11,7 @@
   },
   "hooks_stdin": {
     "category": "upstream",
-    "reason": "Expects prestart state created, while current runc sends creating (libcontainer/process_linux.go procHooks); runc fails this test too.",
+    "reason": "Expects prestart state created, while runc sends creating (libcontainer/process_linux.go procHooks); runc 1.4.0 and v1.5.2 fail this test too.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/hooks_stdin/hooks_stdin.go"
   },
   "linux_cgroups_blkio": {
@@ -86,28 +86,28 @@
   },
   "linux_devices": {
     "category": "upstream",
-    "reason": "Supplies FIFO major/minor 8:666; Linux FIFOs report 0:0, and current runc rejects this configuration. Correct character/block/FIFO nodes have a separate integration gate.",
+    "reason": "Supplies FIFO major/minor 8:666; Linux FIFOs report 0:0, and runc 1.4.0 and v1.5.2 reject this configuration. Correct character/block/FIFO nodes have a separate integration gate.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_devices/linux_devices.go"
   },
   "mounts": {
     "category": "upstream",
-    "reason": "Adds tmpfs data mode=755,size=1k to bind mounts; current runc rejects filesystem-specific data on a bind mount. Valid bind/tmpfs propagation has a separate integration gate.",
+    "reason": "Adds tmpfs data mode=755,size=1k to bind mounts; runc 1.4.0 and v1.5.2 reject filesystem-specific data on a bind mount. Valid bind/tmpfs propagation has a separate integration gate.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/mounts/mounts.go"
   },
   "pidfile": {
     "category": "upstream",
     "issue": "https://github.com/opencontainers/runtime-tools/issues/805",
-    "reason": "PreDelete sends a signal after the true workload exited; signaling a stopped container errors. See upstream issue 805; current runc fails too.",
+    "reason": "PreDelete sends a signal after the true workload exited; signaling a stopped container errors. See upstream issue 805; runc 1.4.0 fails the same way, and v1.5.2 fails earlier because the suite's seccomp allowlist lacks faccessat2.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/pidfile/pidfile.go"
   },
   "process_rlimits": {
     "category": "upstream",
-    "reason": "The Go probe cannot reliably validate its startup limits: RLIMIT_AS constrains Go/libseccomp initialization, and Go may raise RLIMIT_NOFILE. Current runc also fails; rlimits have a separate static C-probe integration gate.",
+    "reason": "The Go probe cannot reliably validate its startup limits: RLIMIT_AS constrains Go/libseccomp initialization, and Go may raise RLIMIT_NOFILE. runc 1.4.0 and v1.5.2 also fail; rlimits have a separate static C-probe integration gate.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/process_rlimits/process_rlimits.go"
   },
   "start": {
     "category": "upstream",
-    "reason": "After setting process=nil, expects create to succeed and start err==nil despite its MUST-generate-error assertion text; current runc fails this case too.",
+    "reason": "After setting process=nil, expects create to succeed and start err==nil despite its MUST-generate-error assertion text; runc 1.4.0 and v1.5.2 fail this case too.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/start/start.go"
   }
 }
