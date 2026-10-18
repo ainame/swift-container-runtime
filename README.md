@@ -287,3 +287,13 @@ The local development environment has Apple `container` 0.9.0 and a cached `swif
 ## Not yet implemented
 
 The lifecycle lacks runc's `--console-socket`, `--no-pivot`, `NOTIFY_SOCKET`, and hooks (`--pid-file` and `run --keep` are implemented). Seccomp, hooks, and the cgroup controls beyond the memory, pids, and CPU subset (CPU realtime, hugepages, block I/O, devices, `unified`) are planned for phase 4. cgroup v1 is not supported. Terminals, signal forwarding, advanced `exec` options (terminal, console sockets, explicit `--no-new-privs=false`, sub-cgroups), user namespaces, and rootless operation are planned for phase 5. Bind mounts, other filesystem types, `HOME` defaulting, network setup, and the rest of the phase 6 inventory are also missing. musl builds have not been verified. Full parity work is paused; see the [option comparison and usage scenarios](docs/parity.md#current-scope-and-option-comparison) and the [implementation roadmap](docs/roadmap.md) for current scope and remaining differences.
+
+## License and acknowledgments
+
+Original project code is licensed under the [MIT License](LICENSE).
+This project draws on [runc](https://github.com/opencontainers/runc) as its
+behavioral reference and [kontainer-runtime](https://github.com/ternbusty/kontainer-runtime)
+as a companion implementation and initial feature target. Both upstream projects
+are licensed under Apache 2.0. See [NOTICE](NOTICE) for attribution and
+[LICENSES](LICENSES) for their license texts; third-party material retains its
+original terms.

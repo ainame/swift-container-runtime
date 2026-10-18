@@ -1,0 +1,47 @@
+swift-container-runtime
+Copyright (c) 2026 ainame
+
+Original project code is licensed under the MIT License in LICENSE.
+Third-party material retains its original license and attribution notices.
+
+Acknowledgments
+===============
+
+This educational Swift implementation draws on the designs and behavior of:
+
+- runc, by the Open Container Initiative and runc contributors:
+  https://github.com/opencontainers/runc
+  The behavioral reference for container lifecycle and OCI runtime semantics,
+  and the comparison runtime used by the integration suites.
+  Licensed under Apache License 2.0; see LICENSES/runc-LICENSE.
+  License and notice copied from commit
+  b1281089d47f53cd019804c1d9dfb1d5164d9aa7.
+
+- kontainer-runtime, by ternbusty and kontainer-runtime contributors:
+  https://github.com/ternbusty/kontainer-runtime
+  A companion implementation and the initial feature and implementation
+  reference for this project's educational runtime.
+  Licensed under Apache License 2.0; see LICENSES/kontainer-runtime-LICENSE.
+  License copied from commit
+  357b8f295a7fad450c822c61e79cf22f75546640.
+
+Upstream runc NOTICE (verbatim)
+==============================
+
+runc
+
+Copyright 2012-2015 Docker, Inc.
+
+This product includes software developed at Docker, Inc. (http://www.docker.com).
+
+The following is courtesy of our legal counsel:
+
+
+Use and transfer of Docker may be subject to certain restrictions by the
+United States and other governments.
+It is your responsibility to ensure that your use and/or transfer does not
+violate applicable laws.
+
+For more information, please see http://www.bis.doc.gov
+
+See also http://www.apache.org/dev/crypto.html and/or seek legal counsel.
