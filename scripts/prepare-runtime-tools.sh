@@ -28,4 +28,8 @@ cp "$checkout/runtimetest" "$stage/runtimetest"
 for applet in $(/bin/busybox --list); do
     [ "$applet" = busybox ] || ln -s busybox "$stage/bin/$applet"
 done
-tar -czf "$checkout/rootfs-$(go env GOARCH).tar.gz" -C "$stage" .
+# amd64's upstream tarball is tracked. Keep generated native fixtures separate
+# so the source-integrity check stays strict and preparation remains repeatable.
+mkdir -p "$checkout/.srunc-fixture"
+cp "$checkout/runtimetest" "$checkout/.srunc-fixture/runtimetest"
+tar -czf "$checkout/.srunc-fixture/rootfs-$(go env GOARCH).tar.gz" -C "$stage" .

@@ -375,7 +375,7 @@ standard runtime devices are appended after user rules, including wildcard
 mknod allows and standard null/zero/full/random/TTY/PTY access. Partial deny
 exceptions reject any overlapping access, including O_RDWR requests containing a
 denied read or write bit. This is stricter than runc 1.4's combined-access subset
-match. `linux.devices` inode creation remains unsupported.
+match. `linux.devices` creates inodes separately from these access rules; see [custom devices](#custom-devices).
 
 Loading or attaching a requested program fails setup on any error, including
 missing BPF support or privileges. The filter uses `BPF_F_ALLOW_MULTI`, preserves
