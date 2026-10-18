@@ -152,11 +152,12 @@ separate Docker-driven extension and make the scope decision explicitly.
    reference versions and skipped cases. Keep implementation, old evidence and
    newly passing execution results distinguishable. Commit each meaningful change.
 
-The [engine baseline](engine-baseline.md) now records real containerd 2.2.2
-create/exec captures and working global logging/error extraction. The Swift
-engine run still fails on device restrictions. Shared-PID SIGKILL subtree
-cleanup and `--all` compatibility are now verified against runc 1.4; milestone 1
-remains open for shim-owned PID/cleanup validation. Sysfs, mqueue, tmpfs-based
-shm and ro/rw mount flags now pass focused Linux run/create/start/exec checks.
-Next: device policy, bind mounts and supplied namespace joins for the selected
-scenario. Do not silently discard security fields to advance it.
+The [engine baseline](engine-baseline.md) records real containerd 2.2.2 capture,
+global logging/error extraction, shared-PID SIGKILL cleanup, requested filesystem
+mounts, and enforced device rules. The first cgroupfs **directory-rootfs** engine
+scenario now passes pipes/EOF, init/exec PID publication, nonzero exits, failed
+create/exec, kill/delete, reaping and state/cgroup cleanup. Milestones 1 and 3
+still need their broader gates; this is not an image-derived or Docker result.
+Next: bind mounts and supplied namespace joins for an image-derived containerd
+scenario, then the remaining security and console gates. Never discard requested
+security fields to advance it.

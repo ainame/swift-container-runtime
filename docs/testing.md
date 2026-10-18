@@ -44,7 +44,7 @@ suite because a shared file was touched:
 | Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and per-mount read-only flags; add `lifecycle` for readiness/cleanup changes. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
-| Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`), plus `update`; add `freezer ps events` if membership/reporting changes. |
+| Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`, `devices`), plus `update`; add `freezer ps events` if membership/reporting changes. |
 | Metadata/CLI output | `metadata`, `logging` and affected unit tests. |
 
 These are starting selections, not mandatory bundles for every edit. Add one
@@ -157,3 +157,23 @@ read-only tmpfs in new network/IPC namespaces. It compares run/create/start/exec
 with runc, verifies mount types/flags before start, EROFS, private network and IPC
 views, and a symlinked sysfs target's failure cleanup without host mount changes.
 The probe is `scripts/fixtures/mount-probe.c`; its host queue is explicitly removed.
+
+`scripts/devices-integration.sh` checks BPF device enforcement in init and exec,
+read/write and mknod decisions, failed create cleanup, adopted filter ownership,
+inherited restrictions, retained policy through resource updates, rejected live
+device-rule patches, and fail-closed setup without BPF privileges. It uses the
+existing static BusyBox/clang fixture plus util-linux `setpriv`.
+
+The opt-in engine gate is separate from the ordinary suite inventory because it
+requires an installed, running daemon and the pinned profile in
+[engine baseline](engine-baseline.md):
+
+```sh
+sh scripts/containerd-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock
+```
+
+It selects the supplied binary explicitly, creates its own containerd namespace,
+runtime root, cgroup subtree and directory rootfs, and cleans them up. It checks
+pipes/EOF, init/exec PID files, exit codes, shim reaping, kill/delete, error logs
+and failure cleanup. It does not change a daemon default or test Docker, image
+unpacking, network provisioning, TTYs or default seccomp/LSM security.

@@ -33,6 +33,11 @@ wait_until() {
     done
 }
 absent() { [ ! -e "$1" ]; }
+no_open_fds() {
+    [ -d "/proc/$1/fd" ] || return 0
+    descriptors=$(ls -A "/proc/$1/fd" 2>/dev/null) || return 1
+    [ -z "$descriptors" ]
+}
 field() { sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'; }
 [ "$(id -u)" -eq 0 ] || fail 'requires root'
 [ "$(stat -f -c %T "$cg")" = cgroup2fs ] || fail 'requires cgroup v2'
@@ -67,7 +72,7 @@ c tasks rm holder >/dev/null
 c containers delete holder
 wait_until 'shim reaped init' absent "/proc/$init"
 wait_until 'shim reaped detached exec' absent "/proc/$exec_pid"
-wait_until 'shim closed its file descriptors' absent "/proc/$shim/fd/0"
+wait_until 'shim closed its file descriptors' no_open_fds "$shim"
 [ ! -e "$root/holder" ] && [ ! -e "$cg$fixture/holder" ] || fail 'holder state/cgroup leaked'
 
 # Keep input open until the task is RUNNING. ctr's stdinCloser callback is

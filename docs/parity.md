@@ -53,7 +53,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | Namespaces | Join supplied namespace paths; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
 | Rootfs and mounts | No-pivot; cgroup mounts; bind/rbind/remount and propagation; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
-| Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device BPF, update support for those controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
+| Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device-rule updates, update support for the other remaining controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
 | Security | Complete init/exec policy verification; AppArmor/SELinux execution-context staging and availability behavior; session keyrings; sealed executable handoff |
 | Seccomp | Actions, architectures, argument comparisons, conditional rules, flags, notification listener handoff |
 | Hooks | All six phases, environment, state on stdin, timeout and failure semantics |
@@ -96,3 +96,15 @@ The probe checks sysfs's private network view, private IPC message queues,
 read-only enforcement, safe failure on a symlinked sysfs target and cleanup.
 See [engine baseline](engine-baseline.md); cgroup mounts, bind mounts and supplied
 namespace paths remain separate gaps.
+
+Nonempty `linux.resources.devices` now produces an enforced cgroup-device BPF
+filter before init joins its cgroup. The rule normalizer preserves runc's reset,
+permission merge and default-device ordering; unsupported wildcard holes fail.
+Ancestor filters remain effective and cleanup detaches only the recorded owned
+program. Other resource updates retain the policy; requested live device-rule
+updates are rejected explicitly. Kernel enforcement, denied opens/mknod, adopted
+and inherited filter ownership, failed setup, and init/exec are checked on Linux.
+A partial deny rejects any overlapping access, including combined read/write,
+which is deliberately stricter than runc 1.4's subset test for combined requests.
+The [engine baseline](engine-baseline.md) now includes the successful constrained
+containerd directory-rootfs scenario and its remaining exclusions.

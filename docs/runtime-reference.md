@@ -121,7 +121,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `linux.rootfsPropagation` | Absent, `private`, or `rprivate`; propagation is always made `rprivate`. |
 | `linux.readonlyPaths`, `linux.maskedPaths` | Absolute paths without `.`/`..` or NUL; `/` is accepted. Read-only repeats are applied again, as in runc; a masked repeat is applied once. No `/proc` mount is needed. Missing paths are skipped; symlinks are followed only within the container root, and magic links are refused. Read-only paths need Linux 5.12+. See setup step 7. |
 | `linux.cgroupsPath` | cgroup v2 only, mounted at `/sys/fs/cgroup`. Absent or empty: `/swift-container-runtime/<id>`; relative: below `/swift-container-runtime`; absolute: below the cgroup root. `.`/`..` components, NUL, newlines, the root itself, components over 255 bytes, more than 64 components, and more than 4095 bytes are rejected. Every container gets a cgroup, and the init joins it while blocked, before `create` returns and before the workload executes. Missing ancestors are created and left in place at delete. Controllers needed by the configured resources are enabled in each ancestor's `cgroup.subtree_control`, and failing to enable one fails setup. A "domain invalid" cgroup is made threaded when no domain controller (memory or configured CPU, as runc classifies it) is needed, and is an error when one is. A supplied, pre-existing cgroup must have no processes, no child cgroups, and must not be frozen. It is used and kept at delete; a cgroup this runtime created is removed. Containers given the same path are separate processes, possibly with different state roots. Each takes a nonblocking exclusive `flock` on the leaf directory, through a close-on-exec descriptor. Under the lock it rechecks that the path still names the opened directory and that the group is unused, writes the limits, and joins the init. It releases the lock as soon as the init is a member, or when setup fails. A contender fails with "is being set up by another container", or afterwards with "is not empty", without writing anything. The cgroup's path, inode, and boot ID are recorded in the state. At delete, a cgroup recorded under another boot, or replaced at the same path (another inode), is left untouched with a warning. Remaining processes are killed through `cgroup.kill` (Linux 5.14+) only when the cgroup is still the recorded one. Foreground `run`, failed setup, `delete`, and `delete --force` clean up the cgroup. |
-| `linux.resources` | Only `memory.limit`, `memory.reservation`, `memory.swap` (memory+swap, as in runc), `memory.checkBeforeUpdate`, `pids.limit`, and `cpu.shares`, `cpu.quota`, `cpu.period`, `cpu.burst`, `cpu.idle`, `cpu.cpus`, `cpu.mems`, converted and written as runc's fs2 driver does: `pids.max`, `memory.swap.max`, `memory.max`, `memory.low`, then `cpu.idle`, `cpu.weight`, `cpu.max.burst`, `cpu.max`, `cpuset.cpus`, `cpuset.mems`. CPU: shares become `cpu.weight` by runc's quadratic conversion (0 writes nothing, 1024 is 100, clamped to 1..10000); a nonzero quota or period becomes `cpu.max` (a quota that is not positive is `max`, and a zero period is 100000); a burst the current quota refuses is retried after `cpu.max` only when the quota is nonzero; idle and burst 0 are real writes. Ranges are left to the kernel, whose refusal fails setup, so an idle group refuses shares. CPU counts as a domain controller, as in runc, so a threaded subtree is refused. Cpusets: nonempty CPU/node lists are passed to the kernel; absent or empty lists leave existing configured values unchanged, and effective sets inherit from the parent when unset. Memory: -1 is `max` and 0 is unset; below -1 is rejected. A swap without a memory limit, or a memory+swap below the memory limit, is rejected. A swap of `max` or 0 is skipped when `memory.swap.max` is missing, and swap -1 alone does not require the memory controller. pids: any negative is `max`, and 0 becomes 1, as in current runc. Every other resource (`cpu.realtimeRuntime`, `cpu.realtimePeriod`, `devices`, `blockIO`, `hugepageLimits`, `network`, `rdma`, `unified`, and the other `memory` fields such as `swappiness`, `kernel`, `disableOOMKiller`, `checkBeforeUpdate`) is rejected. When setup or start fails and `memory.events` shows a new `oom_kill` since setup began, the error says the init was OOM-killed, as runc's does. |
+| `linux.resources` | Device access rules (below), plus `memory.limit`, `memory.reservation`, `memory.swap` (memory+swap, as in runc), `memory.checkBeforeUpdate`, `pids.limit`, and `cpu.shares`, `cpu.quota`, `cpu.period`, `cpu.burst`, `cpu.idle`, `cpu.cpus`, `cpu.mems`, converted and written as runc's fs2 driver does: `pids.max`, `memory.swap.max`, `memory.max`, `memory.low`, then `cpu.idle`, `cpu.weight`, `cpu.max.burst`, `cpu.max`, `cpuset.cpus`, `cpuset.mems`. CPU: shares become `cpu.weight` by runc's quadratic conversion (0 writes nothing, 1024 is 100, clamped to 1..10000); a nonzero quota or period becomes `cpu.max` (a quota that is not positive is `max`, and a zero period is 100000); a burst the current quota refuses is retried after `cpu.max` only when the quota is nonzero; idle and burst 0 are real writes. Ranges are left to the kernel, whose refusal fails setup, so an idle group refuses shares. CPU counts as a domain controller, as in runc, so a threaded subtree is refused. Cpusets: nonempty CPU/node lists are passed to the kernel; absent or empty lists leave existing configured values unchanged, and effective sets inherit from the parent when unset. Memory: -1 is `max` and 0 is unset; below -1 is rejected. A swap without a memory limit, or a memory+swap below the memory limit, is rejected. A swap of `max` or 0 is skipped when `memory.swap.max` is missing, and swap -1 alone does not require the memory controller. pids: any negative is `max`, and 0 becomes 1, as in current runc. Every other resource (`cpu.realtimeRuntime`, `cpu.realtimePeriod`, `blockIO`, `hugepageLimits`, `network`, `rdma`, `unified`, and the other `memory` fields such as `swappiness`, `kernel`, `disableOOMKiller`, `checkBeforeUpdate`) is rejected. When setup or start fails and `memory.events` shows a new `oom_kill` since setup began, the error says the init was OOM-killed, as runc's does. |
 | `mounts` | `proc` at `/proc` (requires a `pid` namespace), `tmpfs`, `sysfs` and `mqueue` at directory destinations, `devpts` at `/dev/pts`. Flags: `nosuid`, `nodev`, `noexec`, `strictatime`, `ro`, `rw` (the last `ro`/`rw` wins). A tmpfs at `/dev/shm` supplies shared memory; mqueue uses the current IPC namespace and a fresh sysfs mount reflects the current network namespace. Data: tmpfs `mode=`/`size=`; devpts `newinstance`, `ptmxmode=`, `mode=`, `gid=`. |
 | `/dev` | With a tmpfs at `/dev`, creates `null`, `zero`, `full`, `random`, `urandom`, `tty` (via `mknod`) and the `fd`, `stdin`, `stdout`, `stderr` links, plus `ptmx` when devpts is mounted. Without a `/dev` tmpfs, `/dev` is left as the rootfs provides it. |
 | `annotations` | Accepted and ignored. They do not affect behavior. |
@@ -184,8 +184,7 @@ The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The ru
 ## Not yet implemented
 
 The lifecycle lacks console sockets, no-pivot, foreground signal forwarding,
-and hooks. Seccomp, device-cgroup BPF,
-custom devices, broader mounts and supplied namespace joins are also missing.
+and hooks. Seccomp, custom devices, broader mounts and supplied namespace joins are also missing.
 Terminals, user namespace mappings/rootless operation, additional process settings,
 hugepages, block I/O, unified controls and exec sub-cgroups remain feature gaps.
 Musl/static builds have not been verified.
@@ -197,3 +196,30 @@ extensions; CPU realtime, cgroup v1 and systemd management are outside the pinne
 target's implemented functionality. The [Docker assessment](docker-integration.md)
 records the additional integration work and Linux acceptance gates. Docker support
 has not been established.
+
+### Device access rules
+
+Nonempty `linux.resources.devices` lists are enforced by cgroup-v2 BPF before init
+joins its group. `allow` and a nonempty `access` combination of `r`, `w`, `m` are
+required. `type` is `a` (also absent/empty), `b` or `c`; absent/null/-1 major and
+minor numbers are wildcards, otherwise UInt32 device numbers are required. There
+are at most 512 effective input rules including the eleven standard appended
+rules. Absent/empty device lists retain the existing unrestricted-leaf behavior;
+ancestor device restrictions always remain effective.
+
+Rules use runc's ordered reset/exception model. An `a` rule resets the default and
+clears prior exceptions. Specific permissions merge or subtract; attempts to
+punch a narrower hole in an existing wildcard fail validation. As in runc, the
+standard runtime devices are appended after user rules, including wildcard
+mknod allows and standard null/zero/full/random/TTY/PTY access. Partial deny
+exceptions reject any overlapping access, including O_RDWR requests containing a
+denied read or write bit. This is stricter than runc 1.4's combined-access subset
+match. `linux.devices` inode creation remains unsupported.
+
+Loading or attaching a requested program fails setup on any error, including
+missing BPF support or privileges. The filter uses `BPF_F_ALLOW_MULTI`, preserves
+external/ancestor filters, and records its program ID with the cgroup's inode and
+boot ID. Normal and failure cleanup detach only that owned program; a supplied
+cgroup and its pre-existing programs remain. Other resource updates retain the
+filter and its saved rules; a device-rule update request is explicitly rejected.
+See the [engine baseline](engine-baseline.md) for the verified profile.

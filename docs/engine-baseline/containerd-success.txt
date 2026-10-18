@@ -1,0 +1,16 @@
+Implementation: 6344146 (device-policy change)
+Date: 2026-10-18
+Command: sh scripts/containerd-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock
+Profile: Linux aarch64, Swift 6.4.1 debug, kernel 6.12.28, cgroup v2/cgroupfs, directory rootfs
+
+Client:
+  Version:  2.2.2
+  Revision:
+  Go version: go1.24.13
+
+Server:
+  Version:  2.2.2
+  Revision:
+  UUID: 5f44dc5b-f9d5-45f2-bf23-87a753be1815
+time="2026-10-18T15:23:31Z" level=warning msg="task holder exit with non-zero exit code 137"
+containerd: PASS (cgroupfs, directory rootfs, pipes, init/exec PID files, exit codes, kill/delete and error cleanup)

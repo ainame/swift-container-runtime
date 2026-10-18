@@ -1,8 +1,10 @@
 # Engine invocation and logging baseline
 
-Captured on 2026-10-18. This is a **real containerd/runc capture**, followed by a
-Swift failed-create check through the same shim. Swift cannot yet run this
-engine-generated bundle. Docker was not run. Milestone 1 is still incomplete.
+Captured on 2026-10-18. This began with a **real containerd/runc capture** and a
+Swift failed-create logging check. The device-policy follow-up at `6344146` now
+passes a constrained Swift containerd directory-rootfs scenario through the same
+shim. See the final section for fresh evidence and exclusions. Docker was not run;
+image-derived bundles and the broader roadmap gates remain open.
 
 ## Profile and provenance
 
@@ -103,8 +105,8 @@ precedes the command. Invalid logging options themselves and help/version exits
 retain parser diagnostics; parse-error recovery does not scan workload operands.
 Internal lifecycle warnings retain their existing stderr behavior.
 
-The same `ctr run` command using the Swift Linux binary, ID `swift-baseline` and
-cgroup `/sct-swift-baseline` returned:
+At the initial logging checkpoint (`bfe975e`), the same `ctr run` command using
+the Swift Linux binary, ID `swift-baseline` and cgroup `/sct-swift-baseline` returned:
 
 ```text
 ctr: failed to create shim task: OCI runtime create failed: config.json: unsupported field(s): linux.resources.devices
@@ -114,19 +116,19 @@ This proves the real shim accepts the global options and extracts the Swift erro
 log. The reference runc workload and detached exec succeeded; its missing-program
 exec returned the expected OCI exec failure. After kill/delete, containerd listed
 no tasks or containers. Both runtime state directories and workload cgroups were
-absent after reference cleanup and the Swift failed create. No Swift workload
-was launched through the shim, so Swift shim-owned exit/reaping/stdio behavior
-remains unverified.
+absent after reference cleanup and the Swift failed create. At that checkpoint
+no Swift workload had launched through the shim. The device-policy follow-up
+below now verifies its constrained nonterminal exit/reaping/stdio behavior.
 
 | Immediate contract | Status after this slice |
 | --- | --- |
 | Global logging and error extraction | Implemented; real shim failed-create evidence above. |
-| Captured create JSON | First rejection is `linux.resources.devices`. The requested mqueue/sysfs mounts now have focused Linux coverage below. Security restrictions must be implemented or explicitly rejected, never dropped to get past decoding. |
-| Captured exec JSON | Decodes and validates as a Swift process plan; actual shim exec into Swift is blocked by create. |
+| Captured create JSON | Now plans its original device rules and filesystem mounts. The live constrained containerd run succeeds; no security field is dropped to get past decoding. |
+| Captured exec JSON | Plans and executes through the real shim, including stdout, exit 42, detached PID publication and missing-program error extraction. |
 | `kill --all` | Implemented with runc 1.4 compatibility semantics; see the focused kill validation below. |
 | Version/features | Focused metadata integration passes. go-runc v1.1.0's version parser only populates values for the literal `runc version ` prefix; Swift retains its own identity, so this helper returns empty metadata. The captured shim create path did not query version. Features emit valid OCI JSON; broader engine feature negotiation is unverified. |
 | Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. Swift still rejects them explicitly. Keyring setup and no-pivot remain deferred. `--systemd-cgroup` and explicit global `--rootless` remain rejected; no systemd support is implied. |
-| Next runnable scenario | Implement requested mounts and device policy, then supplied namespace paths/bind mounts for richer bundles. Continue with a declared cgroupfs nonterminal scenario; retain remaining milestone-1 PID-publication and cleanup gates. |
+| Next runnable scenario | Bind mounts and supplied namespace paths for an image-derived containerd scenario. Directory-rootfs cgroupfs nonterminal PID/stdio/exit/cleanup behavior now has live evidence below. |
 
 ## Focused validation
 
@@ -169,9 +171,8 @@ cleanup, non-KILL init-only signaling, missing/stopped compatibility, reaped
 processes, and a separate bystander cgroup. A Swift-only stale-boot case proves
 that invalid cgroup identity cannot signal live members. The fixture explicitly
 thaws runc's empty frozen group before deleting it; Swift already thaws on kill.
-No Swift engine workload succeeds yet: device policy and mounts still block the
-captured create, and shim-owned PID publication/exit cleanup still needs engine
-execution evidence.
+At the kill checkpoint (`02dd277`), device policy still blocked create. The later
+device-policy follow-up below supplies the first successful engine execution.
 
 ## Follow-up: requested filesystem mounts
 
@@ -190,8 +191,76 @@ Create-time mount tables and later init/exec results agree. A symlinked sysfs
 destination after earlier mounts fails run/create without a workload, state,
 cgroup or host mount/content change. Targeted macOS planning and CLI tests pass.
 
-A unit-only projection of the captured create JSON, removing device rules to
-isolate mount planning, now builds a plan. It is explicitly synthetic and is not
-engine execution evidence. The unchanged original captured bundle still rejects
-`linux.resources.devices`; no security field is discarded by the runtime, and
-no successful Swift engine workload is claimed.
+At the filesystem checkpoint (`bae681e`), a unit-only projection removed device
+rules to isolate mount planning. That was synthetic, not live engine evidence.
+The device-policy follow-up now plans the original unmodified captured fixture
+and runs fresh engine-generated bundles without discarding their restrictions.
+
+## Follow-up: device policy and first constrained containerd run
+
+**Verified implementation revision: `6344146`**, Linux Swift 6.4.1 debug on the
+same aarch64/kernel/package profile above. No new external dependency was added.
+The applying reference is runc v1.4.0's
+[spec conversion](https://github.com/opencontainers/runc/blob/v1.4.0/libcontainer/specconv/spec_linux.go),
+[device emulator](https://github.com/opencontainers/runc/blob/v1.4.0/vendor/github.com/opencontainers/cgroups/devices/devices_emulator.go)
+and [filter builder](https://github.com/opencontainers/runc/blob/v1.4.0/vendor/github.com/opencontainers/cgroups/devices/devicefilter.go).
+The inspected emulator/filter files match those in the local newer checkout.
+
+Nonempty `linux.resources.devices` is decoded strictly, normalized, then compiled
+into a forward-only cgroup-device BPF program. Wildcard resets, permission merge
+and standard-device ordering follow the reference. Kernel load/attach errors
+fail setup before any init exists, with verifier diagnostics when available.
+BPF `ALLOW_MULTI` preserves ancestor and externally attached filters. Cleanup
+uses the owned program ID and verified cgroup inode/boot identity, including on
+an adopted cgroup or a failed create. Live device-rule updates are explicitly
+rejected; ordinary memory/pids/CPU updates retain the existing policy and filter.
+Partial denies reject any overlapping access, including O_RDWR with a denied
+read/write bit, which is stricter than runc 1.4's combined-access subset check.
+Custom device inode declarations (`linux.devices`) remain unsupported.
+
+Fresh verification:
+
+- Linux: 184 runtime unit tests passed, then focused policy/fixture/metadata checks
+  passed after the final small validation/help edits. Targeted macOS policy,
+  resource-update, captured-fixture and CLI checks passed.
+- Debug integrations `devices`, `cgroup`, `update`, and `lifecycle` passed.
+  Device probes exercise successful standard-device opens, allowed versus denied
+  custom-device opens, read/write masks, mknod, and init/exec policy. Their
+  unallocated PTY slave returns ENXIO/EIO after an allowed custom open, versus
+  EPERM from the filter when denied; successful `/dev/null` I/O is also checked.
+- The device suite checks an adopted leaf with another program, failure cleanup,
+  restrictive ancestor preservation, retained policy after resource updates,
+  refused device patches, and fail-closed setup with BPF/SYS_ADMIN removed from
+  bounding, inheritable and ambient capability sets. The partial-deny combined
+  access case is Swift-only; shared profiles compare with installed runc.
+- The explicit [containerd integration](../scripts/containerd-integration.sh)
+  passed against the running 2.2.2 daemon using the Swift binary as `--runc-binary`.
+  [Captured output](engine-baseline/containerd-success.txt) records this run.
+
+```sh
+sh scripts/containerd-integration.sh \
+  .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock
+```
+
+The script creates an isolated containerd namespace, runtime root and cgroup
+subtree, and builds a directory rootfs from the pinned static BusyBox above.
+It proves shim-owned init PID publication, stdout from exec, exec exit 42,
+detached exec PID publication, missing-executable error extraction, SIGKILL-all,
+reaped init/exec processes, closed shim FDs, state/cgroup removal, attached
+stdin/stdout/stderr and EOF with exit 17, and failed-create cleanup. It does not
+change a daemon default. The daemon's task list was empty after the runs.
+
+Immediate stdin EOF before task setup hung under both Swift and runc in this
+ctr version. Its source assigns the stdin-close callback only after NewTask;
+that is a plausible early-close race, not a demonstrated Swift runtime defect.
+The repeatable test holds its FIFO writer open until the task is RUNNING, then
+sends input and closes it, proving actual EOF without a fixed startup delay.
+
+This is **rootful cgroup v2/cgroupfs, UID 0, nonterminal, directory rootfs**, with
+the engine's capability/rlimit/no-new-privileges and device policy applied. No
+seccomp, requested LSM label, hooks, session-keyring isolation, user mapping,
+bridge networking, image unpacking or TTY was tested. It is not ordinary Docker
+support or completion of the image-derived containerd milestone. Bind mounts,
+supplied namespace paths and cgroup mounts remain next; default security and
+console support still gate Docker. Full release/debug matrices and another
+architecture remain deferred to review/milestone validation.

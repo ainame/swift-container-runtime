@@ -4,7 +4,7 @@ An educational Linux container runtime written in Swift. Explore how namespaces,
 root filesystems, process isolation, and cgroups fit together in a small OCI runtime.
 
 **For learning and experimentation.** This is not a production runtime or a security
-boundary. Seccomp, device-cgroup controls, user namespaces, rootless operation,
+boundary. Seccomp, custom device entries, user namespaces, rootless operation,
 and terminals are not implemented. The [roadmap](docs/roadmap.md) targets
 kontainer-runtime-level functionality and eventual Docker integration.
 
@@ -38,7 +38,7 @@ For command options:
 - Container lifecycle: create, start, run, exec, inspect, signal, and delete.
 - Namespaces, a separate root filesystem, proc/tmpfs/devpts/sysfs/mqueue mounts, read-only
   roots and path controls, credentials, capabilities, and resource limits.
-- cgroup v2 memory, pids, CPU and cpuset controls; pause/resume, updates,
+- cgroup v2 memory, pids, CPU, cpuset and device controls; pause/resume, updates,
   process listing, statistics, and OOM events.
 
 The `namespace-run` command offers a smaller experiment without an OCI bundle
