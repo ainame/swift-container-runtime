@@ -38,7 +38,7 @@ The semantics follow runc:
 
 ### Lifecycle design
 
-`exec` runs another nonterminal process in a created or running container:
+`exec` runs another process in a created or running container:
 
 ```sh
 $rt exec mybox /bin/echo hello
@@ -47,13 +47,35 @@ $rt exec --detach --pid-file worker.pid mybox /bin/sleep 60
 $rt exec --process process.json mybox
 ```
 
-Place runtime options before the container ID; all arguments after the ID are passed to the workload. The command-based form rereads process defaults from the bundle, as runc does, so that bundle must still exist. `--process` (`-p`) instead loads a standalone OCI process object; it works after bundle removal and takes precedence over command arguments and process CLI overrides. Exec joins the live init's pinned namespaces and root and the recorded cgroup, confirms execution, and returns the workload status (or zero with `--detach`). Failure cleans up its own process and leaves init alone. It refuses paused or stopped containers. `--additional-gids` (`-g`, numeric, repeatable) appends to the configured supplementary groups as runc does, validated with them (below 4294967295, at most 65536 in total); absent, the configured groups are kept. `--no-new-privs` sets `no_new_privs`; absent, `process.noNewPrivileges` is kept. runc also accepts `--no-new-privs=false` to clear a configured setting; that explicit-false form is not supported here and is rejected. A paused container refuses exec unless `--ignore-paused` is given; then exec waits, without holding the state lock, until the same init and cgroup are resumed, and fails if the container is killed, deleted, or recreated meanwhile. Unlike runc, which forks the process into the frozen cgroup, nothing is forked before resume. `--cap` (`-c`, repeatable, exact names such as `CAP_KILL`) appends to the bounding, effective, and permitted sets as runc does, never to inheritable; when the configured process has an inheritable set (even empty), a requested capability that is in it is also appended to ambient, which matches what runc ends with after warning that raising the others failed. Without `process.capabilities` the request starts from an empty object (runc would dereference nil), so the exec process holds only the requested capabilities rather than the inherited ones. Unknown names are rejected rather than ignored, and `--process` ignores `--cap`. Terminals, signal forwarding, sub-cgroups, socket activation (`LISTEN_FDS`), and console socket handoff remain to be added.
+Place runtime options before the container ID; all arguments after the ID are passed to the workload. The command-based form rereads process defaults from the bundle, as runc does, so that bundle must still exist. `--process` (`-p`) instead loads a standalone OCI process object; it works after bundle removal and takes precedence over command arguments and process CLI overrides. Exec joins the live init's pinned namespaces and root and the recorded cgroup, confirms execution, and returns the workload status (or zero with `--detach`). Failure cleans up its own process and leaves init alone. It refuses paused or stopped containers. `--additional-gids` (`-g`, numeric, repeatable) appends to the configured supplementary groups as runc does, validated with them (below 4294967295, at most 65536 in total); absent, the configured groups are kept. `--no-new-privs` sets `no_new_privs`; absent, `process.noNewPrivileges` is kept. runc also accepts `--no-new-privs=false` to clear a configured setting; that explicit-false form is not supported here and is rejected. A paused container refuses exec unless `--ignore-paused` is given; then exec waits, without holding the state lock, until the same init and cgroup are resumed, and fails if the container is killed, deleted, or recreated meanwhile. Unlike runc, which forks the process into the frozen cgroup, nothing is forked before resume. `--cap` (`-c`, repeatable, exact names such as `CAP_KILL`) appends to the bounding, effective, and permitted sets as runc does, never to inheritable; when the configured process has an inheritable set (even empty), a requested capability that is in it is also appended to ambient, which matches what runc ends with after warning that raising the others failed. Without `process.capabilities` the request starts from an empty object (runc would dereference nil), so the exec process holds only the requested capabilities rather than the inherited ones. Unknown names are rejected rather than ignored, and `--process` ignores `--cap`. Foreground terminals, signal forwarding, sub-cgroups and socket activation (`LISTEN_FDS`) remain to be added; detached terminals are described below.
 
 `run`, `create`, and `exec` accept `--preserve-fds N` (before the container ID), as runc does: caller descriptors 3 through 2+N reach the workload at the same numbers, and everything from 3+N up is marked close-on-exec. The runtime never closes, renumbers, or chowns them, and does not check their type. For `create`, the waiting init holds them until `start`. Each one must be open and not close-on-exec. This is checked once before any state, lock, or plan descriptor exists, so a missing descriptor cannot be silently filled by one of the runtime's own, and again just before the fork. Every runtime descriptor is close-on-exec, so this proves that none of them sit in the range. This is stricter than runc, which accepts any open descriptor, so its own handle can fill a hole. Negative counts are rejected, where runc ignores them. A count whose first unpreserved descriptor, 3+N, would exceed the 32-bit descriptor range is also an error. The shared setup applies configured limits, credentials, and capabilities; the detailed exec security matrix remains future validation.
 
 `--pidfd-socket PATH` (on `create`, `run`, and `exec`) connects to a host AF_UNIX stream socket before forking; the new process opens its own pidfd and sends it with one `SCM_RIGHTS` message labelled `standard` (container init, after rootfs and hostname setup, before `no_new_privs` and credentials) or `setns` (exec, before `no_new_privs`), as runc does.
 
 A leading `@` names an abstract socket and the Go `DialUnix` length limits apply. As in runc, a relative path resolves in the bundle for `run`, `create`, and command-form `exec`, and in the caller's working directory for `exec --process`; the runtime never changes its own working directory and connects through an O_PATH handle instead. The socket is dialled only after the container ID, state, and plan are accepted, just before the fork, so a refused ID never connects. A failed connect or send fails the launch and cleans up. In the foreground, the launcher holds its copy of the connection until the workload exits, so the listener sees EOF only then. Deliberate differences: an empty value is rejected (runc ignores it), and a kernel without `pidfd_open` fails in the child rather than in a pre-check.
+
+### Terminals and `--console-socket`
+
+`process.terminal` is supported for detached processes, as engines use it:
+`create`, `run --detach` and `exec --detach` take `--console-socket PATH` (same
+address and relative-path rules as `--pidfd-socket`), and command-form `exec`
+takes `--tty`/`-t`. runc's contract is checked before any state exists: a
+detached terminal needs a console socket, and a console socket needs a detached
+terminal process. A foreground terminal, which runc proxies through its own stdio,
+is rejected as not implemented.
+
+The init opens a pseudoterminal right after `pivot_root`, as runc's setupConsole
+does: `/dev/pts/ptmx` is pinned with O_PATH, must be the devpts 5:2 device and is
+reopened read-write as that same file; the peer comes from TIOCGPTPEER. A
+`process.consoleSize` with both dimensions nonzero sets the initial size. The peer
+is bind-mounted onto `/dev/console` (an empty file is created, never opened as a
+device), the master goes to the socket with one `SCM_RIGHTS` message, and the
+peer becomes stdio and, through TIOCSCTTY, the controlling terminal of the init's
+new session; credential setup then gives it to the workload user. Exec does the
+same after entering the root, without `/dev/console`. The container needs a devpts
+mount at `/dev/pts`. After the handoff the engine owns the master, its I/O and
+resizing.
 
 There is no monitor process. `create` forks the usual launcher and init. The launcher reports the init's PID while it is still an unreaped child, the CLI pins it with a pidfd, records its start time and boot ID, and only then releases the launcher, which stays the init's parent until the CLI's verdict. The init completes the whole setup (namespaces, mounts, `pivot_root`, hostname, cwd, umask, `no_new_privs`, `process.rlimits`, the configured user and groups, and the `process.args[0]` lookup, which must find a file executable by that user), reports readiness, and waits with those credentials already in force. The CLI writes `state.json` and sends a commit byte; if the CLI fails or dies before that, the init sees EOF and exits, and the failed create kills it through the pidfd and removes the state directory. A detached init has no parent-death signal and starts a new session.
 
@@ -215,7 +237,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `process.noNewPrivileges` | Sets `PR_SET_NO_NEW_PRIVS` before the user switch. |
 | `process.capabilities` | `bounding`, `effective`, `inheritable`, `permitted`, `ambient`, with exact names such as `CAP_CHOWN`. As in runc, an absent (or `null`) object leaves the inherited sets alone; a present object replaces all five, and an absent member is empty, so `{}` drops every capability, the bounding set and inherited ambient capabilities included. Unknown names, names above the kernel's `cap_last_cap`, and ambient outside permitted ∩ inheritable are rejected before launch, where runc warns and ignores them; effective outside permitted is rejected before launch too (runc fails at `capset`). As in runc, permitted may exceed bounding (`execve` drops the excess) and inheritable may exceed bounding when the caller already has those bits inheritable; whatever the kernel's `capset` refuses (for example a permitted capability the runtime lacks) fails setup with that requirement in the error. |
 | `process.rlimits` | `type`, `soft`, `hard` for the sixteen Linux names runc accepts (`RLIMIT_CPU` … `RLIMIT_RTTIME`). Values are 64-bit, and `18446744073709551615` means unlimited. An absent, `null`, or empty list keeps the caller's limits. As in runc, every entry is applied in input order with one `prlimit64` per entry, repeats included, so an earlier entry the kernel refuses fails setup even if a later one of the same type would be grantable. Unknown names and soft above hard are rejected before launch (runc fails at its `prlimit`). A missing `soft` or `hard` is rejected; Go's decoding in runc treats it as 0. Kernel refusals fail `create` or `run` with the entry's index, for example a raised hard limit without `CAP_SYS_RESOURCE`, or `RLIMIT_NOFILE` above `fs.nr_open`. |
-| `process.terminal` | Absent or `false`; stdio is inherited directly. |
+| `process.terminal`, `process.consoleSize` | `false` (or absent) inherits stdio directly. `true` needs a detached launch with `--console-socket`; see [terminals](#terminals-and---console-socket). A size applies only when height and width are both nonzero (at most 65535). |
 | `hostname` | Requires a `uts` namespace. |
 | `linux.seccomp` | libseccomp-backed syscall filters for init and every exec; see the policy details below. |
 | `linux.namespaces` | New `mount` (required), `pid`, `uts`, `ipc`, `network` namespaces. A nonempty absolute `network.path` joins an existing network namespace; other namespace paths and relative paths are rejected. Absent, null or empty paths create the listed namespace; omitted types inherit the caller's namespace. Newly created networks are left unconfigured, including loopback. |
@@ -284,9 +306,9 @@ The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The ru
 
 ## Not yet implemented
 
-The lifecycle lacks console sockets, no-pivot, foreground signal forwarding,
-and hooks. Seccomp, custom devices, cgroup mounts, broader mount options and supplied namespace joins are also missing.
-Terminals, user namespace mappings/rootless operation, additional process settings,
+The lifecycle lacks foreground terminals, no-pivot, foreground signal forwarding,
+and hooks. Custom devices, cgroup mounts, broader mount options and non-network namespace joins are also missing.
+User namespace mappings/rootless operation, additional process settings,
 hugepages, block I/O, unified controls and exec sub-cgroups remain feature gaps.
 Musl/static builds have not been verified.
 

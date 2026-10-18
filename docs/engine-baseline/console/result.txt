@@ -1,0 +1,11 @@
+== runtime: .build/linux-static/debug/swift-container-runtime
+sha256 aef0451e31645480bb55cfefe88d182a546a4954a88a3071a510fbf24b11cb3e (7096a77 debug, --static-swift-stdlib)
+run -t: init terminal, shim resize to 30x100, controlling terminal and exit 3
+exec -t: separate exec terminal, shim resize to 40x120, controlling terminal and exit 4
+containerd-console: PASS (attached run and exec terminals through the shim, cleanup)
+== runtime: /usr/sbin/runc
+runc version 1.4.0-0ubuntu1
+run -t: init terminal, shim resize to 30x100, controlling terminal and exit 3
+exec -t: separate exec terminal, shim resize to 40x120, controlling terminal and exit 4
+containerd-console: PASS (attached run and exec terminals through the shim, cleanup)
+host: Ubuntu 26.04.1 LTS, kernel 7.0.0-34-generic, containerd 2.2.2

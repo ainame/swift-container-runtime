@@ -168,5 +168,7 @@ session keyrings now pass direct and image-backed init/exec identity/shared-key
 checks, with a persistent explicit opt-out. Requested AppArmor/SELinux labels and
 key-creation labeling are implemented; AppArmor confinement passes direct runc
 comparisons and containerd's default profile on an Ubuntu host, while SELinux
-lacks positive evidence. Next: console gates (PTY, console-socket handoff).
+lacks positive evidence. Detached terminals now pass direct runc comparisons and
+containerd's attached `run -t`/`exec -t` through the shim. Next: Docker experimental
+registration (milestone 6) on the Ubuntu VM with default security.
 Never discard requested security fields to advance it.

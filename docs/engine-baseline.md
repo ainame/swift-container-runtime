@@ -649,3 +649,34 @@ Not verified: positive SELinux application and key labeling (no SELinux-enforcin
 host), AppArmor together with the seccomp default profile through the engine, a
 Docker-generated `docker-default` profile, and release builds. The rest of the
 Profile B suite matrix was not run there.
+
+## Terminals through the shim
+
+Implementation `7096a77` allocates terminals for detached init and exec and hands
+the master to `--console-socket` (see
+[runtime reference](runtime-reference.md#terminals-and---console-socket)).
+
+- Apple `container` guest (Profile A): the `console` suite passes for Swift and
+  runc with identical normalized output: create/start init with `consoleSize`
+  30x100, stdio and controlling terminal on the peer, uid-1000 ownership,
+  `/dev/console` as 136:0 (`88:0` in hex), input through the master; `exec -d -t`
+  and `exec -d --process` with its own 40x120 size. Swift-only refusals cover a
+  missing or needless console socket, a foreground terminal and a missing devpts
+  mount, without state or workload. pidfd-socket, preserve-fds, oci, lifecycle,
+  credentials, metadata and logging pass; Linux unit targets have 212 runtime tests.
+- Ubuntu AppArmor VM (Profile B, containerd 2.2.2): `scripts/containerd-console-integration.sh`
+  runs `ctr run -t --rm` and `ctr tasks exec -t` on a `script(1)` terminal. The
+  shim resizes each terminal to the caller's size (30x100, 40x120), the workloads
+  see a controlling terminal, exit statuses 3 and 4 propagate, and state is removed.
+  [Results](engine-baseline/console/result.txt) show the same gate passing with the
+  `7096a77` debug binary and with runc 1.4.0. The shim's resize lands just after
+  start with both runtimes, so the probe reads the size after a short delay.
+
+```sh
+sudo sh scripts/containerd-console-integration.sh BINARY /run/containerd/containerd.sock \
+  sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+Not verified: Docker `run -it`/`exec -it`, later resizes (SIGWINCH) beyond the
+initial one, release builds, and the runtime's own foreground terminal proxy,
+which is not implemented.
