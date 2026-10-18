@@ -26,7 +26,7 @@ func rejectsInvalidArguments(_ arguments: [String]) {
 @Test func rejectsMultithreadedCallerBeforeForking() throws {
     // Swift Testing's concurrent executor supplies a real multithreaded caller.
     // Check that premise explicitly rather than risk exercising the launch path.
-    try #require(launchThreadCount() > 1)
+    try #require(ProcFS.threadCount() > 1)
     let command = try NamespaceCommand(hostname: "must-not-launch", arguments: ["/bin/true"])
     do {
         _ = try command.run()

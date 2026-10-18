@@ -70,4 +70,23 @@ enum ProcFS {
         return own == other
     }
 }
+extension ProcFS {
+    /// The Swift bootstrap requires a single-threaded caller, with no concurrent
+    /// thread creation or signal handler that introduces background work.
+    static func threadCount() throws -> Int {
+        guard let directory = unsafe opendir("/proc/self/task") else {
+            throw RuntimeError.launch(.inspectThreads)
+        }
+        defer { _ = unsafe closedir(directory) }
+        var count = 0
+        errno = 0
+        while let entry = unsafe readdir(directory) {
+            // Proc task names are decimal TIDs; ignore '.' and '..'.
+            let first = unsafe entry.pointee.d_name.0
+            if first >= 48 && first <= 57 { count += 1 }
+        }
+        guard errno == 0 else { throw RuntimeError.launch(.inspectThreads) }
+        return count
+    }
+}
 #endif

@@ -78,7 +78,7 @@ private final class CgroupDirectory {
             if code == ENOENT { return 0 }
             if code == EINTR { continue }
             guard code == EBUSY, attempt < 10 else { return code }
-            sleep(milliseconds: delay)
+            CgroupRetry.wait(milliseconds: delay)
             delay *= 2
         }
         return EBUSY
@@ -213,10 +213,6 @@ private final class CgroupDirectory {
     }
 
     private func childPath(_ name: String) -> String { path == "/" ? "/" + name : path + "/" + name }
-}
-
-private func sleep(milliseconds: Int32) {
-    _ = poll(nil, 0, milliseconds)
 }
 
 /// A container's cgroup, prepared by the supervisor before the init exists.
@@ -466,7 +462,7 @@ final class CgroupLeaf {
                 guard waited < 10_000 else {
                     throw RuntimeError("processes in cgroup \(current.displayPath) remain 10 seconds after cgroup.kill")
                 }
-                sleep(milliseconds: 10)
+                CgroupRetry.wait(milliseconds: 10)
                 waited += 10
             }
         }
@@ -605,7 +601,7 @@ final class CgroupLeaf {
     private static func waitFrozen(_ directory: CgroupDirectory) throws {
         for _ in 0..<1000 {
             if try directory.keyedValue("cgroup.events", "frozen") == "1" { return }
-            sleep(milliseconds: 10)
+            CgroupRetry.wait(milliseconds: 10)
         }
         throw RuntimeError("cgroup \(directory.displayPath) did not freeze within 10 seconds")
     }
@@ -685,6 +681,12 @@ extension CgroupDirectory {
             if let size = CgroupFile.hugePageSize(directoryEntry: name) { sizes.append(size) }
         }
         return sizes
+    }
+}
+/// Synchronous backoff for bounded cgroup kernel transitions.
+private enum CgroupRetry {
+    static func wait(milliseconds: Int32) {
+        _ = poll(nil, 0, milliseconds)
     }
 }
 #endif

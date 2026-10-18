@@ -107,16 +107,16 @@ extension OCIProcessPlan {
         let firstInternal = hooks.preserved.closeRangeStart
         return try gids.withUnsafeBufferPointer { groups in
             unsafe try strings.withPointers { pointers in
-                unsafe try runLaunch(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
+                unsafe try NamespaceLauncher.run(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
                     guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
-                        return failureStatus(report, .markDescriptors)
+                        return LaunchRecord.reportFailure(to: report, at: .markDescriptors)
                     }
                     let rootCode = namespaces.enterRoot()
-                    guard rootCode == 0 else { return failureStatus(report, .enterRoot, code: rootCode) }
+                    guard rootCode == 0 else { return LaunchRecord.reportFailure(to: report, at: .enterRoot, code: rootCode) }
                     // As runc's setns init: inside the container, before
                     // no_new_privs and the credential switch.
                     if let failure = pidfdSocket?.handOff(label: .setns) {
-                        return failureStatus(report, failure.stage, code: failure.code)
+                        return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code)
                     }
                     return unsafe finishContainerProcess(
                         argv: pointers + starts[0], environment: pointers + starts[1],

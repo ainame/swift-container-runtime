@@ -101,7 +101,7 @@ final class PidfdSocket {
             pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: handle))
             target = try PidfdSocketAddress("/proc/self/fd/\(handle)")
         }
-        let code = try connection.withDescriptor { connectStream($0, to: target) }
+        let code = try connection.withDescriptor { Self.connect($0, to: target) }
         try? pinned.close()
         guard code == 0 else {
             throw RuntimeError("connect to --pidfd-socket \(address.path): \(Errno(rawValue: code))")
@@ -127,7 +127,7 @@ final class PidfdSocket {
         guard raw >= 0 else { return (.pidfdOpen, errno) }
         let pidfd = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         let code = (try? connection.withDescriptor { socket in
-            try pidfd.withDescriptor { sendDescriptor($0, over: socket, label: Array(label.rawValue.utf8)) }
+            try pidfd.withDescriptor { Self.send($0, over: socket, label: Array(label.rawValue.utf8)) }
         }) ?? EBADF
         return code == 0 ? nil : (.pidfdSend, code)
     }
@@ -139,60 +139,62 @@ final class PidfdSocket {
     }
 }
 
-/// Connects a blocking stream socket to `address`. Returns 0 or errno.
-private func connectStream(_ socket: FileDescriptor, to address: PidfdSocketAddress) -> Int32 {
-    var storage = sockaddr_un()
-    storage.sun_family = sa_family_t(AF_UNIX)
-    let path = address.sunPath
-    withUnsafeMutableBytes(of: &storage.sun_path) { buffer in
-        for (index, byte) in path.enumerated() { unsafe buffer[index] = byte }
-    }
-    // sun_path directly follows the two-byte sun_family.
-    let length = socklen_t(MemoryLayout<sa_family_t>.size + address.sunPathLength)
-    let result = withUnsafePointer(to: &storage) { pointer in
-        unsafe pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
-            unsafe connect(socket.rawValue, generic, length)
+private extension PidfdSocket {
+    /// Connects a blocking stream socket to `address`. Returns 0 or errno.
+    static func connect(_ socket: FileDescriptor, to address: PidfdSocketAddress) -> Int32 {
+        var storage = sockaddr_un()
+        storage.sun_family = sa_family_t(AF_UNIX)
+        let path = address.sunPath
+        withUnsafeMutableBytes(of: &storage.sun_path) { buffer in
+            for (index, byte) in path.enumerated() { unsafe buffer[index] = byte }
         }
+        // sun_path directly follows the two-byte sun_family.
+        let length = socklen_t(MemoryLayout<sa_family_t>.size + address.sunPathLength)
+        let result = withUnsafePointer(to: &storage) { pointer in
+            unsafe pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
+                unsafe LinuxAPI.connect(socket.rawValue, generic, length)
+            }
+        }
+        return result == 0 ? 0 : errno
     }
-    return result == 0 ? 0 : errno
-}
 
-/// Sends `label` and one SCM_RIGHTS descriptor in a single message, as runc's
-/// `cmsg.SendRawFd`: no length prefix or encoding, the label bytes are the
-/// whole payload. MSG_NOSIGNAL turns a vanished listener into EPIPE instead
-/// of SIGPIPE, and EINTR retries. A short send (not expected for a few bytes
-/// on a stream) is EIO. Returns 0 or errno.
-func sendDescriptor(_ descriptor: FileDescriptor, over socket: FileDescriptor, label: [UInt8]) -> Int32 {
-    let payloadSize = MemoryLayout<Int32>.size
-    let space = linux_cmsg_space(payloadSize)
-    // CMSG_LEN(0) is the aligned header size, where CMSG_DATA begins.
-    let dataOffset = linux_cmsg_len(0)
-    guard dataOffset + payloadSize <= space else { return EINVAL }
-    var header = cmsghdr()
-    header.cmsg_len = numericCast(linux_cmsg_len(payloadSize))
-    header.cmsg_level = Int32(SOL_SOCKET)
-    header.cmsg_type = Int32(SCM_RIGHTS)
-    var payload = label
-    return payload.withUnsafeMutableBytes { bytes in
-        // Raw control bytes with cmsghdr's alignment, zeroed so padding is
-        // defined. The header value and the descriptor are copied in as plain
-        // bytes at disjoint offsets; the memory is never bound to cmsghdr.
-        withUnsafeTemporaryAllocation(byteCount: space, alignment: MemoryLayout<cmsghdr>.alignment) { control in
-            unsafe control.initializeMemory(as: UInt8.self, repeating: 0)
-            unsafe control.storeBytes(of: header, toByteOffset: 0, as: cmsghdr.self)
-            unsafe control.storeBytes(of: descriptor.rawValue, toByteOffset: dataOffset, as: Int32.self)
-            var vector = unsafe iovec(iov_base: bytes.baseAddress, iov_len: bytes.count)
-            return withUnsafeMutablePointer(to: &vector) { vectorPointer in
-                var message = unsafe msghdr()
-                unsafe message.msg_iov = vectorPointer
-                unsafe message.msg_iovlen = 1
-                unsafe message.msg_control = control.baseAddress
-                unsafe message.msg_controllen = numericCast(space)
-                var sent: Int
-                repeat { sent = unsafe sendmsg(socket.rawValue, &message, Int32(MSG_NOSIGNAL)) }
-                while sent < 0 && errno == EINTR
-                guard sent >= 0 else { return errno }
-                return sent == bytes.count ? 0 : EIO
+    /// Sends `label` and one SCM_RIGHTS descriptor in a single message, as runc's
+    /// `cmsg.SendRawFd`: no length prefix or encoding, the label bytes are the
+    /// whole payload. MSG_NOSIGNAL turns a vanished listener into EPIPE instead
+    /// of SIGPIPE, and EINTR retries. A short send (not expected for a few bytes
+    /// on a stream) is EIO. Returns 0 or errno.
+    static func send(_ descriptor: FileDescriptor, over socket: FileDescriptor, label: [UInt8]) -> Int32 {
+        let payloadSize = MemoryLayout<Int32>.size
+        let space = linux_cmsg_space(payloadSize)
+        // CMSG_LEN(0) is the aligned header size, where CMSG_DATA begins.
+        let dataOffset = linux_cmsg_len(0)
+        guard dataOffset + payloadSize <= space else { return EINVAL }
+        var header = cmsghdr()
+        header.cmsg_len = numericCast(linux_cmsg_len(payloadSize))
+        header.cmsg_level = Int32(SOL_SOCKET)
+        header.cmsg_type = Int32(SCM_RIGHTS)
+        var payload = label
+        return payload.withUnsafeMutableBytes { bytes in
+            // Raw control bytes with cmsghdr's alignment, zeroed so padding is
+            // defined. The header value and the descriptor are copied in as plain
+            // bytes at disjoint offsets; the memory is never bound to cmsghdr.
+            withUnsafeTemporaryAllocation(byteCount: space, alignment: MemoryLayout<cmsghdr>.alignment) { control in
+                unsafe control.initializeMemory(as: UInt8.self, repeating: 0)
+                unsafe control.storeBytes(of: header, toByteOffset: 0, as: cmsghdr.self)
+                unsafe control.storeBytes(of: descriptor.rawValue, toByteOffset: dataOffset, as: Int32.self)
+                var vector = unsafe iovec(iov_base: bytes.baseAddress, iov_len: bytes.count)
+                return withUnsafeMutablePointer(to: &vector) { vectorPointer in
+                    var message = unsafe msghdr()
+                    unsafe message.msg_iov = vectorPointer
+                    unsafe message.msg_iovlen = 1
+                    unsafe message.msg_control = control.baseAddress
+                    unsafe message.msg_controllen = numericCast(space)
+                    var sent: Int
+                    repeat { sent = unsafe sendmsg(socket.rawValue, &message, Int32(MSG_NOSIGNAL)) }
+                    while sent < 0 && errno == EINTR
+                    guard sent >= 0 else { return errno }
+                    return sent == bytes.count ? 0 : EIO
+                }
             }
         }
     }

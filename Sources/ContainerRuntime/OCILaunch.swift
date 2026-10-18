@@ -117,7 +117,7 @@ extension OCIRunPlan {
         let firstInternal = hooks.preserved.closeRangeStart
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
-                unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
+                unsafe try NamespaceLauncher.run(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
                     unsafe initializeContainer(
                         strings: pointers, starts: starts, searchesPath: searchesPath, mounts: mounts, populatesDev: populatesDev, readonlyRoot: readonlyRoot,
                         security: security, supplementaryGids: gidBuffer,
@@ -164,7 +164,7 @@ private func initializeContainer(
     // the rootfs) must not reach the workload. Mark rather than close them, so
     // the CLOEXEC report pipe still works for failures before exec. Only
     // --preserve-fds descriptors below `firstInternal` stay inheritable.
-    guard linux_mark_descriptors_cloexec(firstInternal) == 0 else { return failureStatus(report, .markDescriptors) }
+    guard linux_mark_descriptors_cloexec(firstInternal) == 0 else { return LaunchRecord.reportFailure(to: report, at: .markDescriptors) }
 
     // The rootfs is trusted input that must not change during setup. Pin the
     // canonical directory, bind it onto its own path (pivot_root needs a mount
@@ -172,20 +172,20 @@ private func initializeContainer(
     // that path is the pinned directory. This detects a replaced final
     // component; it does not make setup race-free against host processes.
     let pinnedRaw = unsafe linux_open_path(AT_FDCWD, rootfs, O_DIRECTORY | O_NOFOLLOW)
-    guard pinnedRaw >= 0 else { return failureStatus(report, .openRootfs) }
+    guard pinnedRaw >= 0 else { return LaunchRecord.reportFailure(to: report, at: .openRootfs) }
     var pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: pinnedRaw))
     let bound = (try? pinned.withDescriptor { descriptor in
         "/proc/self/fd/\(descriptor.rawValue)".withCString { source in
             unsafe mount(source, rootfs, nil, UInt(MS_BIND | MS_REC), nil)
         }
     }) ?? -1
-    guard bound == 0 else { return failureStatus(report, .bindRootfs) }
+    guard bound == 0 else { return LaunchRecord.reportFailure(to: report, at: .bindRootfs) }
     let rootRaw = unsafe linux_open_path(AT_FDCWD, rootfs, O_DIRECTORY | O_NOFOLLOW)
-    guard rootRaw >= 0 else { return failureStatus(report, .openRootfs) }
+    guard rootRaw >= 0 else { return LaunchRecord.reportFailure(to: report, at: .openRootfs) }
     var root = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: rootRaw))
     guard let pinnedIdentity = pinned.identity(), let rootIdentity = root.identity(),
           pinnedIdentity == rootIdentity else {
-        return failureStatus(report, .verifyRootfs, code: ESTALE)
+        return LaunchRecord.reportFailure(to: report, at: .verifyRootfs, code: ESTALE)
     }
     try? pinned.close()
 
@@ -196,7 +196,7 @@ private func initializeContainer(
             source: unsafe filesystem[0]!, type: unsafe filesystem[1]!, flags: mount.flags.kernelFlags,
             data: unsafe filesystem[2]!
         ) {
-            return failureStatus(report, failure.stage, code: failure.code, detail: Int32(index))
+            return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code, detail: Int32(index))
         }
     }
 
@@ -207,31 +207,31 @@ private func initializeContainer(
                 populateDev(dev, linkPtmx: hasDevpts)
             }
         }) ?? EBADF
-        guard code == 0 else { return failureStatus(report, .devices, code: code) }
+        guard code == 0 else { return LaunchRecord.reportFailure(to: report, at: .devices, code: code) }
     }
 
     // pivot_root(".", ".") as in runc: the old root is stacked on the new one
     // and detached through a descriptor, without a put_old directory.
     let oldRaw = unsafe linux_open_path(AT_FDCWD, "/", O_DIRECTORY)
-    guard oldRaw >= 0 else { return failureStatus(report, .pivotRoot) }
+    guard oldRaw >= 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
     var oldRoot = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: oldRaw))
-    guard (try? root.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return failureStatus(report, .pivotRoot) }
-    guard unsafe linux_pivot_root(".", ".") == 0 else { return failureStatus(report, .pivotRoot) }
-    guard (try? oldRoot.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return failureStatus(report, .pivotRoot) }
-    guard unsafe umount2(".", Int32(MNT_DETACH)) == 0 else { return failureStatus(report, .pivotRoot) }
-    guard unsafe chdir("/") == 0 else { return failureStatus(report, .pivotRoot) }
+    guard (try? root.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
+    guard unsafe linux_pivot_root(".", ".") == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
+    guard (try? oldRoot.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
+    guard unsafe umount2(".", Int32(MNT_DETACH)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
+    guard unsafe chdir("/") == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
     try? oldRoot.close()
     try? root.close()
 
     if let hostname = unsafe group(Group.hostname)[0] {
-        guard unsafe sethostname(hostname, strlen(hostname)) == 0 else { return failureStatus(report, .hostname) }
+        guard unsafe sethostname(hostname, strlen(hostname)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .hostname) }
     }
 
     // Like runc, create a missing cwd. Paths now resolve inside the new root.
     var prefix = unsafe group(Group.cwdPrefixes)
     var directory: UnsafeMutablePointer<CChar>? = nil
     while let path = unsafe prefix[0] {
-        guard unsafe mkdir(path, 0o755) == 0 || errno == EEXIST else { return failureStatus(report, .cwd) }
+        guard unsafe mkdir(path, 0o755) == 0 || errno == EEXIST else { return LaunchRecord.reportFailure(to: report, at: .cwd) }
         unsafe directory = path
         unsafe prefix += 1
     }
@@ -243,20 +243,20 @@ private func initializeContainer(
     // child mounts such as /proc, /dev and a tmpfs keep their own flags.
     if readonlyRoot {
         let code = remountRootReadonly()
-        guard code == 0 else { return failureStatus(report, .readonlyRoot, code: code) }
+        guard code == 0 else { return LaunchRecord.reportFailure(to: report, at: .readonlyRoot, code: code) }
     }
     // runc applies linux.readonlyPaths and then linux.maskedPaths right after
     // finalizeRootfs, and only then enters the cwd and drops privileges, so a
     // cwd below a masked directory is gone and the full privilege of the init
     // performs the mounts.
     if let failure = pathControls.apply() {
-        return failureStatus(report, failure.stage, code: failure.code, detail: failure.index)
+        return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code, detail: failure.index)
     }
     // runc's standard init sends its pidfd here: in the container's PID
     // namespace and root, before no_new_privs, credentials, and readiness. A
     // failure fails create or run.
     if let failure = pidfdSocket?.handOff(label: .standard) {
-        return failureStatus(report, failure.stage, code: failure.code)
+        return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code)
     }
     return unsafe finishContainerProcess(
         argv: group(Group.arguments), environment: group(Group.environment),
@@ -286,7 +286,7 @@ func finishContainerProcess(
     // retry after the switch only if they were denied it.
     var enterCwdAsUser = false
     if let directory = unsafe directory, unsafe chdir(directory) != 0 {
-        guard errno == EACCES || errno == EPERM else { return failureStatus(report, .cwd) }
+        guard errno == EACCES || errno == EPERM else { return LaunchRecord.reportFailure(to: report, at: .cwd) }
         enterCwdAsUser = true
     }
 
@@ -295,7 +295,7 @@ func finishContainerProcess(
     // setting is in force before the workload can execute, in either mode.
     _ = umask(mode_t(security.umask))
     if security.noNewPrivileges {
-        guard linux_set_no_new_privileges() == 0 else { return failureStatus(report, .noNewPrivileges) }
+        guard linux_set_no_new_privileges() == 0 else { return LaunchRecord.reportFailure(to: report, at: .noNewPrivileges) }
     }
     // process.rlimits at runc's point: its parent calls prlimit on the init
     // at procReady, after no_new_privs and before finalizeNamespace changes
@@ -305,7 +305,7 @@ func finishContainerProcess(
     // the start handshake then run under the limits, as runc's init does.
     // A failure fails create or run before readiness.
     if let index = applyResourceLimits(resourceLimits) {
-        return failureStatus(report, .setResourceLimit, detail: index)
+        return LaunchRecord.reportFailure(to: report, at: .setResourceLimit, detail: index)
     }
     // An explicit process.capabilities follows runc's finalizeNamespace:
     // reduce the bounding set while the init still holds CAP_SETPCAP (the
@@ -318,23 +318,23 @@ func finishContainerProcess(
             // set needs no CAP_SETPCAP.
             let present = linux_read_bounding_capability(capability)
             guard present >= 0, present == 0 || linux_drop_bounding_capability(capability) == 0 else {
-                return failureStatus(report, .dropBoundingCapability, detail: capability)
+                return LaunchRecord.reportFailure(to: report, at: .dropBoundingCapability, detail: capability)
             }
         }
-        guard linux_set_keep_capabilities(1) == 0 else { return failureStatus(report, .keepCapabilities) }
+        guard linux_set_keep_capabilities(1) == 0 else { return LaunchRecord.reportFailure(to: report, at: .keepCapabilities) }
     }
     let stdioCode = giveStdio(to: uid_t(security.uid))
-    guard stdioCode == 0 else { return failureStatus(report, .stdioOwnership, code: stdioCode) }
+    guard stdioCode == 0 else { return LaunchRecord.reportFailure(to: report, at: .stdioOwnership, code: stdioCode) }
     // setgroups always runs, so an empty list clears the caller's groups;
     // setgid must precede setuid, which gives up the right to change groups.
     // Unless keepcaps was set above, a non-zero uid also loses every capability.
     guard unsafe setgroups(supplementaryGids.count, supplementaryGids.baseAddress) == 0 else {
-        return failureStatus(report, .supplementaryGroups)
+        return LaunchRecord.reportFailure(to: report, at: .supplementaryGroups)
     }
-    guard setgid(gid_t(security.gid)) == 0 else { return failureStatus(report, .setGroupID) }
-    guard setuid(uid_t(security.uid)) == 0 else { return failureStatus(report, .setUserID) }
+    guard setgid(gid_t(security.gid)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .setGroupID) }
+    guard setuid(uid_t(security.uid)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .setUserID) }
     if enterCwdAsUser, let directory = unsafe directory {
-        guard unsafe chdir(directory) == 0 else { return failureStatus(report, .cwd) }
+        guard unsafe chdir(directory) == 0 else { return LaunchRecord.reportFailure(to: report, at: .cwd) }
     }
 
     // Then runc's ApplyCaps: clear keepcaps so exec semantics are standard,
@@ -343,17 +343,17 @@ func finishContainerProcess(
     // and replace whatever ambient set remains with the configured one.
     // Without the object, the inherited sets stay as setuid left them.
     if let capabilities {
-        guard linux_set_keep_capabilities(0) == 0 else { return failureStatus(report, .keepCapabilities) }
+        guard linux_set_keep_capabilities(0) == 0 else { return LaunchRecord.reportFailure(to: report, at: .keepCapabilities) }
         guard linux_set_capabilities(
             capabilities.effective.mask, capabilities.permitted.mask, capabilities.inheritable.mask
         ) == 0 else {
-            return failureStatus(report, .setCapabilities)
+            return LaunchRecord.reportFailure(to: report, at: .setCapabilities)
         }
-        guard linux_clear_ambient_capabilities() == 0 else { return failureStatus(report, .clearAmbientCapabilities) }
+        guard linux_clear_ambient_capabilities() == 0 else { return LaunchRecord.reportFailure(to: report, at: .clearAmbientCapabilities) }
         for capability in stride(from: Int32(0), through: lastCapability, by: 1)
         where capabilities.ambient.contains(Int(capability)) {
             guard linux_raise_ambient_capability(capability) == 0 else {
-                return failureStatus(report, .raiseAmbientCapability, detail: capability)
+                return LaunchRecord.reportFailure(to: report, at: .raiseAmbientCapability, detail: capability)
             }
         }
     }
@@ -362,10 +362,10 @@ func finishContainerProcess(
     // signal; rearm it and recheck the launcher before going further.
     // A detached init has neither, and stays independent of this process.
     if foreground {
-        switch restoreParentDeathSignal(launcher) {
+        switch NamespaceLauncher.restoreParentDeathSignal(launcher) {
         case true?: break
         case false?: return 125
-        case nil: return failureStatus(report, .parentLifetime)
+        case nil: return LaunchRecord.reportFailure(to: report, at: .parentLifetime)
         }
     }
 
@@ -388,15 +388,15 @@ func finishContainerProcess(
         // Go reports only ErrNotFound for a search, whatever each candidate's
         // error was, and refuses (ErrDot) a first match from a relative or
         // empty PATH element instead of trying later elements.
-        guard let found = unsafe found else { return failureStatus(report, .findExecutable, code: 0) }
+        guard let found = unsafe found else { return LaunchRecord.reportFailure(to: report, at: .findExecutable, code: 0) }
         guard unsafe found[0] == CChar(UInt8(ascii: "/")) else {
-            return failureStatus(report, .relativeExecutable, code: 0)
+            return LaunchRecord.reportFailure(to: report, at: .relativeExecutable, code: 0)
         }
         unsafe file = found
     } else {
         // An explicit path, absolute or relative to the cwd, reports its own error.
         let lookup = unsafe executableError(executables[0]!)
-        guard lookup == 0 else { return failureStatus(report, .execute, code: lookup) }
+        guard lookup == 0 else { return LaunchRecord.reportFailure(to: report, at: .execute, code: lookup) }
         unsafe file = executables[0]!
     }
 
@@ -406,15 +406,15 @@ func finishContainerProcess(
         // start (for example under RLIMIT_NOFILE 3) fails create now
         // instead of exiting right after readiness.
         let capacity = gate.acceptCapacityError()
-        guard capacity == 0 else { return failureStatus(report, .startDescriptor, code: capacity) }
-        guard writeRecord(report, LaunchRecord(.ready)) else { return 125 }
+        guard capacity == 0 else { return LaunchRecord.reportFailure(to: report, at: .startDescriptor, code: capacity) }
+        guard LaunchRecord(.ready).write(to: report) else { return 125 }
         // EOF instead of the commit: the creator failed or died before
         // recording this init, so nothing could ever start or delete it.
-        guard receiveCommit(commit) else { return 125 }
+        guard (LaunchControl.receive(from: commit) == .commit) else { return 125 }
         return unsafe gate.serve(file: file, arguments: argv, environment: environment)
     }
     _ = unsafe execve(file, argv, environment)
-    return failureStatus(report, .execute)
+    return LaunchRecord.reportFailure(to: report, at: .execute)
 }
 
 /// Linux statvfs `f_flag` bits (<linux/statfs.h>) and the mount flags that

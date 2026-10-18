@@ -171,7 +171,7 @@ public struct ContainerLifecycle: Sendable {
         let container = try lock(id)
         let record = try container.readRecord()
         _ = try LifecycleOperation.start.action(for: try container.status(of: record), id: id)
-        try requestStart(container)
+        try StartProtocol.start(container)
         #else
         throw Self.unsupported
         #endif
@@ -485,7 +485,7 @@ extension ContainerLifecycle {
             let pidfd = try pidfdSocket.map { try PidfdSocket(connectingTo: $0, relativeTo: plan.bundle.string) }
             defer { pidfd?.close() }
             _ = try plan.runOnLinux(hooks: hooks, gate: gate, pidfdSocket: pidfd)
-            if start { try requestStart(container) }
+            if start { try StartProtocol.start(container) }
             if let pidFile, let process = record.initProcess {
                 try PIDFile.write(process.pid, to: pidFile)
             }
