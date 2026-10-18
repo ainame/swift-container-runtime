@@ -111,7 +111,12 @@ jobs:
             apparmor_parser -r .build/runtime-tools-apparmor
           fi
       - name: Run applicable OCI validation executables
-        run: python3 scripts/runtime-tools-integration.py .build/debug/srunc .build/runtime-tools-upstream .build/runtime-tools-results
+        # The job container's /tmp is overlayfs, which rejects the char 0:0
+        # nodes masked/read-only path suites create; the workspace is a host
+        # bind mount.
+        run: |
+          mkdir -p .build/runtime-tools-tmp
+          TMPDIR="$PWD/.build/runtime-tools-tmp" python3 scripts/runtime-tools-integration.py .build/debug/srunc .build/runtime-tools-upstream .build/runtime-tools-results
       - name: Remove the test AppArmor profile
         if: always()
         run: |
