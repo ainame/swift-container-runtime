@@ -139,7 +139,6 @@ public struct ProcessCapabilities: Sendable, Equatable {
     }
 }
 
-#if os(Linux)
 extension ProcessCapabilities {
     /// Checks this request against the running kernel before forking.
     func validatedKernelLimit() throws -> Int32 {
@@ -148,4 +147,3 @@ extension ProcessCapabilities {
         return Int32(last)
     }
 }
-#endif

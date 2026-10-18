@@ -301,17 +301,18 @@ func lifecycleRejectsInvalidRoots(_ root: String) {
     #expect(try ContainerLifecycle().root == FilePath("/run/swift-container-runtime"))
 }
 
-#if !os(Linux)
-@Test func lifecycleReportsUnsupportedPlatformWithoutTouchingState() throws {
-    // A path that cannot exist: no command may create it on macOS.
-    let lifecycle = try ContainerLifecycle(root: "/nonexistent-swift-container-runtime-root/state")
-    #expect(throws: RuntimeError.self) { try lifecycle.state(id: box) }
+/// Lifecycle commands on a missing root report the missing container and
+/// never create state; off Linux this is also what every command meets.
+@Test func lifecycleOnMissingRootNeverCreatesState() throws {
+    let root = "/nonexistent-swift-container-runtime-root/state"
+    let lifecycle = try ContainerLifecycle(root: root)
+    #expect(throws: LifecycleError.notFound(box)) { try lifecycle.state(id: box) }
+    #expect(throws: LifecycleError.notFound(box)) { try lifecycle.start(id: box) }
+    #expect(throws: LifecycleError.notFound(box)) { try lifecycle.kill(id: box, signal: 15) }
     #expect(throws: RuntimeError.self) { try lifecycle.list() }
-    #expect(throws: RuntimeError.self) { try lifecycle.start(id: box) }
-    #expect(throws: RuntimeError.self) { try lifecycle.kill(id: box, signal: 15) }
-    #expect(throws: RuntimeError.self) { try lifecycle.delete(id: box, force: true) }
+    _ = try? lifecycle.delete(id: box, force: true)
+    #expect(!FileManager.default.fileExists(atPath: "/nonexistent-swift-container-runtime-root"))
 }
-#endif
 
 @Test func rawResourceSettingsSurviveStateRoundTrip() throws {
     let config = try OCIConfiguration.decode(Array(#"""

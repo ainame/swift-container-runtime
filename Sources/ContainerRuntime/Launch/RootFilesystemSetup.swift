@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// Group indices in the launch string vector. Each mount adds two groups:
@@ -285,4 +284,3 @@ struct RootFilesystemSetup {
         (0x2, .noSetUserID), (0x4, .noDevices), (0x8, .noExecute), (0x2000, .noSymbolicLinkFollow),
     ]
 }
-#endif

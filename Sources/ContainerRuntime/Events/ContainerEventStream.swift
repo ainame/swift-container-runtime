@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 extension ContainerLifecycle {
@@ -175,4 +174,3 @@ private struct EventWatch: ~Copyable {
         }
     }
 }
-#endif

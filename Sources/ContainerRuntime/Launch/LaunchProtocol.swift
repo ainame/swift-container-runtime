@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 enum LaunchStage: Int32 {
@@ -219,4 +218,3 @@ extension LaunchControl {
         return byte.flatMap { LaunchControl(rawValue: $0) }
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 extension OCIRunPlan.MountFlags {
@@ -99,4 +98,3 @@ extension OCIRunPlan {
     }
 }
 
-#endif

@@ -8,7 +8,7 @@ let checkedSwiftSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "swift-container-runtime",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v27)],
     products: [
         .library(name: "ContainerRuntime", targets: ["ContainerRuntime"]),
         .executable(name: "swift-container-runtime", targets: ["RuntimeCLI"]),

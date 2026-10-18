@@ -197,7 +197,6 @@ public struct OCIRunPlan: Sendable {
     /// unique to this run, and the cgroup is removed whenever the run ends.
     @available(*, noasync, message: "launch containers before starting async work")
     public func run() throws -> Int32 {
-        #if os(Linux)
         // A transient ID from this process and a monotonic timestamp, so a
         // leftover group of an earlier run with a reused PID is not adopted.
         let now = Kernel.Process.monotonicTime()
@@ -219,9 +218,6 @@ public struct OCIRunPlan: Sendable {
             RuntimeDiagnostics.writeError("swift-container-runtime: warning: \(warning)")
         }
         return status
-        #else
-        throw RuntimeError("OCI run requires Linux")
-        #endif
     }
 
     init(_ configuration: OCIConfiguration, bundle: FilePath, rootfs: FilePath) throws {

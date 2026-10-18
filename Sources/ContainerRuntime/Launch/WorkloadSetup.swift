@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// Process preparation shared by the first workload and later exec processes.
@@ -252,4 +251,3 @@ struct WorkloadSetup {
         }
     }
 }
-#endif

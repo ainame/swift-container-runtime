@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// The file names inside a container's state directory.
@@ -377,4 +376,3 @@ private enum StateLock {
         }
     }
 }
-#endif

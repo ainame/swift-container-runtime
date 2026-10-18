@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// The start handshake between `start` and a created init.
@@ -256,4 +255,3 @@ extension StartProtocol {
         }
     }
 }
-#endif

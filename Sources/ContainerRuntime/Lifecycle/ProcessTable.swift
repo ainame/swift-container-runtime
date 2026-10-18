@@ -1,4 +1,3 @@
-
 /// Filters host ps output by the PID column, preserving the caller's
 /// requested columns and spacing rather than reconstructing each row.
 enum ProcessTable {
@@ -21,7 +20,6 @@ enum ProcessTable {
     }
 }
 
-#if os(Linux)
 import SystemPackage
 
 extension ProcessTable {
@@ -58,4 +56,3 @@ extension ProcessTable {
         return output
     }
 }
-#endif

@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// One owner for namespace and root descriptors opened while the recorded
@@ -118,4 +117,3 @@ extension OCIProcessPlan {
         }
     }
 }
-#endif

@@ -13,7 +13,15 @@ import SystemPackage
 /// file does, which a unit test checks. Kernel API uses Swift types, so C
 /// structures stay here. On other platforms Linux-only operations fail with
 /// `ENOSYS`, so the runtime still builds and its logic can be tested there.
-enum Kernel {}
+enum Kernel {
+    /// Whether the runtime is running on Linux, where every Kernel operation
+    /// is real; elsewhere Linux-only operations fail with `ENOSYS`.
+    #if os(Linux)
+    static let isLinux = true
+    #else
+    static let isLinux = false
+    #endif
+}
 
 // libc's ID types, named here so runtime files need not import libc. They are
 // the platform's own types, not new ones.

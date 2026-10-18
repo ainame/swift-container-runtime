@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// Supervisor-side configuration of a launch. Every closure runs in the
@@ -361,4 +360,3 @@ private struct LaunchProgress: ~Copyable {
         }
     }
 }
-#endif

@@ -29,13 +29,9 @@ public struct ContainerLifecycle: Sendable {
     public func create(
         id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
     ) throws {
-        #if os(Linux)
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
         let address = try pidfdSocket.map(PidfdSocketAddress.init)
         try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Runs a container. In the foreground this waits for the workload and
@@ -46,7 +42,6 @@ public struct ContainerLifecycle: Sendable {
         id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil,
         preserveDescriptors: Int = 0, pidfdSocket: String? = nil
     ) throws -> Int32 {
-        #if os(Linux)
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
         let address = try pidfdSocket.map(PidfdSocketAddress.init)
         if detach {
@@ -55,9 +50,6 @@ public struct ContainerLifecycle: Sendable {
         }
         return try runForegroundOnLinux(
             id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Runs a nonterminal process in the live container, without changing
@@ -69,7 +61,6 @@ public struct ContainerLifecycle: Sendable {
         capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil,
         ignorePaused: Bool = false, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
     ) throws -> Int32 {
-        #if os(Linux)
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
         let address = try pidfdSocket.map(PidfdSocketAddress.init)
         // Serialize acquisition with delete/start, then pin the recorded init
@@ -134,12 +125,8 @@ public struct ContainerLifecycle: Sendable {
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
         return result
-        #else
-        throw Self.unsupported
-        #endif
     }
 
-    #if os(Linux)
     /// Waits, without the state lock, until the recorded cgroup no longer
     /// requests freezing. Unlike the locked status check this never waits for
     /// freeze completion, which a concurrent resume could make time out. The
@@ -156,18 +143,13 @@ public struct ContainerLifecycle: Sendable {
         }
         guard thawed == true else { throw RuntimeError("container init is no longer running") }
     }
-    #endif
 
     /// Executes the workload of a created container exactly once.
     public func start(id: ContainerID) throws {
-        #if os(Linux)
         let container = try lock(id)
         let record = try container.readRecord()
         _ = try LifecycleOperation.start.action(for: try container.status(of: record), id: id)
         try StartProtocol.start(container)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Freezes a running container, or a created init still at its start
@@ -181,22 +163,17 @@ public struct ContainerLifecycle: Sendable {
     }
 
     private func changeFreezer(id: ContainerID, frozen: Bool) throws {
-        #if os(Linux)
         let container = try lock(id)
         let record = try container.readRecord()
         let operation: LifecycleOperation = frozen ? .pause : .resume
         _ = try operation.action(for: try container.status(of: record), id: id)
         guard let identity = record?.cgroup else { throw RuntimeError("container has no recorded cgroup") }
         try CgroupLeaf.setFrozen(identity, frozen: frozen)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Updates limits under the per-container cross-process lock. Kernel
     /// writes are not atomic; failure attempts runc's best-effort rollback.
     public func update(id: ContainerID, resources: ResourceUpdate) throws {
-        #if os(Linux)
         let container = try lock(id)
         guard var record = try container.readRecord(), let identity = record.cgroup else {
             throw RuntimeError("container has no recorded cgroup")
@@ -219,41 +196,26 @@ public struct ContainerLifecycle: Sendable {
         // source bundle may already have been removed or renamed.
         record.resourceConfiguration = merged
         try container.writeRecord(record)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// A snapshot of host PIDs in the recorded cgroup and its descendants.
     /// The state lock is released before invoking the external ps program.
     public func processIDs(id: ContainerID) throws -> [Int32] {
-        #if os(Linux)
         let container = try lock(id)
         guard let record = try container.readRecord(), let identity = record.cgroup else {
             throw RuntimeError("container has no recorded cgroup")
         }
         return try CgroupLeaf.processes(identity)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     public func processTable(id: ContainerID, arguments: [String] = []) throws -> String {
-        #if os(Linux)
         let pids = try processIDs(id: id)
         return try ProcessTable.filter(ProcessTable.readHost(arguments: arguments), pids: pids)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     public func state(id: ContainerID) throws -> ContainerStateReport {
-        #if os(Linux)
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }
         return try snapshot(root, id)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// runc's `events`: with `statsOnly`, one statistics event; otherwise
@@ -264,16 +226,11 @@ public struct ContainerLifecycle: Sendable {
     public func events(
         id: ContainerID, interval: Duration, statsOnly: Bool, emit: (ContainerEvent) throws -> Void
     ) throws {
-        #if os(Linux)
         try eventsOnLinux(id: id, interval: interval, statsOnly: statsOnly, emit: emit)
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Signals the verified init of a created or running container.
     public func kill(id: ContainerID, signal: Int32) throws {
-        #if os(Linux)
         let container = try lock(id)
         let record = try container.readRecord()
         _ = try LifecycleOperation.kill.action(for: try container.status(of: record), id: id)
@@ -284,9 +241,6 @@ public struct ContainerLifecycle: Sendable {
         if signal == Kernel.Signal.kill, let identity = record.cgroup {
             try? CgroupLeaf.setFrozen(identity, frozen: false)
         }
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Removes a stopped container. A created container's waiting init is
@@ -294,7 +248,6 @@ public struct ContainerLifecycle: Sendable {
     /// SIGKILL and waits up to 10 seconds for the init to exit. Forcing the
     /// deletion of a missing container succeeds, as in runc.
     public func delete(id: ContainerID, force: Bool) throws {
-        #if os(Linux)
         let container: LockedContainer
         do {
             container = try lock(id)
@@ -315,16 +268,12 @@ public struct ContainerLifecycle: Sendable {
             try Self.removeCgroup(record, killRemaining: action != .destroy || !record.pidNamespace)
         }
         try container.destroy()
-        #else
-        throw Self.unsupported
-        #endif
     }
 
     /// Every container under the root, sorted by ID. Entries that cannot be
     /// read are reported as warnings and skipped, as in runc. A missing
     /// default root lists nothing; a missing custom root is an error.
     public func list() throws -> (reports: [ContainerStateReport], warnings: [String]) {
-        #if os(Linux)
         guard let root = try StateRoot.open(root, create: false) else {
             if usesDefaultRoot { return ([], []) }
             throw RuntimeError("state root \(self.root) does not exist")
@@ -350,17 +299,9 @@ public struct ContainerLifecycle: Sendable {
             }
         }
         return (reports, warnings)
-        #else
-        throw Self.unsupported
-        #endif
-    }
-
-    private static var unsupported: RuntimeError {
-        RuntimeError("container lifecycle commands require Linux")
     }
 }
 
-#if os(Linux)
 extension ContainerLifecycle {
     private func lock(_ id: ContainerID) throws -> LockedContainer {
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }
@@ -552,4 +493,3 @@ extension ContainerLifecycle {
         return status
     }
 }
-#endif

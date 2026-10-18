@@ -1,6 +1,4 @@
-#if os(Linux)
 import SystemPackage
-#endif
 
 /// A `--pidfd-socket` address, accepted as runc accepts it on Linux: a filesystem path of at most 107 bytes, which leaves
 /// room for the terminating NUL in `sun_path`, or an abstract name written
@@ -46,7 +44,6 @@ enum PidfdLabel: String {
     case standard, setns
 }
 
-#if os(Linux)
 /// A stream connection to the `--pidfd-socket` listener. The runtime dials it
 /// on the host in the locked launch scope, after the container ID, state, and
 /// plan are accepted and immediately before the launch forks, as runc dials
@@ -138,4 +135,3 @@ final class PidfdSocket {
     }
 }
 
-#endif

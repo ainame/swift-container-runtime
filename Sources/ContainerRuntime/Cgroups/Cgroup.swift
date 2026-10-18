@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// One directory of the cgroup v2 hierarchy, opened beneath the mount root
@@ -656,9 +655,7 @@ extension String {
         hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
     }
 }
-#endif
 
-#if os(Linux)
 extension CgroupDirectory {
     /// runc's fs2 Manager.Stats over one directory. Errors are tolerated when
     /// not running as root, as runc does for rootless containers.
@@ -674,4 +671,3 @@ extension CgroupDirectory {
         return names.compactMap(CgroupFile.hugePageSize(directoryEntry:))
     }
 }
-#endif

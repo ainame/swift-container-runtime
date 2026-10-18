@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// A live observation of one pinned generation, separate from storage and lock ownership.
@@ -33,4 +32,3 @@ struct ContainerObservation {
         return ContainerStatus.derive(hasInit: true, initAlive: alive, creatorActive: false, startSocketPresent: waiting, frozen: frozen)
     }
 }
-#endif

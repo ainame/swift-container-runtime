@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// Bounded reads and identity information from the running kernel.
@@ -88,4 +87,3 @@ extension ProcFS {
         return try ProcessCapabilities.parseLastCapability(bytes)
     }
 }
-#endif

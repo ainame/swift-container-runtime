@@ -1,4 +1,4 @@
-# Plan: a Swift `Kernel` layer that compiles everywhere
+# Plan: a Swift `Kernel` layer that compiles everywhere (completed)
 
 Goal: `ContainerRuntime` stops importing libc and stops using `#if os(Linux)`
 (today: 29 files with conditional `Musl`/`Glibc`/`Darwin` imports, 18 files
@@ -98,11 +98,12 @@ From the 29 importing files:
    `RootFilesystemSetup.prepare` became named steps in runc's order, and
    `PathControls` uses `OwnedFileDescriptor` instead of raw descriptors.
    No runtime file outside `Kernel/` imports libc.
-6. Remove every remaining `#if os(Linux)` and libc import from
-   `ContainerRuntime`; public `…OnLinux`/`unsupported` branches call the
-   implementation directly.
-7. Docs: `docs/code-organization.md` (Kernel is the only platform import;
-   new system calls go into Kernel with a stub) and AGENTS.md.
+6. **Done.** No `#if os(Linux)` remains outside `Kernel/`; the public
+   lifecycle methods call the implementations directly, `features` reads
+   `Kernel.isLinux`, and the macOS deployment target is 27 (for
+   swift-system's `FileDescriptor.pipe(options:)`).
+7. **Done.** `docs/code-organization.md`, README and AGENTS.md describe Kernel
+   as the only platform import.
 
 Tests keep `#if os(Linux)` where they exercise real kernel behavior.
 

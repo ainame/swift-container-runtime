@@ -74,11 +74,7 @@ public struct RuntimeFeatures: Codable, Equatable, Sendable {
     /// The report for this build. Non-Linux builds cannot run containers, so they report no
     /// mount options and omit the `linux` section rather than claim support.
     public static var current: RuntimeFeatures {
-        #if os(Linux)
-        report(linux: true)
-        #else
-        report(linux: false)
-        #endif
+        report(linux: Kernel.isLinux)
     }
 
     static func report(linux: Bool) -> RuntimeFeatures {

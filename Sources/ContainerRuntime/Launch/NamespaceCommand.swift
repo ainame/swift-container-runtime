@@ -21,16 +21,12 @@ public struct NamespaceCommand: Sendable {
     /// launch rejects multithreaded callers before executing Swift in a child.
     @available(*, noasync, message: "launch namespaces before starting async work")
     public func run() throws -> Int32 {
-        #if os(Linux)
         var argv = try CStringVector(arguments)
         return try hostname.withCString { hostname in
             unsafe try argv.withPointers { pointers in
                 unsafe try Self.launch(hostname: hostname, arguments: pointers)
             }
         }
-        #else
-        throw RuntimeError("namespace launch requires Linux")
-        #endif
     }
 }
 
@@ -43,7 +39,6 @@ extension NamespaceCommand {
     }
 }
 
-#if os(Linux)
 extension NamespaceCommand {
     /// All borrowed buffers remain alive until both launch branches finish. This
     /// entry point is private to the synchronous, single-thread-checked Swift path.
@@ -66,4 +61,3 @@ extension NamespaceCommand {
         }
     }
 }
-#endif

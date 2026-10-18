@@ -30,7 +30,6 @@ public struct PathControls: Sendable, Equatable {
     }
 }
 
-#if os(Linux)
 import SystemPackage
 
 /// A `LaunchFailure`'s detail here is the index into `readonly` or `masked`,
@@ -239,4 +238,3 @@ private extension PathControls {
         try tree.borrowDescriptor { tree throws(Errno) in try Kernel.Mount.attach(tree, onto: target) }
     }
 }
-#endif

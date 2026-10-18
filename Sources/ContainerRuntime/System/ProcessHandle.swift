@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 /// A process pinned by a pidfd after its identity was verified.
@@ -66,4 +65,3 @@ extension ProcessHandle {
         return try body(handle)
     }
 }
-#endif

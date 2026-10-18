@@ -1,4 +1,3 @@
-#if os(Linux)
 import SystemPackage
 
 extension RuntimeError {
@@ -13,4 +12,3 @@ extension RuntimeError {
         return RuntimeError("\(context ?? stage.description): \(error) (errno \(error.rawValue))")
     }
 }
-#endif
