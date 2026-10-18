@@ -61,6 +61,13 @@ private func validatePIDFile(_ path: String?) throws {
     guard !path.utf8.contains(0) else { throw ValidationError("--pid-file must not contain NUL") }
 }
 
+let preserveFDsHelp: ArgumentHelp = "Pass caller descriptors 3 through 2+N to the workload at the same numbers. They must be open and not close-on-exec; their type is not checked."
+
+/// Rejects negative counts and counts whose first internal descriptor, 3+N, leaves Int32.
+func validatedPreservedFDs(_ count: Int) throws -> PreservedDescriptors {
+    do { return try PreservedDescriptors(count: count) } catch { throw ValidationError("\(error)") }
+}
+
 /// Prints a runtime failure and exits with `status`: 1 for lifecycle
 /// commands as in runc, 125 for `run` so it stays distinct from workload exits.
 func failure(_ error: any Error, status: Int32 = 1) -> ExitCode {
@@ -85,18 +92,26 @@ struct Create: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
     var pidFile: String?
 
+    @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp)
+    var preserveFDs = 0
+
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
         try validateBundle(bundle)
         try validatePIDFile(pidFile)
+        _ = try validatedPreservedFDs(preserveFDs)
         _ = try validatedID(id)
     }
 
     mutating func run() throws {
         do {
-            try globals.lifecycle().create(id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile)
+            // Check caller descriptors before loading the plan can open any.
+            try PreservedDescriptors(count: preserveFDs).verify()
+            try globals.lifecycle().create(
+                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
+                preserveDescriptors: preserveFDs)
         } catch {
             throw failure(error)
         }
@@ -360,20 +375,26 @@ struct Run: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
     var pidFile: String?
 
+    @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp)
+    var preserveFDs = 0
+
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
         try validateBundle(bundle)
         try validatePIDFile(pidFile)
+        _ = try validatedPreservedFDs(preserveFDs)
         _ = try validatedID(id)
     }
 
     mutating func run() throws {
         let status: Int32
         do {
+            try PreservedDescriptors(count: preserveFDs).verify()
             status = try globals.lifecycle().run(
-                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile
+                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
+                preserveDescriptors: preserveFDs
             )
         } catch {
             throw failure(error, status: 125)

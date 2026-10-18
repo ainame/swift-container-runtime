@@ -312,3 +312,37 @@ func rejectsInvalidExecGroupsAndPrivilegeValues(_ arguments: [String]) {
     #expect(command.processFile == "process.json")
     #expect(command.arguments.isEmpty)
 }
+
+@Test func parsesPreserveFDsBeforeTheContainerID() throws {
+    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run).preserveFDs == 0)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create).preserveFDs == 0)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["exec", "box", "true"]) as? Exec).preserveFDs == 0)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "--preserve-fds", "2", "box"]) as? Run).preserveFDs == 2)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "--preserve-fds=2", "box"]) as? Create).preserveFDs == 2)
+    let exec = try #require(RuntimeCommand.parseAsRoot(["exec", "--preserve-fds", "3", "-p", "p.json", "box"]) as? Exec)
+    #expect(exec.preserveFDs == 3)
+    #expect(exec.processFile == "p.json")
+    // After the ID it belongs to the workload.
+    let workload = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "echo", "--preserve-fds", "3"]) as? Exec)
+    #expect(workload.preserveFDs == 0)
+    #expect(workload.arguments == ["echo", "--preserve-fds", "3"])
+    let largest = try #require(RuntimeCommand.parseAsRoot(["run", "--preserve-fds", "2147483644", "box"]) as? Run)
+    #expect(largest.preserveFDs == 2_147_483_644)
+}
+
+@Test(arguments: [
+    ["run", "--preserve-fds", "-1", "box"],
+    ["run", "--preserve-fds", "2147483645", "box"],
+    ["create", "--preserve-fds", "abc", "box"],
+    ["create", "--preserve-fds", "99999999999999999999", "box"],
+    ["exec", "--preserve-fds=-1", "box", "true"],
+    ["exec", "--preserve-fds", "2147483645", "box", "true"],
+])
+func rejectsInvalidPreserveFDs(_ arguments: [String]) {
+    do {
+        _ = try RuntimeCommand.parseAsRoot(arguments)
+        Issue.record("Expected parsing to reject \(arguments)")
+    } catch {
+        #expect(RuntimeCommand.exitCode(for: error) == .validationFailure)
+    }
+}

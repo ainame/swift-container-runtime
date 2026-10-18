@@ -33,9 +33,10 @@ public struct ContainerLifecycle: Sendable {
     /// Prepares the container and leaves its init waiting for `start`. The
     /// workload inherits this process's stdin, stdout, and stderr, as in runc.
     @available(*, noasync, message: "create containers before starting async work")
-    public func create(id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil) throws {
+    public func create(id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0) throws {
         #if os(Linux)
-        try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile)
+        let preserved = try Self.verifiedPreserved(preserveDescriptors)
+        try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved)
         #else
         throw Self.unsupported
         #endif
@@ -46,14 +47,16 @@ public struct ContainerLifecycle: Sendable {
     /// it returns 0 after a confirmed start and keeps the state.
     @available(*, noasync, message: "launch containers before starting async work")
     public func run(
-        id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil
+        id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil,
+        preserveDescriptors: Int = 0
     ) throws -> Int32 {
         #if os(Linux)
+        let preserved = try Self.verifiedPreserved(preserveDescriptors)
         if detach {
-            try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile)
+            try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile, preserved: preserved)
             return 0
         }
-        return try runForegroundOnLinux(id: id, plan: plan, keep: keep, pidFile: pidFile)
+        return try runForegroundOnLinux(id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved)
         #else
         throw Self.unsupported
         #endif
@@ -66,9 +69,10 @@ public struct ContainerLifecycle: Sendable {
         id: ContainerID, arguments: [String], environment: [String] = [],
         cwd: String? = nil, user: String? = nil, additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil,
         capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil,
-        ignorePaused: Bool = false
+        ignorePaused: Bool = false, preserveDescriptors: Int = 0
     ) throws -> Int32 {
         #if os(Linux)
+        let preserved = try Self.verifiedPreserved(preserveDescriptors)
         // Serialize acquisition with delete/start, then pin the recorded init
         // and all kernel handles before releasing any new child.
         let container = try lock(id)
@@ -110,6 +114,7 @@ public struct ContainerLifecycle: Sendable {
             var hooks = LaunchHooks()
             hooks.detached = detach
             hooks.waitsForReady = false
+            hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
             hooks.placeInit = { try CgroupLeaf.join(cgroup, pid: $0) }
             var child: Int32 = 0
@@ -425,10 +430,20 @@ extension ContainerLifecycle {
         try? container.destroy()
     }
 
+    /// Early check, before state, locks, or cgroups open descriptors that
+    /// could fill a hole in the preserved range; `runLaunch` repeats it.
+    private static func verifiedPreserved(_ count: Int) throws -> PreservedDescriptors {
+        let preserved = try PreservedDescriptors(count: count)
+        try preserved.verify()
+        return preserved
+    }
+
     /// `create`, and with `start` a detached `run`. Holding the lock for the
     /// whole command means no other command observes a half-made container;
     /// any failure kills the init and removes the state.
-    private func createOnLinux(id: ContainerID, plan: OCIRunPlan, start: Bool, pidFile: String?) throws {
+    private func createOnLinux(
+        id: ContainerID, plan: OCIRunPlan, start: Bool, pidFile: String?, preserved: PreservedDescriptors
+    ) throws {
         // Reserve and pin the generation before recording or launching an init.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
@@ -443,6 +458,7 @@ extension ContainerLifecycle {
             let gate = try StartGate(container)
             var hooks = LaunchHooks()
             hooks.detached = true
+            hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
             hooks.placeInit = { try cgroup.join($0) }
             hooks.initStarted = { record.initProcess = $0 }
@@ -468,7 +484,7 @@ extension ContainerLifecycle {
     /// `kill`, and `delete --force` work from other processes, and it is
     /// removed when the workload exits or setup fails, as runc does.
     private func runForegroundOnLinux(
-        id: ContainerID, plan: OCIRunPlan, keep: Bool, pidFile: String?
+        id: ContainerID, plan: OCIRunPlan, keep: Bool, pidFile: String?, preserved: PreservedDescriptors
     ) throws -> Int32 {
         // Keep the directory locked throughout setup, then publish the init
         // and unlock only after execution has been confirmed.
@@ -482,6 +498,7 @@ extension ContainerLifecycle {
             let cgroup = try Self.prepareCgroup(plan, id: id, record: &record, container: container)
             leaf = cgroup
             var hooks = LaunchHooks()
+            hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
             hooks.placeInit = { try cgroup.join($0) }
             hooks.initStarted = { record.initProcess = $0 }

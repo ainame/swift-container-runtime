@@ -253,6 +253,9 @@ struct LaunchHooks {
     /// Foreground launches and detached exec (no start gate): the workload
     /// `execve` succeeded; runs before the launch verdict.
     var executed: () throws -> Void = {}
+    /// Caller descriptors the workload inherits; everything from
+    /// `firstInternal` up is marked close-on-exec in the child.
+    var preserved = PreservedDescriptors.none
 }
 
 /// Forks a launcher that unshares `namespaceFlags` with private mount
@@ -307,6 +310,9 @@ func runLaunch(
     guard try launchThreadCount() == 1 else {
         throw RuntimeError("namespace launch requires a single-threaded process; use the synchronous CLI before starting background work")
     }
+    // Authoritative check: every runtime descriptor now exists, so none may
+    // sit in the preserved range (see `PreservedDescriptors.verify`).
+    try hooks.preserved.verify()
     let supervisor = getpid()
     let launcher = fork()
     guard launcher >= 0 else {

@@ -103,10 +103,11 @@ extension OCIProcessPlan {
 
         // All borrowed C storage spans the complete synchronous launch. The
         // original CLI never changes its own namespaces or root directory.
+        let firstInternal = hooks.preserved.closeRangeStart
         return try gids.withUnsafeBufferPointer { groups in
             unsafe try strings.withPointers { pointers in
                 unsafe try runLaunch(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
-                    guard linux_mark_descriptors_cloexec(3) == 0 else {
+                    guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
                         return failureStatus(report, .markDescriptors)
                     }
                     let rootCode = namespaces.enterRoot()

@@ -113,6 +113,7 @@ extension OCIRunPlan {
             default: return nil
             }
         }
+        let firstInternal = hooks.preserved.closeRangeStart
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
@@ -120,7 +121,7 @@ extension OCIRunPlan {
                         strings: pointers, starts: starts, searchesPath: searchesPath, mounts: mounts, populatesDev: populatesDev, readonlyRoot: readonlyRoot,
                         security: security, supplementaryGids: gidBuffer,
                         capabilities: capabilities, lastCapability: lastCapability, resourceLimits: resourceLimits,
-                        pathControls: pathControls, foreground: !hooks.detached,
+                        pathControls: pathControls, foreground: !hooks.detached, firstInternal: firstInternal,
                         report: report, commit: commit, launcher: launcher, gate: gate
                     )
                 }
@@ -146,6 +147,7 @@ private func initializeContainer(
     resourceLimits: [ResourceLimit],
     pathControls: PathControls,
     foreground: Bool,
+    firstInternal: UInt32,
     report: borrowing OwnedFileDescriptor,
     commit: borrowing OwnedFileDescriptor,
     launcher: borrowing OwnedFileDescriptor,
@@ -158,8 +160,9 @@ private func initializeContainer(
 
     // Descriptors inherited from the caller (for example a directory outside
     // the rootfs) must not reach the workload. Mark rather than close them, so
-    // the CLOEXEC report pipe still works for failures before exec.
-    guard linux_mark_descriptors_cloexec(3) == 0 else { return failureStatus(report, .markDescriptors) }
+    // the CLOEXEC report pipe still works for failures before exec. Only
+    // --preserve-fds descriptors below `firstInternal` stay inheritable.
+    guard linux_mark_descriptors_cloexec(firstInternal) == 0 else { return failureStatus(report, .markDescriptors) }
 
     // The rootfs is trusted input that must not change during setup. Pin the
     // canonical directory, bind it onto its own path (pivot_root needs a mount
