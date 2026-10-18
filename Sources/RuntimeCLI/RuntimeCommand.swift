@@ -120,10 +120,11 @@ struct Create: ParsableCommand {
     mutating func run() throws {
         do {
             // Check caller descriptors before loading the plan can open any.
-            try PreservedDescriptors(count: preserveFDs).verify()
+            let activation = SocketActivation.inherited()
+            try activation.preserving(preserveFDs).verify()
             try globals.lifecycle().create(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
-                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket)
+                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket, socketActivation: activation)
         } catch {
             throw failure(error)
         }
@@ -407,10 +408,11 @@ struct Run: ParsableCommand {
     mutating func run() throws {
         let status: Int32
         do {
-            try PreservedDescriptors(count: preserveFDs).verify()
+            let activation = SocketActivation.inherited()
+            try activation.preserving(preserveFDs).verify()
             status = try globals.lifecycle().run(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
-                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket
+                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket, socketActivation: activation
             )
         } catch {
             throw failure(error, status: 125)

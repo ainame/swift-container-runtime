@@ -93,7 +93,7 @@ The remaining inventory is deliberately explicit so that a working minimal runti
 | Namespaces | joining supplied namespace paths, cgroup and time namespaces, time offsets, shared/host namespace combinations |
 | Resources | CPU realtime runtime/period, the remaining memory fields, unified cgroup v2 controls, hugepages, block I/O, network/RDMA, device BPF rules, updates for those controls, cleanup of created ancestor cgroups (memory limit/reservation/swap, pids limit, and CPU shares/quota/period/burst/idle and cpusets are implemented) |
 | Security | seccomp argument rules and notification FD handoff, AppArmor/SELinux labels, session keyring, sealed executable handoff |
-| Process setup | HOME resolution, socket activation (`LISTEN_FDS`), scheduling, I/O priority, CPU affinity, NUMA memory policy |
+| Process setup | HOME resolution, scheduling, I/O priority, CPU affinity, NUMA memory policy |
 | Networking | loopback setup and moving/configuring interfaces in a target namespace |
 | Integration | selected runc bats compatibility tests, rootless cases, containerd compatibility |
 | Portability | arm64 and x86_64 Linux; explicit musl/static build verification |
