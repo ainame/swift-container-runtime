@@ -7,6 +7,7 @@ extension OCIRunPlan.MountFlags {
         if contains(.nodev) { flags.insert(.noDevices) }
         if contains(.noexec) { flags.insert(.noExecute) }
         if contains(.strictatime) { flags.insert(.strictAccessTime) }
+        if contains(.readonly) { flags.insert(.readOnly) }
         return flags
     }
 }

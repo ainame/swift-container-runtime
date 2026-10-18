@@ -30,7 +30,7 @@ import Testing
     #expect(help.contains("--rootless"))
     // Help wraps lines, so check single words: the no-overwrite rule and the runnability warning.
     #expect(help.contains("overwritten"))
-    #expect(help.contains("/dev/mqueue"))
+    #expect(help.contains("terminal"))
 }
 
 @Test func featuresTakesNoArguments() throws {

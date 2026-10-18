@@ -15,7 +15,7 @@ struct Spec: RuntimeLoggingCommand {
             + "An existing config.json, including a directory or a symlink (even a dangling one), is never "
             + "overwritten. The file is created with mode 0666 minus the umask. With --rootless, the user "
             + "namespace maps container root to the caller's effective UID and GID. The starter asks for features "
-            + "this runtime does not run yet (a terminal, the /dev/shm, /dev/mqueue, /sys and /sys/fs/cgroup "
+            + "this runtime does not run yet (a terminal, /sys/fs/cgroup "
             + "mounts, device rules, and the cgroup and user namespaces); edit it before running it here.")
 
     @OptionGroup var globals: GlobalOptions

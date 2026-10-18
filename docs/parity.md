@@ -51,7 +51,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | --- | --- |
 | Process setup | HOME resolution; empty/omitted-process behavior; OOM score; scheduling, I/O priority, exec CPU affinity, NUMA memory policy |
 | Namespaces | Join supplied namespace paths; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
-| Rootfs and mounts | No-pivot; sysfs, mqueue, shm and cgroup mounts; bind/rbind/remount and propagation; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
+| Rootfs and mounts | No-pivot; cgroup mounts; bind/rbind/remount and propagation; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
 | Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device BPF, update support for those controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
 | Security | Complete init/exec policy verification; AppArmor/SELinux execution-context staging and availability behavior; session keyrings; sealed executable handoff |
@@ -89,3 +89,10 @@ contracts. Match these where the tested consumer relies on them. Preserve Swift
 formatting choices where JSON values and required keys suffice; do not reproduce
 incidental runc internals. The [Docker gap assessment](docker-integration.md)
 records the blockers, versioned sources and end-to-end acceptance gates.
+
+Sysfs, mqueue and tmpfs-based `/dev/shm`, including `ro`/`rw` mount flags, now
+have focused Linux debug evidence through run/create/start/exec against runc.
+The probe checks sysfs's private network view, private IPC message queues,
+read-only enforcement, safe failure on a symlinked sysfs target and cleanup.
+See [engine baseline](engine-baseline.md); cgroup mounts, bind mounts and supplied
+namespace paths remain separate gaps.

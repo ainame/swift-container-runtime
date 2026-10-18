@@ -185,8 +185,8 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "mount"}]}"#), "duplicate"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "rootfsPropagation": "shared"}"#), "rootfsPropagation"),
     (config(mounts: #"[{"destination": "/data", "type": "bind", "source": "/etc", "options": ["rbind"]}]"#), "bind"),
-    (config(mounts: #"[{"destination": "/sys", "type": "sysfs", "source": "sysfs"}]"#), "sysfs"),
-    (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["ro"]}]"#), "ro"),
+    (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup2"}]"#), "cgroup2"),
+    (config(mounts: #"[{"destination": "/sys", "type": "sysfs", "options": ["mode=755"]}]"#), "mode=755"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["uid=1000"]}]"#), "uid=1000"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["mode=9"]}]"#), "mode=9"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": [""]}]"#), "options"),
@@ -482,4 +482,13 @@ func execRejectsInvalidAppendedGroups(_ count: Int, _ gid: UInt32, _ message: St
         #expect(process.cwd == ["work", "dir"])
         #expect(process.security.uid == 0)
     }
+}
+
+@Test(arguments: [
+    (#"["ro"]"#, true), (#"["ro","rw"]"#, false), (#"["rw","ro"]"#, true),
+])
+func mountReadonlyOptionsUseLastRequestedMode(_ options: String, _ readonly: Bool) throws {
+    let value = try plan(config(mounts: #"[{"destination":"/sys","type":"sysfs","options":\#(options)}]"#))
+    #expect(value.mounts[0].flags.contains(.readonly) == readonly)
+    #expect(value.mounts[0].flags.kernelFlags.contains(.readOnly) == readonly)
 }

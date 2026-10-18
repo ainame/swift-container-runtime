@@ -121,7 +121,7 @@ remains unverified.
 | Immediate contract | Status after this slice |
 | --- | --- |
 | Global logging and error extraction | Implemented; real shim failed-create evidence above. |
-| Captured create JSON | First rejection is `linux.resources.devices`. It also requests mqueue/sysfs mounts. Security restrictions must be implemented or explicitly rejected, never dropped to get past decoding. |
+| Captured create JSON | First rejection is `linux.resources.devices`. The requested mqueue/sysfs mounts now have focused Linux coverage below. Security restrictions must be implemented or explicitly rejected, never dropped to get past decoding. |
 | Captured exec JSON | Decodes and validates as a Swift process plan; actual shim exec into Swift is blocked by create. |
 | `kill --all` | Implemented with runc 1.4 compatibility semantics; see the focused kill validation below. |
 | Version/features | Focused metadata integration passes. go-runc v1.1.0's version parser only populates values for the literal `runc version ` prefix; Swift retains its own identity, so this helper returns empty metadata. The captured shim create path did not query version. Features emit valid OCI JSON; broader engine feature negotiation is unverified. |
@@ -172,3 +172,26 @@ thaws runc's empty frozen group before deleting it; Swift already thaws on kill.
 No Swift engine workload succeeds yet: device policy and mounts still block the
 captured create, and shim-owned PID publication/exit cleanup still needs engine
 execution evidence.
+
+## Follow-up: requested filesystem mounts
+
+The mount planner now accepts sysfs and mqueue, alongside existing tmpfs-based
+shm, and `ro`/`rw` options (last requested mode wins). The existing setup applies
+these using pinned destination directories in the new mount namespace. No new
+external dependency, mount-path resolver, syscall or launch-order change was
+needed. Bind mounts, cgroup mounts and supplied namespace paths remain open.
+
+Fresh evidence on the same Linux profile: 179 runtime unit tests passed; the
+new `filesystems` suite, OCI, readonly-root and metadata debug integrations
+passed against installed runc. The filesystem probe verifies sysfs/read-only
+flags and EROFS, sysfs's new network namespace view (only lo), tmpfs shm, actual
+queue send/receive in a private IPC namespace, and the same host queue surviving.
+Create-time mount tables and later init/exec results agree. A symlinked sysfs
+destination after earlier mounts fails run/create without a workload, state,
+cgroup or host mount/content change. Targeted macOS planning and CLI tests pass.
+
+A unit-only projection of the captured create JSON, removing device rules to
+isolate mount planning, now builds a plan. It is explicitly synthetic and is not
+engine execution evidence. The unchanged original captured bundle still rejects
+`linux.resources.devices`; no security field is discarded by the runtime, and
+no successful Swift engine workload is claimed.

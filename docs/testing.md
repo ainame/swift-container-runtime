@@ -41,7 +41,7 @@ suite because a shared file was touched:
 | Change | Starting integration selection |
 | --- | --- |
 | Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
-| Mount/rootfs/path controls | `oci readonly path-controls`; add `lifecycle` for readiness/cleanup changes. |
+| Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and per-mount read-only flags; add `lifecycle` for readiness/cleanup changes. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
 | Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`), plus `update`; add `freezer ps events` if membership/reporting changes. |
@@ -151,3 +151,9 @@ failure probes exercise the CLI/log contract without launching a container.
 subreaper, shared/private PID namespaces, surviving descendants after init exits,
 paused and stopped states, descendant cgroups, non-KILL init-only signaling and
 bystander/stale-identity safety. It needs cgroup v2 `cgroup.kill` (Linux 5.14+).
+
+`scripts/filesystems-integration.sh` mounts sysfs, mqueue, tmpfs-based shm and a
+read-only tmpfs in new network/IPC namespaces. It compares run/create/start/exec
+with runc, verifies mount types/flags before start, EROFS, private network and IPC
+views, and a symlinked sysfs target's failure cleanup without host mount changes.
+The probe is `scripts/fixtures/mount-probe.c`; its host queue is explicitly removed.

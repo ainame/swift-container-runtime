@@ -32,7 +32,7 @@ public struct OCIRunPlan: Sendable {
 
     /// The filesystems a configured mount may create.
     public enum FilesystemType: String, Sendable {
-        case proc, tmpfs, devpts
+        case proc, tmpfs, devpts, sysfs, mqueue
     }
 
     /// The supported mount options that map to mount flags.
@@ -43,6 +43,7 @@ public struct OCIRunPlan: Sendable {
         public static let nodev = MountFlags(rawValue: 1 << 1)
         public static let noexec = MountFlags(rawValue: 1 << 2)
         public static let strictatime = MountFlags(rawValue: 1 << 3)
+        public static let readonly = MountFlags(rawValue: 1 << 4)
     }
 
     /// One validated entry of `mounts`.
@@ -365,7 +366,7 @@ public struct OCIRunPlan: Sendable {
             throw RuntimeError("config.json: \(field).source must not contain NUL")
         }
         guard let typeName = mount.type, let type = FilesystemType(rawValue: typeName) else {
-            throw RuntimeError("config.json: \(field).type \(mount.type ?? "<missing>") is not implemented; supported: proc, tmpfs, devpts")
+            throw RuntimeError("config.json: \(field).type \(mount.type ?? "<missing>") is not implemented; supported: proc, tmpfs, devpts, sysfs, mqueue")
         }
         let destination = try components(mount.destination, field: "\(field).destination")
         guard !destination.isEmpty else {
@@ -379,7 +380,7 @@ public struct OCIRunPlan: Sendable {
             }
         case .devpts:
             guard destination == ["dev", "pts"] else { throw RuntimeError("config.json: \(field): devpts is only supported at /dev/pts") }
-        case .tmpfs:
+        case .tmpfs, .sysfs, .mqueue:
             break
         }
 
@@ -391,6 +392,8 @@ public struct OCIRunPlan: Sendable {
             case "nodev": flags.insert(.nodev)
             case "noexec": flags.insert(.noexec)
             case "strictatime": flags.insert(.strictatime)
+            case "ro": flags.insert(.readonly)
+            case "rw": flags.remove(.readonly)
             default:
                 guard isSupportedData(option, for: type) else {
                     throw RuntimeError("config.json: \(field).options \(option) is not implemented for \(type.rawValue)")

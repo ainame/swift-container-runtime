@@ -156,6 +156,7 @@ The [engine baseline](engine-baseline.md) now records real containerd 2.2.2
 create/exec captures and working global logging/error extraction. The Swift
 engine run still fails on device restrictions. Shared-PID SIGKILL subtree
 cleanup and `--all` compatibility are now verified against runc 1.4; milestone 1
-remains open for shim-owned PID/cleanup validation. Next: the requested rootfs mounts
-and device policy, followed by bind mounts and supplied namespace joins for the
-selected scenario. Do not silently discard security fields to advance it.
+remains open for shim-owned PID/cleanup validation. Sysfs, mqueue, tmpfs-based
+shm and ro/rw mount flags now pass focused Linux run/create/start/exec checks.
+Next: device policy, bind mounts and supplied namespace joins for the selected
+scenario. Do not silently discard security fields to advance it.
