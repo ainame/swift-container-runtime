@@ -1,0 +1,12 @@
+# Local Linux development machine for Apple `container machine` (1.5+).
+# swift:6.4.1 is Ubuntu 26.04 (same digest as swift:6.4.1-resolute), the
+# release the CI job containers and runners use. systemd-sysv gives the
+# machine an init to boot; the rest are the OCI fixture and runtime-tools
+# dependencies that scripts/test-linux.sh and CI install per run.
+FROM swift:6.4.1
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        systemd-sysv sudo ca-certificates curl \
+        busybox-static runc libseccomp-dev util-linux \
+        golang-go make perl python3 git apparmor \
+    && rm -rf /var/lib/apt/lists/*

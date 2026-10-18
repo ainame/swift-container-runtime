@@ -150,7 +150,14 @@ OOM events are reported for each new kill rather than for every `memory.events` 
 
 Under `RLIMIT_NOFILE` 3, this runtime's `create` must fail synchronously with the start-descriptor diagnosis and leave nothing behind. A created init that dies before it can be sampled is recorded as stopped. Leftover checks match bundle command lines, and also any process whose `/proc/PID/root` is the test rootfs. For `RLIMIT_AS`, the workload reports its own `getrlimit` value. It then reserves 1536 MiB and 1 MiB of address space with real `PROT_NONE`/`MAP_NORESERVE` `mmap` calls, which touch no memory, and unmaps them. Under the 1 GiB limit the large reservation must fail with `ENOMEM`. A control without `RLIMIT_AS` must report unlimited, and there the same reservation must succeed. Foreground parent-death cleanup is checked under `RLIMIT_NOFILE` 3.
 
-The local development environment has Apple `container` 0.9.0 and a cached `swift:6.4.1` image. That installation has no `container machine` subcommand. A successful Swift build inside an Apple container checks Linux compilation; a namespace smoke test must separately demonstrate that its guest environment grants the required kernel capabilities.
+The local development environment has Apple `container` 1.5 and a cached `swift:6.4.1` image. Besides the disposable VMs used by `scripts/test-linux.sh`, it keeps a persistent `srunc-dev` machine built from [`scripts/machine/Containerfile`](../scripts/machine/Containerfile) (Ubuntu 26.04, Swift 6.4.1, the OCI fixtures and runtime-tools dependencies):
+
+```sh
+container build -t srunc-dev:6.4.1 -f scripts/machine/Containerfile scripts/machine
+container machine create srunc-dev:6.4.1 --name srunc-dev --set-default
+```
+
+The home directory is mounted read-write over virtiofs, which cannot hold device nodes, so runtime-tools needs `TMPDIR` on the machine's own disk (for example `/var/tmp`). Use a separate scratch path such as `.build/machine-6.4.1`: `.build/linux-6.4.1` holds module caches built at `/workspace`. The machine has no AppArmor or SELinux, so those runtime-tools suites are host-excluded there. A successful Swift build inside an Apple container checks Linux compilation; a namespace smoke test must separately demonstrate that its guest environment grants the required kernel capabilities.
 
 The [engine baseline](engine-baseline.md) records pinned live capture evidence and
 its limits. `scripts/logging-integration.sh` also runs on macOS: its synthetic
@@ -323,11 +330,18 @@ non-root users can execute it.
 This is **not a claim that every upstream executable passes**. The versioned
 [`runtime-tools-exclusions.json`](../scripts/runtime-tools-exclusions.json) names
 16 cgroup-v1-only executables and six upstream defects or invalid inputs, with
-individual reasons. The latter were also reproduced against runc 1.3.4-0ubuntu1~24.04.1
-(Go 1.24.4, libseccomp 2.5.5) on the local Ubuntu machine:
-prestart hook state, FIFO device numbers, filesystem data on bind mounts, killing
-an exited pidfile workload, Go startup under its requested rlimits, and the
-unset-process start test. The pidfile defect is tracked in
+individual reasons. On 2026-10-19 all six were rerun by name on Ubuntu 26.04.1
+arm64 (the `srunc-dev` container machine below) against Ubuntu's runc
+1.4.0-0ubuntu1 and upstream runc v1.5.2 (static release binary, checksum
+verified, Go 1.26.8, libseccomp 2.6.1); both runcs and srunc fail every one.
+runc 1.4.0 reproduces each documented defect: prestart hook state, FIFO device
+numbers, filesystem data on bind mounts, killing an exited pidfile workload, Go
+startup under its requested rlimits, and the unset-process start test. runc
+v1.5.2 shows the same causes for the device, bind-mount, rlimit and start tests
+and still reports `creating` to prestart hooks. Its `hooks_stdin` and `pidfile`
+runs fail earlier: the suite's default seccomp allowlist predates `faccessat2`,
+which v1.5.2's created init calls, so the init exits before `start` (allowing
+only that syscall keeps it `created`). The pidfile defect is tracked in
 [upstream issue 805](https://github.com/opencontainers/runtime-tools/issues/805). Existing static C-probe and lifecycle integrations
 remain the gates for these behaviors; runtime validation is not weakened.
 SELinux and AppArmor tests are excluded only when their required host policy is
