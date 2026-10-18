@@ -17,7 +17,7 @@ import LinuxAPI
 
 /// The starter `config.json` written by `spec`, field for field what runc's `specconv.Example`
 /// and `ToRootless` produce. It is a write-only model: optional fields are omitted when nil so the
-/// JSON matches Go's `omitempty`. The starter spec asks for features this runtime cannot run yet
+/// JSON has the same keys as runc's. The starter spec asks for features this runtime cannot run yet
 /// (a terminal, /dev/shm, mqueue, sysfs and cgroup mounts, device rules, the cgroup and user
 /// namespaces); they are kept so the output stays a faithful runc starter rather than a reduced one.
 public struct DefaultSpecification: Codable, Equatable, Sendable {
@@ -158,7 +158,7 @@ public struct DefaultSpecification: Codable, Equatable, Sendable {
         spec.linux = linux
 
         // Mounts: replace /sys (compared after lexical cleaning, like filepath.Clean) and strip
-        // ownership options; a mount left with no options omits the key, as Go's nil slice does.
+        // ownership options; a mount left with no options omits the key, as runc's does.
         spec.mounts = spec.mounts.map { mounts in
             mounts.map { mount in
                 if FilePath(mount.destination).lexicallyNormalized() == FilePath("/sys") {

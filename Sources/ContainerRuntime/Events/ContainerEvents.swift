@@ -1,4 +1,8 @@
-import SystemPackage
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 
 /// runc's PSIData: averages are percentages, total is microseconds.
 struct PSIData: Equatable, Sendable {
@@ -67,197 +71,149 @@ public struct ContainerStats: Equatable, Sendable {
     var hugetlb: [String: HugetlbEntry] = [:]
 }
 
-/// One line of `events` output, encoded like runc's json.Encoder.
+/// One line of `events` output, with runc's field names and omitted fields.
 public enum ContainerEvent: Equatable, Sendable {
     case stats(ContainerStats)
     case oom
 
-    public func json(id: String) -> String {
-        var object = JSONObject()
+    public func json(id: String) throws -> String {
+        let line: EventLine
         switch self {
-        case let .stats(stats):
-            object.string("type", "stats")
-            object.string("id", id)
-            object.raw("data", stats.json)
-        case .oom:
-            // Event.Data is omitempty and nil for OOM.
-            object.string("type", "oom")
-            object.string("id", id)
+        case let .stats(stats): line = EventLine(type: "stats", id: id, data: stats)
+        // The event's data is omitted for OOM.
+        case .oom: line = EventLine(type: "oom", id: id, data: nil)
         }
-        return object.text
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return String(decoding: try encoder.encode(line), as: UTF8.self)
+    }
+
+    private struct EventLine: Encodable {
+        let type: String
+        let id: String
+        let data: ContainerStats?
     }
 }
 
-extension ContainerStats {
-    /// Encodes with runc's JSON names, omitempty/omitzero rules and units.
-    var json: String {
-        var stats = JSONObject()
+/// The JSON shape of runc's events Stats. Optional fields are omitted when
+/// nil, mirroring runc's omitempty fields, so consumers see the same keys.
+extension ContainerStats: Encodable {
+    private enum CodingKeys: String, CodingKey {
+        case cpu, cpuset, memory, pids, blkio, hugetlb
+        case intelRDT = "intel_rdt", networkInterfaces = "network_interfaces"
+    }
 
-        // Cpu: usage and throttling are omitzero, psi is a nil-able pointer.
-        var cpu = JSONObject()
-        if cpuTotal != 0 || cpuKernel != 0 || cpuUser != 0 {
-            var usage = JSONObject()
-            usage.uint("total", cpuTotal, omitEmpty: true)
-            usage.uint("kernel", cpuKernel)
-            usage.uint("user", cpuUser)
-            cpu.raw("usage", usage.text)
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(CPU(self), forKey: .cpu)
+        try container.encode(CPUSet(), forKey: .cpuset)
+        try container.encode(Memory(self), forKey: .memory)
+        try container.encode(Pids(current: pidsCurrent.nonZero, limit: pidsLimit.nonZero), forKey: .pids)
+        try container.encode(
+            Blkio(
+                ioServiceBytesRecursive: ioServiceBytes.isEmpty ? nil : ioServiceBytes.map(BlkioJSON.init),
+                ioServicedRecursive: ioServiced.isEmpty ? nil : ioServiced.map(BlkioJSON.init),
+                psi: ioPSI.map(PSIJSON.init)),
+            forKey: .blkio)
+        try container.encode(hugetlb.mapValues(HugetlbJSON.init), forKey: .hugetlb)
+        // Not collected: runc reports Intel RDT as {} and network interfaces as null.
+        try container.encode([String: UInt64](), forKey: .intelRDT)
+        try container.encodeNil(forKey: .networkInterfaces)
+    }
+
+    private struct CPU: Encodable {
+        struct Usage: Encodable { let total: UInt64?, kernel: UInt64, user: UInt64 }
+        struct Throttling: Encodable { let periods: UInt64?, throttledPeriods: UInt64?, throttledTime: UInt64? }
+        let usage: Usage?
+        let throttling: Throttling?
+        let psi: PSIJSON?
+
+        init(_ stats: ContainerStats) {
+            usage = stats.cpuTotal == 0 && stats.cpuKernel == 0 && stats.cpuUser == 0
+                ? nil : Usage(total: stats.cpuTotal.nonZero, kernel: stats.cpuKernel, user: stats.cpuUser)
+            throttling = stats.throttlingPeriods == 0 && stats.throttledPeriods == 0 && stats.throttledTime == 0
+                ? nil
+                : Throttling(
+                    periods: stats.throttlingPeriods.nonZero, throttledPeriods: stats.throttledPeriods.nonZero,
+                    throttledTime: stats.throttledTime.nonZero)
+            psi = stats.cpuPSI.map(PSIJSON.init)
         }
-        if throttlingPeriods != 0 || throttledPeriods != 0 || throttledTime != 0 {
-            var throttling = JSONObject()
-            throttling.uint("periods", throttlingPeriods, omitEmpty: true)
-            throttling.uint("throttledPeriods", throttledPeriods, omitEmpty: true)
-            throttling.uint("throttledTime", throttledTime, omitEmpty: true)
-            cpu.raw("throttling", throttling.text)
+    }
+
+    /// runc's cgroup v2 manager leaves every cpuset statistic zero.
+    private struct CPUSet: Encodable {
+        let cpu_exclusive = 0, mem_hardwall = 0, mem_exclusive = 0, memory_migrate = 0
+        let memory_spread_page = 0, memory_spread_slab = 0, memory_pressure = 0
+        let sched_load_balance = 0, sched_relax_domain_level = 0
+    }
+
+    /// Kernel memory is always zero on cgroup v2, so it is never present.
+    private struct Memory: Encodable {
+        let cache: UInt64?
+        let usage: MemoryJSON?
+        let swap: MemoryJSON?
+        let raw: [String: UInt64]?
+        let psi: PSIJSON?
+
+        init(_ stats: ContainerStats) {
+            cache = stats.memoryCache.nonZero
+            usage = stats.memoryUsage.isZero ? nil : MemoryJSON(stats.memoryUsage)
+            swap = stats.swapUsage.isZero ? nil : MemoryJSON(stats.swapUsage)
+            raw = stats.memoryRaw.isEmpty ? nil : stats.memoryRaw
+            psi = stats.memoryPSI.map(PSIJSON.init)
         }
-        cpu.psi(cpuPSI)
-        stats.raw("cpu", cpu.text)
+    }
 
-        // runc's fs2 manager leaves CPUSetStats zero; cpus/mems are omitempty.
-        var cpuset = JSONObject()
-        for name in [
-            "cpu_exclusive", "mem_hardwall", "mem_exclusive", "memory_migrate", "memory_spread_page",
-            "memory_spread_slab", "memory_pressure", "sched_load_balance", "sched_relax_domain_level",
-        ] {
-            cpuset.uint(name, 0)
+    private struct MemoryJSON: Encodable {
+        let limit: UInt64, usage: UInt64?, max: UInt64?, failcnt: UInt64
+        init(_ entry: MemoryEntry) {
+            limit = entry.limit
+            usage = entry.usage.nonZero
+            max = entry.max.nonZero
+            failcnt = entry.failcnt
         }
-        stats.raw("cpuset", cpuset.text)
+    }
 
-        // Memory: kernel and kernelTCP are always zero on v2, so omitzero
-        // drops them.
-        var memory = JSONObject()
-        memory.uint("cache", memoryCache, omitEmpty: true)
-        if !memoryUsage.isZero { memory.raw("usage", memoryUsage.json) }
-        if !swapUsage.isZero { memory.raw("swap", swapUsage.json) }
-        if !memoryRaw.isEmpty {
-            var raw = JSONObject()
-            for key in memoryRaw.keys.sorted() { raw.uint(key, memoryRaw[key] ?? 0) }
-            memory.raw("raw", raw.text)
+    private struct Pids: Encodable { let current: UInt64?, limit: UInt64? }
+
+    private struct Blkio: Encodable {
+        let ioServiceBytesRecursive: [BlkioJSON]?
+        let ioServicedRecursive: [BlkioJSON]?
+        let psi: PSIJSON?
+    }
+
+    private struct BlkioJSON: Encodable {
+        let major: UInt64?, minor: UInt64?, op: String?, value: UInt64?
+        init(_ entry: BlkioEntry) {
+            major = entry.major.nonZero
+            minor = entry.minor.nonZero
+            op = entry.op.isEmpty ? nil : entry.op
+            value = entry.value.nonZero
         }
-        memory.psi(memoryPSI)
-        stats.raw("memory", memory.text)
+    }
 
-        var pids = JSONObject()
-        pids.uint("current", pidsCurrent, omitEmpty: true)
-        pids.uint("limit", pidsLimit, omitEmpty: true)
-        stats.raw("pids", pids.text)
-
-        var blkio = JSONObject()
-        blkio.entries("ioServiceBytesRecursive", ioServiceBytes)
-        blkio.entries("ioServicedRecursive", ioServiced)
-        blkio.psi(ioPSI)
-        stats.raw("blkio", blkio.text)
-
-        // The hugetlb map is not omitempty; Go sorts map keys.
-        var hugetlb = JSONObject()
-        for size in self.hugetlb.keys.sorted() {
-            let entry = self.hugetlb[size] ?? HugetlbEntry()
-            var object = JSONObject()
-            object.uint("usage", entry.usage, omitEmpty: true)
-            object.uint("max", entry.max, omitEmpty: true)
-            object.uint("failcnt", entry.failcnt)
-            hugetlb.raw(size, object.text)
+    private struct HugetlbJSON: Encodable {
+        let usage: UInt64?, max: UInt64?, failcnt: UInt64
+        init(_ entry: HugetlbEntry) {
+            usage = entry.usage.nonZero
+            max = entry.max.nonZero
+            failcnt = entry.failcnt
         }
-        stats.raw("hugetlb", hugetlb.text)
+    }
 
-        stats.raw("intel_rdt", "{}")
-        stats.raw("network_interfaces", "null")
-        return stats.text
+    /// Both `some` and `full` are always present once PSI is reported.
+    private struct PSIJSON: Encodable {
+        let some: PSIData, full: PSIData
+        init(_ stats: PSIStats) {
+            some = stats.some
+            full = stats.full
+        }
     }
 }
 
-extension MemoryEntry {
-    fileprivate var json: String {
-        var object = JSONObject()
-        object.uint("limit", limit)
-        object.uint("usage", usage, omitEmpty: true)
-        object.uint("max", max, omitEmpty: true)
-        object.uint("failcnt", failcnt)
-        return object.text
-    }
-}
+extension PSIData: Encodable {}
 
-/// A minimal writer for Go-compatible JSON objects.
-struct JSONObject {
-    private var members: [String] = []
-
-    var text: String { "{" + members.joined(separator: ",") + "}" }
-
-    mutating func raw(_ key: String, _ value: String) {
-        members.append(Self.quote(key) + ":" + value)
-    }
-
-    mutating func string(_ key: String, _ value: String) { raw(key, Self.quote(value)) }
-
-    mutating func uint(_ key: String, _ value: UInt64, omitEmpty: Bool = false) {
-        if omitEmpty, value == 0 { return }
-        raw(key, String(value))
-    }
-
-    /// PSIStats is a struct, so `some` and `full` are always present.
-    mutating func psi(_ stats: PSIStats?) {
-        guard let stats else { return }
-        func data(_ data: PSIData) -> String {
-            var object = JSONObject()
-            object.raw("avg10", Self.float(data.avg10))
-            object.raw("avg60", Self.float(data.avg60))
-            object.raw("avg300", Self.float(data.avg300))
-            object.uint("total", data.total)
-            return object.text
-        }
-        var object = JSONObject()
-        object.raw("some", data(stats.some))
-        object.raw("full", data(stats.full))
-        raw("psi", object.text)
-    }
-
-    mutating func entries(_ key: String, _ entries: [BlkioEntry]) {
-        guard !entries.isEmpty else { return }
-        let items = entries.map { entry in
-            var object = JSONObject()
-            object.uint("major", entry.major, omitEmpty: true)
-            object.uint("minor", entry.minor, omitEmpty: true)
-            if !entry.op.isEmpty { object.string("op", entry.op) }
-            object.uint("value", entry.value, omitEmpty: true)
-            return object.text
-        }
-        raw(key, "[" + items.joined(separator: ",") + "]")
-    }
-
-    /// Go encodes float64 in the shortest form, without a trailing ".0".
-    /// PSI averages are two-decimal percentages, well inside the range
-    /// where Go uses plain decimal notation.
-    static func float(_ value: Double) -> String {
-        guard value.isFinite else { return "0" }
-        if value == value.rounded(), abs(value) < 1e15 { return String(Int64(value)) }
-        return "\(value)"
-    }
-
-    /// Go's encoder escapes quotes, backslashes, control characters and,
-    /// with HTML escaping on by default, <, > and &.
-    static func quote(_ text: String) -> String {
-        var result = "\""
-        for scalar in text.unicodeScalars {
-            switch scalar {
-            case "\"": result += "\\\""
-            case "\\": result += "\\\\"
-            case "\n": result += "\\n"
-            case "\r": result += "\\r"
-            case "\t": result += "\\t"
-            case "<", ">", "&", "\u{2028}", "\u{2029}":
-                result += "\\u" + hex4(scalar.value)
-            default:
-                if scalar.value < 0x20 {
-                    result += "\\u" + hex4(scalar.value)
-                } else {
-                    result.unicodeScalars.append(scalar)
-                }
-            }
-        }
-        return result + "\""
-    }
-
-    private static func hex4(_ value: UInt32) -> String {
-        let digits = String(value, radix: 16)
-        return String(repeating: "0", count: max(0, 4 - digits.count)) + digits
-    }
+private extension UInt64 {
+    /// Nil for zero, for fields runc omits when empty.
+    var nonZero: UInt64? { self == 0 ? nil : self }
 }

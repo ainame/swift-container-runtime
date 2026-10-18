@@ -60,9 +60,9 @@ struct WorkloadSetup {
                 }
                 index += 1
             }
-            // Go reports only ErrNotFound for a search, whatever each candidate's
-            // error was, and refuses (ErrDot) a first match from a relative or
-            // empty PATH element instead of trying later elements.
+            // Like runc, a search reports only "not found", whatever each
+            // candidate's error was, and refuses a first match from a relative
+            // or empty PATH element instead of trying later elements.
             guard let found = unsafe found else { return LaunchRecord.reportFailure(to: report, at: .findExecutable, error: nil) }
             guard unsafe found[0] == CChar(UInt8(ascii: "/")) else {
                 return LaunchRecord.reportFailure(to: report, at: .relativeExecutable, error: nil)
@@ -215,7 +215,7 @@ struct WorkloadSetup {
         return nil
     }
 
-    /// Go's findExecutable for one candidate, as runc uses it: the file must
+    /// runc's check of one candidate: the file must
     /// exist, must not be a directory, and must be executable with the current
     /// (already switched) credentials. Returns nil or the error.
     @unsafe

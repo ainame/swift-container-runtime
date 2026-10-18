@@ -8,8 +8,7 @@ import LinuxAPI
 import SystemPackage
 #endif
 
-/// A `--pidfd-socket` address, accepted as runc's Go `net.DialUnix("unix")`
-/// accepts it on Linux: a filesystem path of at most 107 bytes, which leaves
+/// A `--pidfd-socket` address, accepted as runc accepts it on Linux: a filesystem path of at most 107 bytes, which leaves
 /// room for the terminating NUL in `sun_path`, or an abstract name written
 /// with a leading `@` of at most 108 bytes including the `@`. Where a relative
 /// path resolves is decided by the command, as in runc (see `PidfdSocket`).
@@ -45,7 +44,7 @@ public struct PidfdSocketAddress: Sendable, Equatable {
     }
 
     /// The `sun_path` length passed to connect: a filesystem path counts its
-    /// terminating NUL, an abstract name counts exactly its bytes (as Go).
+    /// terminating NUL, an abstract name counts exactly its bytes (as in runc).
     var sunPathLength: Int { path.utf8.count + (isAbstract ? 0 : 1) }
 }
 

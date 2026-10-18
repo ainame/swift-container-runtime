@@ -7,9 +7,12 @@ namespace for stateless operations. Keep helpers local to their only caller when
 possible. A top-level function needs a concrete reason.
 
 Implement formats natively in Swift instead of emulating Go's standard library:
-for example `Duration(parsing:)` for intervals and `debugDescription` for quoting
-values in diagnostics. Match runc's observable behavior where parity matters, not
-Go's internal quirks or error wording.
+for example `Duration(parsing:)` for intervals, `debugDescription` for quoting
+values in diagnostics, `Encodable` types with `JSONEncoder` for JSON output, and
+Foundation's ISO 8601 style for timestamps. Keep what consumers depend on (JSON
+key names and which keys are present, hugetlb size keys, which executable a
+lookup chooses) and let Swift decide formatting such as key order, number
+spelling, escaping and fractional-second digits.
 
 ## Directories
 

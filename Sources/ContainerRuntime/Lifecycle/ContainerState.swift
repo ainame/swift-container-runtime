@@ -143,13 +143,14 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     /// distinguishes legacy records from new containers with empty settings.
     var resourceConfiguration: OCIConfiguration.Resources?
 
-    init(id: ContainerID, plan: OCIRunPlan, created: String) {
+    /// `created` is recorded as RFC 3339 UTC with millisecond precision.
+    init(id: ContainerID, plan: OCIRunPlan, created: Date = Date()) {
         format = Self.currentFormat
         self.id = id.rawValue
         ociVersion = plan.ociVersion
         bundle = plan.bundle.string
         rootfs = plan.rootfs.string
-        self.created = created
+        self.created = created.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
         annotations = plan.annotations
         pidNamespace = plan.namespaces.contains(.pid)
         initProcess = nil

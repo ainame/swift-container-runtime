@@ -149,7 +149,7 @@ private struct EventWatch: ~Copyable {
                     stats = nil
                 }
                 if let stats { try emit(.stats(stats)) }
-                // Ticks missed while busy are dropped, like Go's time.Ticker,
+                // Ticks missed while busy are dropped, as in runc,
                 // computed from one clock reading so even a 1ns interval
                 // cannot chase the advancing clock.
                 tick = EventSchedule.next(after: EventSchedule.nanoseconds(start.duration(to: clock.now)), interval: interval)

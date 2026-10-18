@@ -37,7 +37,7 @@ struct Events: ParsableCommand {
             let interval = try Duration(parsing: interval)
             try globals.lifecycle().events(id: ContainerID(id), interval: interval, statsOnly: stats) { event in
                 // Each event is written whole, so a reader sees complete lines.
-                _ = try FileDescriptor.standardOutput.writeAll((event.json(id: id) + "\n").utf8)
+                _ = try FileDescriptor.standardOutput.writeAll((try event.json(id: id) + "\n").utf8)
             }
         } catch {
             throw CommandFailure.report(error)

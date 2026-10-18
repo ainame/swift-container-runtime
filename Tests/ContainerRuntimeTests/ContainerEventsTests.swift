@@ -1,3 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import SystemPackage
 import Testing
 @testable import ContainerRuntime
@@ -82,19 +87,45 @@ private let emptyStatsJSON = #"{"cpu":{},"cpuset":{"cpu_exclusive":0,"mem_hardwa
     + #""memory_spread_page":0,"memory_spread_slab":0,"memory_pressure":0,"sched_load_balance":0,"sched_relax_domain_level":0},"#
     + #""memory":{},"pids":{},"blkio":{},"hugetlb":{},"intel_rdt":{},"network_interfaces":null}"#
 
-@Test func encodesEventsWithRuncOmissions() {
-    #expect(ContainerEvent.oom.json(id: "box") == #"{"type":"oom","id":"box"}"#)
-    #expect(ContainerEvent.stats(ContainerStats()).json(id: "box") == #"{"type":"stats","id":"box","data":"# + emptyStatsJSON + "}")
+@Test func encodesEventsWithRuncOmissions() throws {
+    #expect(try JSONValue(ContainerEvent.oom.json(id: "box")) == JSONValue(#"{"type":"oom","id":"box"}"#))
+    #expect(
+        try JSONValue(ContainerEvent.stats(ContainerStats()).json(id: "box"))
+            == JSONValue(#"{"type":"stats","id":"box","data":"# + emptyStatsJSON + "}"))
 }
 
-@Test func encodesGoFloatsAndEscapes() {
-    #expect(JSONObject.float(0) == "0")
-    #expect(JSONObject.float(12) == "12")
-    #expect(JSONObject.float(0.23) == "0.23")
-    #expect(JSONObject.float(1.5) == "1.5")
-    // Go's encoding/json escapes HTML characters by default (EscapeHTML).
-    #expect(JSONObject.quote("a\"<b>&\u{1}") == #""a\"\u003cb\u003e\u0026\u0001""#)
-    #expect(JSONObject.quote("tab\tline\n\\") == #""tab\tline\n\\""#)
+@Test func encodesEventLinesDeterministically() throws {
+    let line = try ContainerEvent.oom.json(id: "a/<b>")
+    #expect(line == #"{"id":"a/<b>","type":"oom"}"#)
+    #expect(!line.contains("\n"))
+}
+
+/// Parsed JSON, so tests compare values rather than formatting.
+private indirect enum JSONValue: Decodable, Equatable {
+    case object([String: JSONValue]), array([JSONValue]), string(String), unsigned(UInt64), number(Double), bool(Bool), null
+
+    init(_ text: String) throws {
+        self = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { self = .null }
+        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
+        else if let value = try? container.decode(UInt64.self) { self = .unsigned(value) }
+        else if let value = try? container.decode(Double.self) { self = .number(value) }
+        else if let value = try? container.decode(String.self) { self = .string(value) }
+        else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
+        else { self = .object(try container.decode([String: JSONValue].self)) }
+    }
+
+    subscript(_ key: String) -> JSONValue? {
+        if case let .object(members) = self { members[key] } else { nil }
+    }
+}
+
+private func statsJSON(_ stats: ContainerStats) throws -> JSONValue {
+    try #require(JSONValue(ContainerEvent.stats(stats).json(id: "box"))["data"])
 }
 
 // MARK: - Collection from cgroup v2 files
@@ -163,11 +194,13 @@ private let populatedCgroup = FakeCgroup(files: [
     // Without hugetlb.*.rsvd.current, usage falls back to .current.
     #expect(stats.hugetlb == ["2MB": HugetlbEntry(usage: 0, max: 0, failcnt: 4)])
 
-    let json = stats.json
-    #expect(json.contains(#""cpu":{"usage":{"total":7000,"kernel":2000,"user":5000},"throttling":{"periods":4,"throttledPeriods":1,"throttledTime":3000},"psi":{"some":{"avg10":0.23,"avg60":0,"avg300":1.5,"total":99}"#))
-    #expect(json.contains(#""swap":{"limit":18446744073709551615,"usage":16484,"failcnt":0}"#))
-    #expect(json.contains(#""pids":{"current":3}"#))
-    #expect(json.contains(#""hugetlb":{"2MB":{"failcnt":4}}"#))
+    let json = try statsJSON(stats)
+    #expect(json["cpu"]?["usage"] == (try JSONValue(#"{"total":7000,"kernel":2000,"user":5000}"#)))
+    #expect(json["cpu"]?["throttling"] == (try JSONValue(#"{"periods":4,"throttledPeriods":1,"throttledTime":3000}"#)))
+    #expect(json["cpu"]?["psi"]?["some"] == (try JSONValue(#"{"avg10":0.23,"avg60":0,"avg300":1.5,"total":99}"#)))
+    #expect(json["memory"]?["swap"] == (try JSONValue(#"{"limit":18446744073709551615,"usage":16484,"failcnt":0}"#)))
+    #expect(json["pids"] == (try JSONValue(#"{"current":3}"#)))
+    #expect(json["hugetlb"] == (try JSONValue(#"{"2MB":{"failcnt":4}}"#)))
 }
 
 @Test func addsSwapLimitToMemoryLimitWhenSwapIsLimited() throws {
@@ -191,8 +224,9 @@ private let populatedCgroup = FakeCgroup(files: [
     #expect(stats.memoryUsage == MemoryEntry())
     #expect(stats.cpuPSI == nil && stats.memoryPSI == nil && stats.ioPSI == nil)
     #expect(stats.hugetlb.isEmpty)
-    #expect(stats.json.contains(#""memory":{}"#))
-    #expect(stats.json.contains(#""cpu":{"usage":{"total":1000,"kernel":0,"user":1000}}"#))
+    let json = try statsJSON(stats)
+    #expect(json["memory"] == (try JSONValue("{}")))
+    #expect(json["cpu"] == (try JSONValue(#"{"usage":{"total":1000,"kernel":0,"user":1000}}"#)))
 }
 
 @Test func keepsMemoryStatWhenUsageFilesAreMissing() throws {
@@ -232,6 +266,6 @@ private let populatedCgroup = FakeCgroup(files: [
     #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-2048kB") == "2MB")
     #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-1048576kB") == "1GB")
     #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-64kB") == "64KB")
-    #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-1536kB") == "1.5MB")
+    #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-16777216kB") == "16GB")
     #expect(CgroupFile.hugePageSize(directoryEntry: "other") == nil)
 }

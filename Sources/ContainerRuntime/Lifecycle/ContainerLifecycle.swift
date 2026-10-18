@@ -460,7 +460,7 @@ extension ContainerLifecycle {
         // Reserve and pin the generation before recording or launching an init.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
-        var record = ContainerRecord(id: id, plan: plan, created: RFC3339.now())
+        var record = ContainerRecord(id: id, plan: plan)
         var leaf: CgroupLeaf? = nil
         do {
             try container.writeRecord(record)
@@ -509,7 +509,7 @@ extension ContainerLifecycle {
         // and unlock only after execution has been confirmed.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
-        var record = ContainerRecord(id: id, plan: plan, created: RFC3339.now())
+        var record = ContainerRecord(id: id, plan: plan)
         var leaf: CgroupLeaf? = nil
         let status: Int32
         do {

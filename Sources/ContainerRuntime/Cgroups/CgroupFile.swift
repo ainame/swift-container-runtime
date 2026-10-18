@@ -86,19 +86,19 @@ enum CgroupFile {
         return stats
     }
 
-    /// runc's HugePageSizes naming: "hugepages-2048kB" becomes "2MB", using
-    /// Go's %g with binary (1024) steps and B/KB/MB/GB/TB/PB suffixes.
+    /// runc's hugetlb key for a sysfs entry: "hugepages-2048kB" becomes "2MB",
+    /// in binary (1024) steps. Huge page sizes are powers of two, so the
+    /// value stays whole; consumers look statistics up by this exact key.
     static func hugePageSize(directoryEntry: String) -> String? {
         guard directoryEntry.hasPrefix("hugepages-"), directoryEntry.hasSuffix("kB"),
               let kilobytes = UInt64(directoryEntry.dropFirst("hugepages-".count).dropLast(2)) else { return nil }
-        var size = Double(kilobytes) * 1024
-        let suffixes = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
-        var index = 0
-        while size >= 1024, index < suffixes.count - 1 {
+        var size = kilobytes
+        var units = ["KB", "MB", "GB", "TB", "PB"][...]
+        while size >= 1024, size % 1024 == 0, units.count > 1 {
             size /= 1024
-            index += 1
+            units.removeFirst()
         }
-        return JSONObject.float(size) + suffixes[index]
+        return "\(size)\(units.first!)"
     }
 }
 

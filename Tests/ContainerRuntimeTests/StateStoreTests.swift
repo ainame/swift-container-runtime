@@ -4,6 +4,11 @@ import Musl
 #else
 import Glibc
 #endif
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import SystemPackage
 import Testing
 @testable import ContainerRuntime
@@ -23,13 +28,18 @@ private func withTemporaryRoot(_ body: (FilePath) throws -> Void) throws {
     try body(directory)
 }
 
-private func sampleRecord() throws -> ContainerRecord {
+private func sampleRecord(created: Date = Date()) throws -> ContainerRecord {
     let configuration = try OCIConfiguration.decode(Array(#"""
     {"ociVersion": "1.0.2", "root": {"path": "rootfs"}, "process": {"args": ["/bin/true"], "cwd": "/"},
      "linux": {"namespaces": [{"type": "mount"}]}}
     """#.utf8))
     let plan = try OCIRunPlan(configuration, bundle: FilePath("/srv/b"), rootfs: FilePath("/srv/b/rootfs"))
-    return ContainerRecord(id: box, plan: plan, created: RFC3339.now())
+    return ContainerRecord(id: box, plan: plan, created: created)
+}
+
+@Test func recordsCreationTimeAsRFC3339UTC() throws {
+    let record = try sampleRecord(created: Date(timeIntervalSince1970: 1_700_000_000.5))
+    #expect(record.created == "2023-11-14T22:13:20.500Z")
 }
 
 @Test func createIsExclusiveAndDestroyRemovesState() throws {

@@ -98,7 +98,7 @@ private func record(initProcess: InitIdentity? = InitIdentity(pid: 4242, startTi
             """#.utf8)),
             bundle: FilePath("/srv/bundle"), rootfs: FilePath("/srv/bundle/rootfs")
         ),
-        created: "2026-10-16T00:00:00Z"
+        created: Date(timeIntervalSince1970: 1_792_108_800)
     )
     record.initProcess = initProcess
     return record
@@ -212,7 +212,7 @@ private struct StateDocument: Decodable, Equatable {
     let document = try JSONDecoder().decode(StateDocument.self, from: Data(try running.stateJSON().utf8))
     #expect(document == StateDocument(
         ociVersion: "1.0.2", id: "box", pid: 4242, status: "running", bundle: "/srv/bundle",
-        rootfs: "/srv/bundle/rootfs", created: "2026-10-16T00:00:00Z", annotations: ["org.example/key": "value"], owner: nil
+        rootfs: "/srv/bundle/rootfs", created: "2026-10-16T00:00:00.000Z", annotations: ["org.example/key": "value"], owner: nil
     ))
 }
 
@@ -252,9 +252,9 @@ func reportsPIDZeroWithoutLiveInit(_ status: ContainerStatus) throws {
     func spaces(_ count: Int) -> String { String(repeating: " ", count: count) }
     // Widths: max(12, widest cell + 3); the last column is not padded.
     let expected = "ID" + spaces(10) + "PID" + spaces(9) + "STATUS" + spaces(6) + "BUNDLE" + spaces(8)
-        + "CREATED" + spaces(16) + "OWNER\n"
+        + "CREATED" + spaces(20) + "OWNER\n"
         + "box" + spaces(9) + "4242" + spaces(8) + "running" + spaces(5) + "/srv/bundle" + spaces(3)
-        + "2026-10-16T00:00:00Z" + spaces(3) + "root\n"
+        + "2026-10-16T00:00:00.000Z" + spaces(3) + "root\n"
     #expect(ContainerStateReport.table([report]) == expected)
     let empty = "ID" + spaces(10) + "PID" + spaces(9) + "STATUS" + spaces(6) + "BUNDLE" + spaces(6) + "CREATED" + spaces(5) + "OWNER\n"
     #expect(ContainerStateReport.table([]) == empty)
@@ -292,18 +292,6 @@ func rejectsUnknownSignals(_ text: String) {
     #expect(throws: RuntimeError.self) { try SignalName.parse(text) }
 }
 
-@Test(arguments: [
-    (Int64(0), Int64(0), "1970-01-01T00:00:00Z"),
-    (951_782_400, 0, "2000-02-29T00:00:00Z"),
-    (1_700_000_000, 500_000_000, "2023-11-14T22:13:20.5Z"),
-    (1_700_000_000, 123_456_789, "2023-11-14T22:13:20.123456789Z"),
-    (4_102_444_799, 1_000, "2099-12-31T23:59:59.000001Z"),
-    (-1, 0, "1969-12-31T23:59:59Z"),
-])
-func formatsRFC3339LikeGo(_ seconds: Int64, _ nanoseconds: Int64, _ expected: String) {
-    #expect(RFC3339.format(seconds: seconds, nanoseconds: nanoseconds) == expected)
-}
-
 @Test(arguments: ["", "bad\0root"])
 func lifecycleRejectsInvalidRoots(_ root: String) {
     #expect(throws: RuntimeError.self) { try ContainerLifecycle(root: root) }
@@ -333,7 +321,7 @@ func lifecycleRejectsInvalidRoots(_ root: String) {
        "cpu":{"shares":512,"quota":50000,"period":200000,"burst":0,"cpus":"1"}}}}
     """#.utf8))
     let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/bundle/rootfs"))
-    let original = ContainerRecord(id: box, plan: plan, created: "2026-10-17T00:00:00Z")
+    let original = ContainerRecord(id: box, plan: plan)
     let decoded = try ContainerRecord.decode(original.encoded(), expectedID: box)
     let saved = try #require(decoded.resourceConfiguration)
     #expect(saved.cpu?.quota == 50000)

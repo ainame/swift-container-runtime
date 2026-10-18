@@ -70,7 +70,7 @@ struct OCIConfiguration: Decodable, Sendable {
         var hard: UInt64
 
         init(from decoder: any Decoder) throws {
-            // runc's Go decoding defaults a missing soft or hard to 0; both
+            // runc defaults a missing soft or hard to 0; both
             // are required here instead of silently meaning "no resource".
             let object = try StrictObject(decoder, allowed: ["type", "soft", "hard"])
             type = try object.required("type")

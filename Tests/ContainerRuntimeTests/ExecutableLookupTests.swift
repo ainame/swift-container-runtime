@@ -7,7 +7,7 @@ import Testing
     ("./run", ["PATH=/usr/bin"], ["./run"], false),
     ("bin/run", [], ["bin/run"], false),
     ("/usr//bin/../sh", ["PATH=/x"], ["/usr//bin/../sh"], false),
-    // Bare names search PATH in order with Go's lexical join.
+    // Bare names search PATH in order with a lexical join.
     ("sh", ["PATH=/usr/local/bin:/usr/bin/:/bin"], ["/usr/local/bin/sh", "/usr/bin/sh", "/bin/sh"], true),
     ("sh", ["PATH=/a//b/./c/../d"], ["/a/b/d/sh"], true),
     // Empty elements mean "."; relative elements stay relative.
@@ -35,6 +35,6 @@ func executableLookupCandidates(_ name: String, _ environment: [String], _ candi
     ("", "."), ("/", "/"), ("//", "/"), ("a/", "a"), ("./a", "a"), ("a/..", "."),
     ("../a", "../a"), ("a/../../b", "../b"), ("/../a", "/a"), ("/a/b/../../..", "/"),
 ])
-func executableLookupCleansLikeGo(_ path: String, _ expected: String) {
+func executableLookupCleansLexically(_ path: String, _ expected: String) {
     #expect(ExecutableLookup.clean(path) == expected)
 }
