@@ -34,7 +34,15 @@ type sits beside that type.
 Only `Kernel/` imports `Glibc`, `Musl`, `Darwin` or `LinuxAPI`, and only
 `Kernel/` checks the platform with `#if`; `KernelBoundaryTests` enforces the
 imports. Every runtime file therefore compiles on macOS, where Linux-only
-operations fail with `ENOSYS` and `Kernel.isLinux` is false. Kernel API takes and returns Swift types such as `FileStatus`,
+operations fail with `ENOSYS` and `Kernel.isLinux` is false.
+
+Byte I/O uses safe buffer types: `Kernel.File.write` and `Kernel.Socket.send`
+take a `RawSpan` (pass `array.span.bytes`), and `Kernel.File.read`/`readAll`
+return arrays, so unsafe buffer pointers stay inside Kernel. Fixed records such
+as `LaunchRecord` encode their fields explicitly rather than reinterpreting a
+struct's memory. swift-system's own Span-based I/O (apple/swift-system#290)
+can replace these once it ships in a tagged release; it is only on the
+`staging` branch so far. Kernel API takes and returns Swift types such as `FileStatus`,
 `PollEvents`, `Errno` and descriptors, and names libc's `pid_t`, `uid_t` and
 `gid_t` for the rest of the runtime. A new system call goes into Kernel with a
 stub for other platforms. See [the migration plan](platform-shim-plan.md).

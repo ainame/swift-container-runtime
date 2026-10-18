@@ -74,7 +74,8 @@ enum LaunchStage: Int32 {
 
 /// Fixed-size records sent by forked copies of this executable over the
 /// report pipe (or, for a start failure, the start connection). A record is
-/// smaller than PIPE_BUF, so each pipe write is atomic.
+/// smaller than PIPE_BUF, so each pipe write is atomic. Both ends are the same
+/// executable, so the encoding is a fixed little-endian layout of the fields.
 struct LaunchRecord {
     enum Kind: Int32 {
         /// `accepted`: a created init took a start request and waits for
@@ -103,6 +104,41 @@ struct LaunchRecord {
 
     /// The reported errno, or nil for a failure without one.
     var error: Errno? { code == 0 ? nil : Errno(rawValue: code) }
+
+    /// The encoded size: four 32-bit fields and one 64-bit field.
+    static let byteCount = 24
+
+    /// The fields in order, each little-endian.
+    var bytes: [UInt8] {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(Self.byteCount)
+        func append<Field: FixedWidthInteger>(_ field: Field) {
+            for shift in stride(from: 0, to: Field.bitWidth, by: 8) {
+                bytes.append(UInt8(truncatingIfNeeded: field >> shift))
+            }
+        }
+        append(kind); append(stage); append(code); append(detail); append(value)
+        return bytes
+    }
+
+    /// Decodes `byteCount` bytes written by `bytes`.
+    init(bytes: [UInt8]) {
+        precondition(bytes.count == Self.byteCount)
+        var offset = 0
+        func next<Field: FixedWidthInteger>(_: Field.Type) -> Field {
+            var field: Field = 0
+            for index in 0..<(Field.bitWidth / 8) {
+                field |= Field(truncatingIfNeeded: bytes[offset + index]) << (8 * index)
+            }
+            offset += Field.bitWidth / 8
+            return field
+        }
+        kind = next(Int32.self)
+        stage = next(Int32.self)
+        code = next(Int32.self)
+        detail = next(Int32.self)
+        value = next(Int64.self)
+    }
 }
 
 /// A child-side setup failure, reported through a `LaunchRecord` before exit.
@@ -138,45 +174,33 @@ extension LaunchRecord {
     /// MSG_NOSIGNAL so a vanished peer cannot kill the writer with SIGPIPE.
     @discardableResult
     func write(to owner: borrowing OwnedFileDescriptor, socket: Bool = false) -> Bool {
-        (try? owner.withDescriptor { descriptor in
-            var record = self
-            // Keep ownership through the write. A cached raw number alone could
-            // outlive its owner on a child path that never returns to Swift.
-            return try withUnsafeBytes(of: &record) { bytes in
-                // One write either way; a record is smaller than PIPE_BUF.
-                let written = unsafe try socket ? Kernel.Socket.send(descriptor, bytes) : descriptor.write(bytes)
-                return written == bytes.count
-            }
+        let bytes = self.bytes
+        // Keep ownership through the write. A cached raw number alone could
+        // outlive its owner on a child path that never returns to Swift.
+        return (try? owner.withDescriptor { descriptor in
+            // One write either way; a record is smaller than PIPE_BUF.
+            let written = socket
+                ? try Kernel.Socket.send(descriptor, bytes.span.bytes)
+                : try Kernel.File.write(descriptor, bytes.span.bytes)
+            return written == bytes.count
         }) ?? false
     }
 
     /// Reads one whole record, or reports EOF before its first byte.
     static func read(from owner: borrowing OwnedFileDescriptor) -> RecordRead {
-        var record = LaunchRecord()
-        // The fill reports only an early end or failure; the record itself is
-        // read after its bytes are no longer borrowed.
-        let interrupted: RecordRead?
         do {
-            interrupted = try owner.withDescriptor { readEnd in
-                withUnsafeMutableBytes(of: &record) { bytes -> RecordRead? in
-                    var received = 0
-                    while received < bytes.count {
-                        let count: Int
-                        do {
-                            count = unsafe try readEnd.read(into: UnsafeMutableRawBufferPointer(rebasing: bytes[received...]))
-                        } catch {
-                            return .failed((error as? Errno) ?? .ioError)
-                        }
-                        if count == 0 { return received == 0 ? .end : .failed(.ioError) }
-                        received += count
-                    }
-                    return nil
+            return try owner.withDescriptor { readEnd in
+                var bytes: [UInt8] = []
+                while bytes.count < byteCount {
+                    let chunk = try Kernel.File.read(readEnd, upTo: byteCount - bytes.count)
+                    if chunk.isEmpty { return bytes.isEmpty ? .end : .failed(.ioError) }
+                    bytes += chunk
                 }
+                return .record(LaunchRecord(bytes: bytes))
             }
         } catch {
-            interrupted = .failed((error as? Errno) ?? .ioError)
+            return .failed((error as? Errno) ?? .ioError)
         }
-        return interrupted ?? .record(record)
     }
 
     /// Reports a child-side failure and returns the status to pass to `_exit`.
@@ -198,10 +222,7 @@ extension LaunchControl {
     func send(over owner: borrowing OwnedFileDescriptor) throws {
         let sent: Int
         do {
-            sent = try owner.withDescriptor { descriptor in
-                var byte: UInt8 = rawValue
-                return try withUnsafeBytes(of: &byte) { bytes in unsafe try Kernel.Socket.send(descriptor, bytes) }
-            }
+            sent = try owner.withDescriptor { try Kernel.Socket.send($0, [rawValue].span.bytes) }
         } catch {
             throw RuntimeError.launch(.commit, (error as? Errno) ?? .badFileDescriptor)
         }
@@ -210,11 +231,7 @@ extension LaunchControl {
 
     /// One control byte from the supervisor; nil on EOF or error.
     static func receive(from owner: borrowing OwnedFileDescriptor) -> LaunchControl? {
-        let byte = try? owner.withDescriptor { descriptor -> UInt8? in
-            var byte: UInt8 = 0
-            let count = try withUnsafeMutableBytes(of: &byte) { buffer in unsafe try descriptor.read(into: buffer) }
-            return count == 1 ? byte : nil
-        }
-        return byte.flatMap { LaunchControl(rawValue: $0) }
+        let bytes = try? owner.withDescriptor { try Kernel.File.read($0, upTo: 1) }
+        return bytes?.first.flatMap { LaunchControl(rawValue: $0) }
     }
 }

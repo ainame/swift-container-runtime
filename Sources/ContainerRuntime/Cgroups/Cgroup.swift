@@ -146,7 +146,7 @@ private final class CgroupDirectory {
         let bytes = Array(text.utf8)
         do {
             let written = try owner.withDescriptor { descriptor in
-                try bytes.withUnsafeBytes { buffer in unsafe try descriptor.write(buffer) }
+                try Kernel.File.write(descriptor, bytes.span.bytes)
             }
             return written == bytes.count ? nil : .ioError
         } catch {

@@ -68,15 +68,10 @@ extension OwnedFileDescriptor {
     /// Reads to EOF, failing once more than `limit` bytes arrive.
     func readAll(limit: Int) throws -> [UInt8] {
         try withDescriptor { descriptor in
-            var bytes: [UInt8] = []
-            var chunk = [UInt8](repeating: 0, count: 16 * 1024)
-            while true {
-                let count = try chunk.withUnsafeMutableBytes { buffer in
-                    unsafe try descriptor.read(into: buffer)
-                }
-                if count == 0 { return bytes }
-                bytes += chunk[..<count]
-                guard bytes.count <= limit else { throw RuntimeError("input exceeds \(limit) bytes") }
+            do {
+                return try Kernel.File.readAll(descriptor, limit: limit)
+            } catch .fileTooLarge {
+                throw RuntimeError("input exceeds \(limit) bytes")
             }
         }
     }

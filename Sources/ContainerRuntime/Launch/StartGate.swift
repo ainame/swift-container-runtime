@@ -165,17 +165,14 @@ extension StartProtocol {
     /// Sends one whole packet without raising SIGPIPE on a vanished peer.
     fileprivate static func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) -> Bool {
         (try? owner.withDescriptor { descriptor in
-            try packet.withUnsafeBytes { bytes in unsafe try Kernel.Socket.send(descriptor, bytes) == bytes.count }
+            try Kernel.Socket.send(descriptor, packet.span.bytes) == packet.count
         }) ?? false
     }
 
     /// Reads one packet of at most 16 bytes; nil on EOF or error.
     fileprivate static func receivePacket(_ owner: borrowing OwnedFileDescriptor) -> [UInt8]? {
-        var buffer = [UInt8](repeating: 0, count: 16)
-        let count = (try? owner.withDescriptor { descriptor in
-            try buffer.withUnsafeMutableBytes { bytes in unsafe try descriptor.read(into: bytes) }
-        }) ?? 0
-        return count > 0 ? Array(buffer[..<count]) : nil
+        let packet = try? owner.withDescriptor { try Kernel.File.read($0, upTo: 16) }
+        return packet?.isEmpty == false ? packet : nil
     }
 
     fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, timeout: Duration) -> Bool {

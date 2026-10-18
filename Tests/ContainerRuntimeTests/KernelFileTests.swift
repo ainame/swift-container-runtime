@@ -19,3 +19,34 @@ import Testing
     #expect(try directory.directoryEntries().sorted() == ["child", "file"])
     #expect(throws: Errno.noSuchFileOrDirectory) { try Kernel.File.directoryEntries(atPath: root.path + "/missing") }
 }
+
+@Test func writesAndReadsThroughSpansAndArrays() throws {
+    let pipe = try FileDescriptor.pipe()
+    defer { try? pipe.readEnd.close(); try? pipe.writeEnd.close() }
+    let payload: [UInt8] = Array("kernel".utf8)
+    #expect(try Kernel.File.write(pipe.writeEnd, payload.span.bytes) == payload.count)
+    #expect(try Kernel.File.read(pipe.readEnd, upTo: 3) == Array("ker".utf8))
+    try pipe.writeEnd.close()
+    #expect(try Kernel.File.readAll(pipe.readEnd, limit: 16) == Array("nel".utf8))
+    #expect(try Kernel.File.read(pipe.readEnd, upTo: 3).isEmpty)
+}
+
+@Test func readAllStopsAtTheLimit() throws {
+    let pipe = try FileDescriptor.pipe()
+    defer { try? pipe.readEnd.close() }
+    _ = try Kernel.File.write(pipe.writeEnd, [UInt8](repeating: 1, count: 32).span.bytes)
+    try pipe.writeEnd.close()
+    #expect(throws: Errno.fileTooLarge) { try Kernel.File.readAll(pipe.readEnd, limit: 16, chunkSize: 8) }
+}
+
+@Test func launchRecordsRoundTripThroughTheirEncoding() {
+    let record = LaunchRecord(.failure, stage: 7, error: .notPermitted, detail: -1, value: Int64.max - 5)
+    let bytes = record.bytes
+    #expect(bytes.count == LaunchRecord.byteCount)
+    let decoded = LaunchRecord(bytes: bytes)
+    #expect(decoded.kind == LaunchRecord.Kind.failure.rawValue)
+    #expect(decoded.stage == 7)
+    #expect(decoded.error == .notPermitted)
+    #expect(decoded.detail == -1)
+    #expect(decoded.value == Int64.max - 5)
+}

@@ -53,17 +53,11 @@ extension Kernel {
 
         /// Reads queued events until the nonblocking descriptor is empty.
         static func drain(_ inotify: FileDescriptor) throws(Errno) {
-            var buffer = [UInt8](repeating: 0, count: 4096)
             while true {
                 do {
-                    let count = try buffer.withUnsafeMutableBytes { bytes in unsafe try inotify.read(into: bytes) }
-                    if count == 0 { return }
-                } catch Errno.interrupted {
-                    continue
-                } catch Errno.resourceTemporarilyUnavailable {
+                    if try Kernel.File.read(inotify, upTo: 4096).isEmpty { return }
+                } catch .resourceTemporarilyUnavailable {
                     return
-                } catch {
-                    throw (error as? Errno) ?? .ioError
                 }
             }
         }

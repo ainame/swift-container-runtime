@@ -77,10 +77,13 @@ extension Kernel {
         }
 
         /// One send(2), retried on EINTR; returns the bytes sent.
-        static func send(_ socket: FileDescriptor, _ bytes: UnsafeRawBufferPointer) throws(Errno) -> Int {
-            var result: Int
-            repeat { result = unsafe libcSend(socket.rawValue, bytes.baseAddress, bytes.count, noSignal) }
-            while result < 0 && errno == EINTR
+        static func send(_ socket: FileDescriptor, _ bytes: RawSpan) throws(Errno) -> Int {
+            let result = bytes.withUnsafeBytes { buffer in
+                var result: Int
+                repeat { result = unsafe libcSend(socket.rawValue, buffer.baseAddress, buffer.count, noSignal) }
+                while result < 0 && errno == EINTR
+                return result
+            }
             guard result >= 0 else { throw .current }
             return result
         }
