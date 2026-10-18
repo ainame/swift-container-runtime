@@ -3,20 +3,13 @@ public struct RuntimeError: Error, CustomStringConvertible, Sendable {
     public init(_ description: String) { self.description = description }
 }
 
-/// Linux limits UTS hostnames to 64 bytes.
-func validateHostname(_ hostname: String) throws {
-    guard !hostname.isEmpty, hostname.utf8.count <= 64, !hostname.utf8.contains(0) else {
-        throw RuntimeError("hostname must contain 1...64 UTF-8 bytes and no NUL")
-    }
-}
-
 /// A namespace experiment. This does not isolate the root filesystem or privileges.
 public struct NamespaceCommand: Sendable {
     public let hostname: String
     public let arguments: [String]
 
     public init(hostname: String, arguments: [String]) throws {
-        try validateHostname(hostname)
+        try NamespaceCommand.validateHostname(hostname)
         guard let executable = arguments.first, executable.hasPrefix("/") else {
             throw RuntimeError("an absolute executable path is required after --")
         }
@@ -41,5 +34,14 @@ public struct NamespaceCommand: Sendable {
         #else
         throw RuntimeError("namespace launch requires Linux")
         #endif
+    }
+}
+
+extension NamespaceCommand {
+    /// Linux limits UTS hostnames to 64 bytes.
+    static func validateHostname(_ hostname: String) throws {
+        guard !hostname.isEmpty, hostname.utf8.count <= 64, !hostname.utf8.contains(0) else {
+            throw RuntimeError("hostname must contain 1...64 UTF-8 bytes and no NUL")
+        }
     }
 }

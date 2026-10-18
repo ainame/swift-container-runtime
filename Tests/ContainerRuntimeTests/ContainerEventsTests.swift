@@ -52,23 +52,23 @@ func rejectsMalformedGoDurations(text: String, message: String) {
 // MARK: - Stream ticks
 
 @Test func skipsMissedTicksInConstantTime() {
-    #expect(nextTickOffset(elapsed: 0, interval: 5) == 5)
-    #expect(nextTickOffset(elapsed: 4, interval: 5) == 5)
-    #expect(nextTickOffset(elapsed: 5, interval: 5) == 10)
-    #expect(nextTickOffset(elapsed: 23, interval: 5) == 25)
+    #expect(EventSchedule.next(after: 0, interval: 5) == 5)
+    #expect(EventSchedule.next(after: 4, interval: 5) == 5)
+    #expect(EventSchedule.next(after: 5, interval: 5) == 10)
+    #expect(EventSchedule.next(after: 23, interval: 5) == 25)
     // A 1ns interval far behind the clock lands just after it, without looping.
-    #expect(nextTickOffset(elapsed: 3_600_000_000_000, interval: 1) == 3_600_000_000_001)
-    #expect(nextTickOffset(elapsed: Int64.max - 1, interval: 1) == Int64.max)
-    #expect(nextTickOffset(elapsed: Int64.max, interval: 1) == Int64.max)
-    #expect(nextTickOffset(elapsed: 10, interval: Int64.max) == Int64.max)
-    #expect(nextTickOffset(elapsed: -1, interval: 3) == 3)
+    #expect(EventSchedule.next(after: 3_600_000_000_000, interval: 1) == 3_600_000_000_001)
+    #expect(EventSchedule.next(after: Int64.max - 1, interval: 1) == Int64.max)
+    #expect(EventSchedule.next(after: Int64.max, interval: 1) == Int64.max)
+    #expect(EventSchedule.next(after: 10, interval: Int64.max) == Int64.max)
+    #expect(EventSchedule.next(after: -1, interval: 3) == 3)
 }
 
 @Test func convertsElapsedDurations() {
-    #expect(elapsedNanoseconds(.milliseconds(1500)) == 1_500_000_000)
-    #expect(elapsedNanoseconds(.nanoseconds(7)) == 7)
-    #expect(elapsedNanoseconds(.seconds(-1)) == 0)
-    #expect(elapsedNanoseconds(.seconds(Int64.max)) == Int64.max)
+    #expect(EventSchedule.nanoseconds(.milliseconds(1500)) == 1_500_000_000)
+    #expect(EventSchedule.nanoseconds(.nanoseconds(7)) == 7)
+    #expect(EventSchedule.nanoseconds(.seconds(-1)) == 0)
+    #expect(EventSchedule.nanoseconds(.seconds(Int64.max)) == Int64.max)
 }
 
 // MARK: - JSON encoding
@@ -125,7 +125,7 @@ private let populatedCgroup = FakeCgroup(files: [
 
 @Test func collectsRuncFieldsAndUnits() throws {
     let cgroup = populatedCgroup
-    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: ["2MB"], tolerateErrors: false)
+    let stats = try CgroupStatsReader(read: cgroup.read, hugePageSizes: ["2MB"]).collect(tolerateErrors: false)
 
     // cpu.stat microseconds become nanoseconds; periods stay counts.
     #expect(stats.cpuTotal == 7_000)
@@ -170,7 +170,7 @@ private let populatedCgroup = FakeCgroup(files: [
     var cgroup = populatedCgroup
     cgroup.files["memory.swap.max"] = "1000\n"
     cgroup.files["memory.swap.peak"] = "50\n"
-    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: false)
+    let stats = try CgroupStatsReader(read: cgroup.read, hugePageSizes: []).collect(tolerateErrors: false)
     #expect(stats.swapUsage == MemoryEntry(limit: 1_049_576, usage: 16_484, max: 0, failcnt: 0))
 }
 
@@ -180,7 +180,7 @@ private let populatedCgroup = FakeCgroup(files: [
         files: ["cgroup.procs": "10\n11\n", "cpu.stat": "usage_usec 1\nuser_usec 1\nsystem_usec 0\n"],
         unsupported: ["memory.pressure"]
     )
-    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: ["2MB"], tolerateErrors: false)
+    let stats = try CgroupStatsReader(read: cgroup.read, hugePageSizes: ["2MB"]).collect(tolerateErrors: false)
     #expect(stats.pidsCurrent == 2)
     #expect(stats.pidsLimit == 0)
     #expect(stats.memoryRaw.isEmpty)
@@ -193,7 +193,7 @@ private let populatedCgroup = FakeCgroup(files: [
 
 @Test func keepsMemoryStatWhenUsageFilesAreMissing() throws {
     let cgroup = FakeCgroup(files: ["pids.current": "1\n", "pids.max": "5\n", "memory.stat": "file 3\n"])
-    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: false)
+    let stats = try CgroupStatsReader(read: cgroup.read, hugePageSizes: []).collect(tolerateErrors: false)
     #expect(stats.memoryCache == 3)
     #expect(stats.memoryUsage == MemoryEntry())
     #expect(stats.pidsLimit == 5)
@@ -203,9 +203,9 @@ private let populatedCgroup = FakeCgroup(files: [
     var cgroup = populatedCgroup
     cgroup.files["cpu.stat"] = "usage_usec x\n"
     #expect(throws: (any Error).self) {
-        try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: false)
+        try CgroupStatsReader(read: cgroup.read, hugePageSizes: []).collect(tolerateErrors: false)
     }
-    let stats = try collectCgroupStats(read: cgroup.read, hugePageSizes: [], tolerateErrors: true)
+    let stats = try CgroupStatsReader(read: cgroup.read, hugePageSizes: []).collect(tolerateErrors: true)
     #expect(stats.pidsCurrent == 3)
     #expect(stats.cpuTotal == 0)
 
@@ -213,21 +213,21 @@ private let populatedCgroup = FakeCgroup(files: [
     var noLimit = populatedCgroup
     noLimit.files["pids.max"] = nil
     #expect(throws: (any Error).self) {
-        try collectCgroupStats(read: noLimit.read, hugePageSizes: [], tolerateErrors: false)
+        try CgroupStatsReader(read: noLimit.read, hugePageSizes: []).collect(tolerateErrors: false)
     }
 }
 
 @Test func parsesCgroupValues() throws {
-    #expect(try parseCgroupUint("max\n", file: "f") == .max)
-    #expect(try parseCgroupUint("-1\n", file: "f") == 0)
-    #expect(try parseCgroupUint("42\n", file: "f") == 42)
-    #expect(throws: (any Error).self) { try parseCgroupUint("x", file: "f") }
+    #expect(try CgroupFile.uint("max\n", file: "f") == .max)
+    #expect(try CgroupFile.uint("-1\n", file: "f") == 0)
+    #expect(try CgroupFile.uint("42\n", file: "f") == 42)
+    #expect(throws: (any Error).self) { try CgroupFile.uint("x", file: "f") }
 }
 
 @Test func namesHugePageSizesLikeRunc() {
-    #expect(hugePageSizeName(directoryEntry: "hugepages-2048kB") == "2MB")
-    #expect(hugePageSizeName(directoryEntry: "hugepages-1048576kB") == "1GB")
-    #expect(hugePageSizeName(directoryEntry: "hugepages-64kB") == "64KB")
-    #expect(hugePageSizeName(directoryEntry: "hugepages-1536kB") == "1.5MB")
-    #expect(hugePageSizeName(directoryEntry: "other") == nil)
+    #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-2048kB") == "2MB")
+    #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-1048576kB") == "1GB")
+    #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-64kB") == "64KB")
+    #expect(CgroupFile.hugePageSize(directoryEntry: "hugepages-1536kB") == "1.5MB")
+    #expect(CgroupFile.hugePageSize(directoryEntry: "other") == nil)
 }

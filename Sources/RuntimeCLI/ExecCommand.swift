@@ -24,8 +24,7 @@ struct Exec: ParsableCommand {
     var cap: [String] = []
     @Option(name: .customLong("pid-file"), help: "Write the host exec PID atomically to this path.") var pidFile: String?
     @Option(name: [.customShort("p"), .customLong("process")], help: "OCI process JSON file; overrides the bundle and process CLI settings.") var processFile: String?
-    @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp) var preserveFDs = 0
-    @Option(name: .customLong("pidfd-socket"), help: pidfdSocketHelp) var pidfdSocket: String?
+    @OptionGroup var descriptors: DescriptorOptions
     @Flag(name: [.customShort("d"), .long], help: "Return once exec succeeds.") var detach = false
     @Flag(name: .customLong("ignore-paused"), help: "Wait for a paused container to resume instead of failing.")
     var ignorePaused = false
@@ -45,14 +44,12 @@ struct Exec: ParsableCommand {
             if id.hasPrefix("-") { throw ValidationError("unknown option \(id) before container ID") }
         }
         try globals.validate()
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
         if processFile == nil {
             guard let executable = arguments.first, !executable.isEmpty else {
                 throw ValidationError("exec requires an executable after the container ID")
             }
         }
-        _ = try validatedPreservedFDs(preserveFDs)
-        try validatePidfdSocket(pidfdSocket)
         guard processFile != "" else { throw ValidationError("--process must not be empty") }
         guard (arguments + env + cap + [cwd, user, pidFile, processFile].compactMap { $0 }).allSatisfy({ !$0.utf8.contains(0) }) else {
             throw ValidationError("exec options and arguments must not contain NUL")
@@ -66,9 +63,9 @@ struct Exec: ParsableCommand {
                 id: ContainerID(id), arguments: arguments, environment: env, cwd: cwd, user: user,
                 additionalGids: additionalGids, noNewPrivileges: noNewPrivs ? true : nil,
                 capabilities: cap, detach: detach, pidFile: pidFile, processFile: processFile,
-                ignorePaused: ignorePaused, preserveDescriptors: preserveFDs,
-                pidfdSocket: pidfdSocket)
-        } catch { throw failure(error) }
+                ignorePaused: ignorePaused, preserveDescriptors: descriptors.preserveFDs,
+                pidfdSocket: descriptors.pidfdSocket)
+        } catch { throw CommandFailure.report(error) }
         throw ExitCode(status)
     }
 }

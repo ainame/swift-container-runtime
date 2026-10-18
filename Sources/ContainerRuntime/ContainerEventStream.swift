@@ -137,7 +137,7 @@ private struct EventWatch: ~Copyable {
                 try emit(.oom)
             }
             if try ended(id: id, identity: identity) { return }
-            if elapsedNanoseconds(start.duration(to: clock.now)) >= tick {
+            if EventSchedule.nanoseconds(start.duration(to: clock.now)) >= tick {
                 // As in runc, a failed sample is reported and the stream goes
                 // on; a failed write of an event ends the command.
                 let stats: ContainerStats?
@@ -151,7 +151,7 @@ private struct EventWatch: ~Copyable {
                 // Ticks missed while busy are dropped, like Go's time.Ticker,
                 // computed from one clock reading so even a 1ns interval
                 // cannot chase the advancing clock.
-                tick = nextTickOffset(elapsed: elapsedNanoseconds(start.duration(to: clock.now)), interval: interval)
+                tick = EventSchedule.next(after: EventSchedule.nanoseconds(start.duration(to: clock.now)), interval: interval)
             }
             // Enabling a controller creates files without any watched event
             // (a rejected update may not rewrite state), so until memory.events

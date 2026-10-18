@@ -20,7 +20,7 @@ struct Update: ParsableCommand {
     @Argument var id: String
 
     mutating func validate() throws {
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
         if let resources, resources.isEmpty || resources.utf8.contains(0) {
             throw ValidationError("resources path must be nonempty and contain no NUL")
         }
@@ -54,7 +54,7 @@ struct Update: ParsableCommand {
         }
         func memorySize(_ value: String?) throws -> Int64? {
             guard let value, !value.isEmpty else { return nil }
-            return try parseRAMBytes(value)
+            return try MemorySize.bytes(from: value)
         }
         return try ResourceUpdate(
             memory: memorySize(memory), memorySwap: memorySize(memorySwap), memoryReservation: memorySize(memoryReservation),
@@ -65,30 +65,6 @@ struct Update: ParsableCommand {
 
     mutating func run() throws {
         do { try globals.lifecycle().update(id: ContainerID(id), resources: request()) }
-        catch { throw failure(error) }
+        catch { throw CommandFailure.report(error) }
     }
-}
-
-/// docker/go-units RAMInBytes uses binary multipliers, accepts decimal
-/// fractions, and truncates fractional bytes. -1 is runc's unlimited value.
-func parseRAMBytes(_ text: String) throws -> Int64 {
-    if text == "-1" { return -1 }
-    guard let boundary = text.lastIndex(where: { $0.isASCII && ($0.isNumber || $0 == "." || $0 == " ") }) else {
-        throw ValidationError("invalid memory size: \(text)")
-    }
-    let end = text.index(after: boundary)
-    let number = text[boundary] == " " ? text[..<boundary] : text[..<end]
-    let suffix = text[end...].lowercased()
-    var multiplier: Double = 1
-    if !suffix.isEmpty && suffix != "b" {
-        guard let first = suffix.first, let power = "kmgtp".firstIndex(of: first) else { throw ValidationError("invalid memory unit: \(suffix)") }
-        let tail = suffix.dropFirst()
-        guard tail.isEmpty || tail == "b" || tail == "ib" else { throw ValidationError("invalid memory unit: \(suffix)") }
-        for _ in 0..."kmgtp".distance(from: "kmgtp".startIndex, to: power) { multiplier *= 1024 }
-    }
-    guard let value = Double(number), value >= 0, value.isFinite,
-          let bytes = Int64(exactly: (value * multiplier).rounded(.towardZero)) else {
-        throw ValidationError("memory size is invalid or exceeds Int64: \(text)")
-    }
-    return bytes
 }

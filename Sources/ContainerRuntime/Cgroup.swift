@@ -593,7 +593,7 @@ final class CgroupLeaf {
         guard let directory = try recordedDirectory(identity) else {
             throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
         }
-        return try cgroupStats(directory)
+        return try directory.stats()
     }
 
     /// Pins this recorded generation for an event stream; nil when the
@@ -630,7 +630,7 @@ final class CgroupEventSource {
         self.directory = directory
     }
 
-    func stats() throws -> ContainerStats { try cgroupStats(directory) }
+    func stats() throws -> ContainerStats { try directory.stats() }
 
     /// memory.events oom_kill, or nil when memory.events does not exist
     /// (the memory controller is not enabled for this cgroup).
@@ -657,32 +657,34 @@ final class CgroupEventSource {
     }
 }
 
-/// runc's fs2 Manager.Stats over one directory. Errors are tolerated when
-/// not running as root, as runc does for rootless containers.
-private func cgroupStats(_ directory: CgroupDirectory) throws -> ContainerStats {
-    try collectCgroupStats(
-        read: { try directory.contents($0) }, hugePageSizes: hugePageSizes(), tolerateErrors: geteuid() != 0
-    )
-}
-
-/// runc's HugePageSizes: names from /sys/kernel/mm/hugepages, or none when
-/// the directory cannot be read (no hugetlb support).
-private func hugePageSizes() -> [String] {
-    guard let stream = unsafe opendir("/sys/kernel/mm/hugepages") else { return [] }
-    defer { _ = unsafe closedir(stream) }
-    var sizes: [String] = []
-    while let entry = unsafe readdir(stream) {
-        let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
-            unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
-        }
-        if let size = hugePageSizeName(directoryEntry: name) { sizes.append(size) }
-    }
-    return sizes
-}
-
 extension String {
     fileprivate func trimmingSuffix(_ suffix: String) -> String {
         hasSuffix(suffix) ? String(dropLast(suffix.count)) : self
+    }
+}
+#endif
+
+#if os(Linux)
+extension CgroupDirectory {
+    /// runc's fs2 Manager.Stats over one directory. Errors are tolerated when
+    /// not running as root, as runc does for rootless containers.
+    func stats() throws -> ContainerStats {
+        try CgroupStatsReader(read: { try self.contents($0) }, hugePageSizes: Self.hugePageSizes()).collect(tolerateErrors: geteuid() != 0)
+    }
+
+    /// runc's HugePageSizes: names from /sys/kernel/mm/hugepages, or none when
+    /// the directory cannot be read (no hugetlb support).
+    private static func hugePageSizes() -> [String] {
+        guard let stream = unsafe opendir("/sys/kernel/mm/hugepages") else { return [] }
+        defer { _ = unsafe closedir(stream) }
+        var sizes: [String] = []
+        while let entry = unsafe readdir(stream) {
+            let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
+                unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+            }
+            if let size = CgroupFile.hugePageSize(directoryEntry: name) { sizes.append(size) }
+        }
+        return sizes
     }
 }
 #endif

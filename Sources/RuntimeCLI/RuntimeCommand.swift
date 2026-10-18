@@ -42,47 +42,6 @@ struct GlobalOptions: ParsableArguments {
     }
 }
 
-func validatedID(_ id: String) throws -> ContainerID {
-    do {
-        return try ContainerID(id)
-    } catch {
-        throw ValidationError(String(describing: error))
-    }
-}
-
-private func validateBundle(_ bundle: String) throws {
-    guard !bundle.isEmpty, !bundle.utf8.contains(0) else {
-        throw ValidationError("bundle path must be non-empty and contain no NUL")
-    }
-}
-
-private func validatePIDFile(_ path: String?) throws {
-    guard let path else { return }
-    guard !path.utf8.contains(0) else { throw ValidationError("--pid-file must not contain NUL") }
-}
-
-/// Rejects values runc's dial could not use as a Unix socket address.
-func validatePidfdSocket(_ path: String?) throws {
-    guard let path else { return }
-    do { _ = try PidfdSocketAddress(path) } catch { throw ValidationError("\(error)") }
-}
-
-let pidfdSocketHelp: ArgumentHelp = "Send a pidfd for the new process, with a runc-compatible label, to the AF_UNIX stream listener at this path (or @abstract name)."
-
-let preserveFDsHelp: ArgumentHelp = "Pass caller descriptors 3 through 2+N to the workload at the same numbers. They must be open and not close-on-exec; their type is not checked."
-
-/// Rejects negative counts and counts whose first internal descriptor, 3+N, leaves Int32.
-func validatedPreservedFDs(_ count: Int) throws -> PreservedDescriptors {
-    do { return try PreservedDescriptors(count: count) } catch { throw ValidationError("\(error)") }
-}
-
-/// Prints a runtime failure and exits with `status`: 1 for lifecycle
-/// commands as in runc, 125 for `run` so it stays distinct from workload exits.
-func failure(_ error: any Error, status: Int32 = 1) -> ExitCode {
-    RuntimeDiagnostics.writeError("swift-container-runtime: \(error)")
-    return ExitCode(status)
-}
-
 struct Create: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "create",
@@ -100,32 +59,26 @@ struct Create: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
     var pidFile: String?
 
-    @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp)
-    var preserveFDs = 0
-
-    @Option(name: .customLong("pidfd-socket"), help: pidfdSocketHelp)
-    var pidfdSocket: String?
+    @OptionGroup var descriptors: DescriptorOptions
 
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
-        try validateBundle(bundle)
-        try validatePIDFile(pidFile)
-        try validatePidfdSocket(pidfdSocket)
-        _ = try validatedPreservedFDs(preserveFDs)
-        _ = try validatedID(id)
+        try CommandValidation.bundle(bundle)
+        try CommandValidation.pidFile(pidFile)
+        _ = try CommandValidation.id(id)
     }
 
     mutating func run() throws {
         do {
             // Check caller descriptors before loading the plan can open any.
-            try PreservedDescriptors(count: preserveFDs).verify()
+            try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             try globals.lifecycle().create(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
-                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket)
+                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket)
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }
@@ -143,14 +96,14 @@ struct Start: ParsableCommand {
     var id: String
 
     mutating func validate() throws {
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
     }
 
     mutating func run() throws {
         do {
             try globals.lifecycle().start(id: ContainerID(id))
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }
@@ -169,7 +122,7 @@ struct State: ParsableCommand {
     var id: String
 
     mutating func validate() throws {
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
     }
 
     mutating func run() throws {
@@ -177,7 +130,7 @@ struct State: ParsableCommand {
         do {
             json = try globals.lifecycle().state(id: ContainerID(id)).stateJSON()
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
         print(json)
     }
@@ -200,7 +153,7 @@ struct Kill: ParsableCommand {
     var signal = "TERM"
 
     mutating func validate() throws {
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
         do {
             _ = try SignalName.parse(signal)
         } catch {
@@ -212,7 +165,7 @@ struct Kill: ParsableCommand {
         do {
             try globals.lifecycle().kill(id: ContainerID(id), signal: SignalName.parse(signal))
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }
@@ -222,11 +175,11 @@ struct Pause: ParsableCommand {
     @OptionGroup var globals: GlobalOptions
     @Argument(help: "Container ID.") var id: String
 
-    mutating func validate() throws { _ = try validatedID(id) }
+    mutating func validate() throws { _ = try CommandValidation.id(id) }
 
     mutating func run() throws {
         do { try globals.lifecycle().pause(id: ContainerID(id)) }
-        catch { throw failure(error) }
+        catch { throw CommandFailure.report(error) }
     }
 }
 
@@ -235,11 +188,11 @@ struct Resume: ParsableCommand {
     @OptionGroup var globals: GlobalOptions
     @Argument(help: "Container ID.") var id: String
 
-    mutating func validate() throws { _ = try validatedID(id) }
+    mutating func validate() throws { _ = try CommandValidation.id(id) }
 
     mutating func run() throws {
         do { try globals.lifecycle().resume(id: ContainerID(id)) }
-        catch { throw failure(error) }
+        catch { throw CommandFailure.report(error) }
     }
 }
 
@@ -260,14 +213,14 @@ struct Delete: ParsableCommand {
     var id: String
 
     mutating func validate() throws {
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
     }
 
     mutating func run() throws {
         do {
             try globals.lifecycle().delete(id: ContainerID(id), force: force)
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }
@@ -310,7 +263,7 @@ struct Ps: ParsableCommand {
             if id.hasPrefix("-") { throw ValidationError("unknown option \(id) before container ID") }
         }
         try globals.validate()
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
     }
 
     mutating func run() throws {
@@ -322,7 +275,7 @@ struct Ps: ParsableCommand {
             } else {
                 print(try lifecycle.processTable(id: ContainerID(id), arguments: psArguments), terminator: "")
             }
-        } catch { throw failure(error) }
+        } catch { throw CommandFailure.report(error) }
     }
 }
 
@@ -357,7 +310,7 @@ struct List: ParsableCommand {
                 output = ContainerStateReport.table(reports)
             }
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
         print(output, terminator: "")
     }
@@ -387,33 +340,27 @@ struct Run: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
     var pidFile: String?
 
-    @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp)
-    var preserveFDs = 0
-
-    @Option(name: .customLong("pidfd-socket"), help: pidfdSocketHelp)
-    var pidfdSocket: String?
+    @OptionGroup var descriptors: DescriptorOptions
 
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
-        try validateBundle(bundle)
-        try validatePIDFile(pidFile)
-        try validatePidfdSocket(pidfdSocket)
-        _ = try validatedPreservedFDs(preserveFDs)
-        _ = try validatedID(id)
+        try CommandValidation.bundle(bundle)
+        try CommandValidation.pidFile(pidFile)
+        _ = try CommandValidation.id(id)
     }
 
     mutating func run() throws {
         let status: Int32
         do {
-            try PreservedDescriptors(count: preserveFDs).verify()
+            try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             status = try globals.lifecycle().run(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
-                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket
+                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket
             )
         } catch {
-            throw failure(error, status: 125)
+            throw CommandFailure.report(error, status: 125)
         }
         // Keep this outside the catch: a workload may itself choose exit 125.
         throw ExitCode(status)

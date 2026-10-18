@@ -210,12 +210,12 @@ func rejectsInvalidLifecycleInvocation(_ arguments: [String]) {
 
 @Test(arguments: [("1m", Int64(1048576)), ("1.5 MiB", 1572864), ("2KB", 2048), ("4096", 4096), ("-1", -1), ("0.5b", 0)])
 func memoryUnitsMatchRunc(_ input: String, _ bytes: Int64) throws {
-    #expect(try parseRAMBytes(input) == bytes)
+    #expect(try MemorySize.bytes(from: input) == bytes)
 }
 
 @Test(arguments: ["-2", "10XB", "18446744073709551615", "nan", "infinity", "1mbad"])
 func rejectsInvalidMemoryUnits(_ input: String) {
-    #expect(throws: ValidationError.self) { try parseRAMBytes(input) }
+    #expect(throws: ValidationError.self) { try MemorySize.bytes(from: input) }
 }
 
 @Test func updateParsesSignedAndUnsignedResourceFlags() throws {
@@ -314,39 +314,39 @@ func rejectsInvalidExecGroupsAndPrivilegeValues(_ arguments: [String]) {
 }
 
 @Test func parsesPreserveFDsBeforeTheContainerID() throws {
-    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run).preserveFDs == 0)
-    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create).preserveFDs == 0)
-    #expect(try #require(RuntimeCommand.parseAsRoot(["exec", "box", "true"]) as? Exec).preserveFDs == 0)
-    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "--preserve-fds", "2", "box"]) as? Run).preserveFDs == 2)
-    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "--preserve-fds=2", "box"]) as? Create).preserveFDs == 2)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run).descriptors.preserveFDs == 0)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create).descriptors.preserveFDs == 0)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["exec", "box", "true"]) as? Exec).descriptors.preserveFDs == 0)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "--preserve-fds", "2", "box"]) as? Run).descriptors.preserveFDs == 2)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "--preserve-fds=2", "box"]) as? Create).descriptors.preserveFDs == 2)
     let exec = try #require(RuntimeCommand.parseAsRoot(["exec", "--preserve-fds", "3", "-p", "p.json", "box"]) as? Exec)
-    #expect(exec.preserveFDs == 3)
+    #expect(exec.descriptors.preserveFDs == 3)
     #expect(exec.processFile == "p.json")
     // After the ID it belongs to the workload.
     let workload = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "echo", "--preserve-fds", "3"]) as? Exec)
-    #expect(workload.preserveFDs == 0)
+    #expect(workload.descriptors.preserveFDs == 0)
     #expect(workload.arguments == ["echo", "--preserve-fds", "3"])
     let largest = try #require(RuntimeCommand.parseAsRoot(["run", "--preserve-fds", "2147483644", "box"]) as? Run)
-    #expect(largest.preserveFDs == 2_147_483_644)
+    #expect(largest.descriptors.preserveFDs == 2_147_483_644)
 }
 
 @Test func parsesPidfdSocketBeforeTheContainerID() throws {
-    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run).pidfdSocket == nil)
-    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create).pidfdSocket == nil)
-    #expect(try #require(RuntimeCommand.parseAsRoot(["exec", "box", "true"]) as? Exec).pidfdSocket == nil)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run).descriptors.pidfdSocket == nil)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create).descriptors.pidfdSocket == nil)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["exec", "box", "true"]) as? Exec).descriptors.pidfdSocket == nil)
     let run = try #require(RuntimeCommand.parseAsRoot(["run", "--pidfd-socket", "/run/p.sock", "-d", "box"]) as? Run)
-    #expect(run.pidfdSocket == "/run/p.sock")
+    #expect(run.descriptors.pidfdSocket == "/run/p.sock")
     #expect(run.detach)
     let create = try #require(RuntimeCommand.parseAsRoot(["create", "--pidfd-socket=@abstract", "box"]) as? Create)
-    #expect(create.pidfdSocket == "@abstract")
+    #expect(create.descriptors.pidfdSocket == "@abstract")
     // Kept with a process file: the socket is not part of the process JSON.
     let exec = try #require(
         RuntimeCommand.parseAsRoot(["exec", "--pidfd-socket", "rel.sock", "-p", "p.json", "box"]) as? Exec)
-    #expect(exec.pidfdSocket == "rel.sock")
+    #expect(exec.descriptors.pidfdSocket == "rel.sock")
     #expect(exec.processFile == "p.json")
     // After the ID it belongs to the workload.
     let workload = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "echo", "--pidfd-socket", "x"]) as? Exec)
-    #expect(workload.pidfdSocket == nil)
+    #expect(workload.descriptors.pidfdSocket == nil)
     #expect(workload.arguments == ["echo", "--pidfd-socket", "x"])
 }
 

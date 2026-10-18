@@ -113,8 +113,8 @@ public struct OCIRunPlan: Sendable {
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
-        let bundle = try canonicalDirectory(bundle, role: "bundle")
-        let bytes = try readConfiguration(bundle.appending("config.json"))
+        let bundle = try BundleConfiguration.directory(bundle, role: "bundle")
+        let bytes = try BundleConfiguration.read(bundle.appending("config.json"))
         let configuration = try OCIConfiguration.decode(bytes)
         // Check before constructing a FilePath: an embedded NUL would truncate it.
         let rootString = configuration.root.path
@@ -122,7 +122,7 @@ public struct OCIRunPlan: Sendable {
             throw RuntimeError("config.json: root.path must be non-empty and contain no NUL")
         }
         let rootPath = FilePath(rootString)
-        let rootfs = try canonicalDirectory(rootPath.isAbsolute ? rootPath : bundle.pushing(rootPath), role: "root.path")
+        let rootfs = try BundleConfiguration.directory(rootPath.isAbsolute ? rootPath : bundle.pushing(rootPath), role: "root.path")
         return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs)
     }
 
@@ -134,9 +134,9 @@ public struct OCIRunPlan: Sendable {
         processFile: FilePath? = nil
     ) throws -> OCIProcessPlan {
         if let processFile {
-            return try OCIProcessPlan(OCIConfiguration.decodeProcess(readConfiguration(processFile)))
+            return try OCIProcessPlan(OCIConfiguration.decodeProcess(BundleConfiguration.read(processFile)))
         }
-        var configuration = try OCIConfiguration.decode(readConfiguration(bundle.appending("config.json")))
+        var configuration = try OCIConfiguration.decode(BundleConfiguration.read(bundle.appending("config.json")))
         configuration.process.args = arguments
         configuration.process.terminal = false
         configuration.process.env = (configuration.process.env ?? []) + environment
@@ -267,7 +267,7 @@ public struct OCIRunPlan: Sendable {
             guard namespaces.contains(.uts) else {
                 throw RuntimeError("config.json: hostname requires a uts namespace")
             }
-            do { try validateHostname(hostname) } catch {
+            do { try NamespaceCommand.validateHostname(hostname) } catch {
                 throw RuntimeError("config.json: \(error)")
             }
         }
@@ -431,57 +431,5 @@ public struct OCIRunPlan: Sendable {
             throw RuntimeError("config.json: \(field) must not contain . or .. components: \(path)")
         }
         return parts
-    }
-}
-
-/// Resolves symlinks and confirms the result is a directory. Paths that do
-/// not round-trip through String are rejected, because launch strings are
-/// built from `FilePath.string` and would otherwise be silently repaired.
-private func canonicalDirectory(_ path: FilePath, role: String) throws -> FilePath {
-    let resolved: FilePath = unsafe try path.withPlatformString { input in
-        guard let output = unsafe realpath(input, nil) else {
-            throw RuntimeError("resolve \(role) \(path): \(Errno(rawValue: errno))")
-        }
-        defer { unsafe free(output) }
-        return unsafe FilePath(platformString: output)
-    }
-    guard FilePath(resolved.string) == resolved else {
-        throw RuntimeError("\(role) \(resolved) is not valid UTF-8, which this runtime does not support")
-    }
-    do {
-        let descriptor = try FileDescriptor.open(resolved, .readOnly, options: [.directory, .closeOnExec])
-        var owner = OwnedFileDescriptor(takingOwnershipOf: descriptor)
-        try owner.close()
-    } catch {
-        throw RuntimeError("\(role) \(resolved) is not an accessible directory: \(error)")
-    }
-    return resolved
-}
-
-private func readConfiguration(_ path: FilePath) throws -> [UInt8] {
-    let limit = 1 << 20
-    let owner: OwnedFileDescriptor
-    do {
-        owner = OwnedFileDescriptor(takingOwnershipOf: try FileDescriptor.open(path, .readOnly, options: .closeOnExec))
-    } catch {
-        throw RuntimeError("open \(path): \(error)")
-    }
-    do {
-        return try owner.withDescriptor { descriptor in
-            var bytes: [UInt8] = []
-            var chunk = [UInt8](repeating: 0, count: 64 * 1024)
-            while true {
-                let count = try chunk.withUnsafeMutableBytes { buffer in
-                    unsafe try descriptor.read(into: buffer)
-                }
-                if count == 0 { return bytes }
-                bytes += chunk[..<count]
-                guard bytes.count <= limit else { throw RuntimeError("\(path) exceeds 1 MiB") }
-            }
-        }
-    } catch let error as RuntimeError {
-        throw error
-    } catch {
-        throw RuntimeError("read \(path): \(error)")
     }
 }

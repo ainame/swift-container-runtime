@@ -397,6 +397,6 @@ struct CgroupIdentity: Codable, Sendable, Equatable {
         return path.hasPrefix("/") && inode > 0 && !parts.isEmpty
             && !path.utf8.contains(0) && !path.utf8.contains(UInt8(ascii: "\n"))
             && !parts.contains { $0 == "." || $0 == ".." }
-            && isValidBootID(bootID)
+            && InitIdentity.isValidBootID(bootID)
     }
 }

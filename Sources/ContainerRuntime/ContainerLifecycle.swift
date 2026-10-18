@@ -248,7 +248,7 @@ public struct ContainerLifecycle: Sendable {
     public func processTable(id: ContainerID, arguments: [String] = []) throws -> String {
         #if os(Linux)
         let pids = try processIDs(id: id)
-        return try ProcessTable.filter(hostProcessTable(arguments: arguments), pids: pids)
+        return try ProcessTable.filter(ProcessTable.readHost(arguments: arguments), pids: pids)
         #else
         throw Self.unsupported
         #endif

@@ -255,28 +255,15 @@ struct OCIConfiguration: Decodable, Sendable {
         } catch let error as RuntimeError {
             throw error
         } catch let DecodingError.keyNotFound(key, context) {
-            throw RuntimeError("config.json: missing required field \(fieldPath(context.codingPath + [key]))")
+            throw RuntimeError("config.json: missing required field \(ConfigurationPath.format(context.codingPath + [key]))")
         } catch let DecodingError.typeMismatch(_, context), let DecodingError.valueNotFound(_, context) {
-            throw RuntimeError("config.json: invalid value at \(fieldPath(context.codingPath)): \(context.debugDescription)")
+            throw RuntimeError("config.json: invalid value at \(ConfigurationPath.format(context.codingPath)): \(context.debugDescription)")
         } catch let DecodingError.dataCorrupted(context) {
             throw RuntimeError("config.json: invalid JSON: \(context.debugDescription)")
         } catch {
             throw RuntimeError("config.json: \(error)")
         }
     }
-}
-
-/// A JSON path such as `process.args[0]` for diagnostics.
-func fieldPath(_ codingPath: [any CodingKey]) -> String {
-    var path = ""
-    for key in codingPath {
-        if let index = key.intValue {
-            path += "[\(index)]"
-        } else {
-            path += path.isEmpty ? key.stringValue : ".\(key.stringValue)"
-        }
-    }
-    return path.isEmpty ? "<root>" : path
 }
 
 private struct AnyKey: CodingKey {
@@ -294,7 +281,7 @@ private struct StrictObject {
         container = try decoder.container(keyedBy: AnyKey.self)
         let unknown = container.allKeys.map(\.stringValue).filter { !allowed.contains($0) }.sorted()
         guard unknown.isEmpty else {
-            let fields = unknown.map { fieldPath(decoder.codingPath + [AnyKey(stringValue: $0)]) }
+            let fields = unknown.map { ConfigurationPath.format(decoder.codingPath + [AnyKey(stringValue: $0)]) }
             throw RuntimeError("config.json: unsupported field(s): \(fields.joined(separator: ", "))")
         }
     }
@@ -334,7 +321,7 @@ private struct StrictObject {
     }
 
     private func invalidUInt64(_ key: String) -> RuntimeError {
-        let field = fieldPath(container.codingPath + [AnyKey(stringValue: key)])
+        let field = ConfigurationPath.format(container.codingPath + [AnyKey(stringValue: key)])
         return RuntimeError("config.json: invalid value at \(field): expected an integer from 0 to \(UInt64.max)")
     }
 
@@ -352,11 +339,27 @@ private struct StrictObject {
     }
 
     private func invalidInt64(_ key: String) -> RuntimeError {
-        let field = fieldPath(container.codingPath + [AnyKey(stringValue: key)])
+        let field = ConfigurationPath.format(container.codingPath + [AnyKey(stringValue: key)])
         return RuntimeError("config.json: invalid value at \(field): expected an integer from \(Int64.min) to \(Int64.max)")
     }
 
     func optional<Value: Decodable>(_ key: String) throws -> Value? {
         try container.decodeIfPresent(Value.self, forKey: AnyKey(stringValue: key))
+    }
+}
+
+/// Formatting for OCI decoding diagnostics.
+enum ConfigurationPath {
+    /// A JSON path such as `process.args[0]` for diagnostics.
+    static func format(_ codingPath: [any CodingKey]) -> String {
+        var path = ""
+        for key in codingPath {
+            if let index = key.intValue {
+                path += "[\(index)]"
+            } else {
+                path += path.isEmpty ? key.stringValue : ".\(key.stringValue)"
+            }
+        }
+        return path.isEmpty ? "<root>" : path
     }
 }

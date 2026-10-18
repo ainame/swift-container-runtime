@@ -24,9 +24,9 @@ struct Events: ParsableCommand {
     /// A malformed duration is a usage error. A nonpositive one is checked
     /// only after the container is found, in runc's order.
     mutating func validate() throws {
-        _ = try validatedID(id)
+        _ = try CommandValidation.id(id)
         do {
-            _ = try parseGoDuration(interval)
+            _ = try GoDuration.nanoseconds(from: interval)
         } catch {
             throw ValidationError("invalid value \"\(interval)\" for flag -interval: \(error)")
         }
@@ -34,13 +34,13 @@ struct Events: ParsableCommand {
 
     mutating func run() throws {
         do {
-            let nanoseconds = try parseGoDuration(interval)
+            let nanoseconds = try GoDuration.nanoseconds(from: interval)
             try globals.lifecycle().events(id: ContainerID(id), interval: nanoseconds, statsOnly: stats) { event in
                 // Each event is written whole, so a reader sees complete lines.
                 _ = try FileDescriptor.standardOutput.writeAll((event.json(id: id) + "\n").utf8)
             }
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }

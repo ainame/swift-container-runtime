@@ -336,14 +336,14 @@ func containerStatus(
 ) throws -> ContainerStatus {
     guard let record, let process = record.initProcess else {
         let creating = try !lockHeldByCaller && isLockedByAnother(directory)
-        return deriveStatus(hasInit: false, initAlive: false, creatorActive: creating, startSocketPresent: false)
+        return ContainerStatus.derive(hasInit: false, initAlive: false, creatorActive: creating, startSocketPresent: false)
     }
     let alive = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { _ in true } ?? false
     let waiting = try alive && entryExists(directory, StateFile.startSocket)
     // A dead init is stopped even if an empty cgroup is still frozen.
     // Only the recorded cgroup generation may contribute a paused state.
     let frozen = try alive && record.cgroup.map { try CgroupLeaf.isFrozen($0) } == true
-    return deriveStatus(hasInit: true, initAlive: alive, creatorActive: false, startSocketPresent: waiting, frozen: frozen)
+    return ContainerStatus.derive(hasInit: true, initAlive: alive, creatorActive: false, startSocketPresent: waiting, frozen: frozen)
 }
 
 /// Names in a directory other than `.` and `..`.
@@ -387,6 +387,6 @@ func ownerName(_ directory: borrowing OwnedFileDescriptor) -> String {
 func currentTimestamp() -> String {
     var now = timespec()
     _ = unsafe clock_gettime(CLOCK_REALTIME, &now)
-    return formatRFC3339(seconds: Int64(now.tv_sec), nanoseconds: Int64(now.tv_nsec))
+    return RFC3339.format(seconds: Int64(now.tv_sec), nanoseconds: Int64(now.tv_nsec))
 }
 #endif

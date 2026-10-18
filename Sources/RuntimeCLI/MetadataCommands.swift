@@ -36,7 +36,7 @@ struct Spec: ParsableCommand {
         do {
             try DefaultSpecification.forCurrentHost(rootless: rootless).write(toBundle: bundle)
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }
@@ -57,7 +57,7 @@ struct Features: ParsableCommand {
         do {
             print(try RuntimeFeatures.current.json(), terminator: "")
         } catch {
-            throw failure(error)
+            throw CommandFailure.report(error)
         }
     }
 }

@@ -77,13 +77,13 @@ func rejectsInvalidTransitionsWithStableMessages(_ operation: LifecycleOperation
     (true, true, false, false, .running),
 ])
 func derivesStatusFromLiveFacts(_ hasInit: Bool, _ alive: Bool, _ creator: Bool, _ socket: Bool, _ expected: ContainerStatus) {
-    #expect(deriveStatus(hasInit: hasInit, initAlive: alive, creatorActive: creator, startSocketPresent: socket) == expected)
+    #expect(ContainerStatus.derive(hasInit: hasInit, initAlive: alive, creatorActive: creator, startSocketPresent: socket) == expected)
 }
 
 @Test func frozenStateRequiresALiveInit() {
-    #expect(deriveStatus(hasInit: true, initAlive: true, creatorActive: false, startSocketPresent: false, frozen: true) == .paused)
-    #expect(deriveStatus(hasInit: true, initAlive: true, creatorActive: false, startSocketPresent: true, frozen: true) == .paused)
-    #expect(deriveStatus(hasInit: true, initAlive: false, creatorActive: false, startSocketPresent: false, frozen: true) == .stopped)
+    #expect(ContainerStatus.derive(hasInit: true, initAlive: true, creatorActive: false, startSocketPresent: false, frozen: true) == .paused)
+    #expect(ContainerStatus.derive(hasInit: true, initAlive: true, creatorActive: false, startSocketPresent: true, frozen: true) == .paused)
+    #expect(ContainerStatus.derive(hasInit: true, initAlive: false, creatorActive: false, startSocketPresent: false, frozen: true) == .stopped)
 }
 
 // MARK: Persisted record
@@ -190,7 +190,7 @@ func rejectsUndecodableRecords(_ text: String) {
 
 @Test(arguments: [(bootID, true), ("0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0", false), ("", false), (bootID + "0", false)])
 func validatesBootIDs(_ value: String, _ valid: Bool) {
-    #expect(isValidBootID(value) == valid)
+    #expect(InitIdentity.isValidBootID(value) == valid)
 }
 
 // MARK: Reports
@@ -301,7 +301,7 @@ func rejectsUnknownSignals(_ text: String) {
     (-1, 0, "1969-12-31T23:59:59Z"),
 ])
 func formatsRFC3339LikeGo(_ seconds: Int64, _ nanoseconds: Int64, _ expected: String) {
-    #expect(formatRFC3339(seconds: seconds, nanoseconds: nanoseconds) == expected)
+    #expect(RFC3339.format(seconds: seconds, nanoseconds: nanoseconds) == expected)
 }
 
 @Test(arguments: ["", "bad\0root"])

@@ -30,7 +30,7 @@ func currentBootID() throws -> String {
     }
     let text = String(decoding: bytes, as: UTF8.self)
     let trimmed = text.hasSuffix("\n") ? String(text.dropLast()) : text
-    guard isValidBootID(trimmed) else { throw RuntimeError("unexpected kernel boot ID \(trimmed)") }
+    guard InitIdentity.isValidBootID(trimmed) else { throw RuntimeError("unexpected kernel boot ID \(trimmed)") }
     return trimmed
 }
 

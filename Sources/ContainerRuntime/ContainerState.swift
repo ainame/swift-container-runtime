@@ -180,31 +180,12 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         if let process = record.initProcess {
             guard process.pid > 1 else { throw corrupt("invalid init PID \(process.pid)") }
             guard process.startTime > 0 else { throw corrupt("invalid init start time") }
-            guard isValidBootID(process.bootID) else { throw corrupt("invalid boot ID") }
+            guard InitIdentity.isValidBootID(process.bootID) else { throw corrupt("invalid boot ID") }
         }
         // A cgroup record must never name the mount root or leave it.
         if let cgroup = record.cgroup, !cgroup.isValid { throw corrupt("invalid cgroup \(cgroup.path)") }
         return record
     }
-}
-
-/// Kernel boot IDs are UUID strings; anything else is treated as corrupt.
-func isValidBootID(_ value: String) -> Bool {
-    value.utf8.count == 36 && value.utf8.allSatisfy { byte in
-        byte == UInt8(ascii: "-") || (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
-    }
-}
-
-/// Status from the live system rather than from stored text, as runc's
-/// refreshState does: a record without an init is creating while its creator
-/// holds the lock and stopped otherwise; a recorded init that no longer
-/// matches its identity is stopped; a live init is created until it consumes
-/// the start socket and running afterwards, unless its cgroup is frozen.
-func deriveStatus(hasInit: Bool, initAlive: Bool, creatorActive: Bool, startSocketPresent: Bool, frozen: Bool = false) -> ContainerStatus {
-    guard hasInit else { return creatorActive ? .creating : .stopped }
-    guard initAlive else { return .stopped }
-    if frozen { return .paused }
-    return startSocketPresent ? .created : .running
 }
 
 /// The OCI state of one container, as printed by `state` and `list`.
@@ -353,34 +334,26 @@ public enum SignalName {
     }
 }
 
-/// Formats a UTC instant as RFC 3339 with nanoseconds, trimming trailing
-/// zeros as Go's RFC3339Nano (used by runc) does.
-func formatRFC3339(seconds: Int64, nanoseconds: Int64) -> String {
-    // Split whole seconds without losing the day before the Unix epoch.
-    let days = seconds >= 0 ? seconds / 86_400 : (seconds - 86_399) / 86_400
-    let secondOfDay = seconds - days * 86_400
-    // Convert epoch days to a Gregorian date (Howard Hinnant's days-to-civil algorithm).
-    let shifted = days + 719_468
-    let era = (shifted >= 0 ? shifted : shifted - 146_096) / 146_097
-    let dayOfEra = shifted - era * 146_097
-    let yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36_524 - dayOfEra / 146_096) / 365
-    let dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
-    let monthIndex = (5 * dayOfYear + 2) / 153
-    let day = dayOfYear - (153 * monthIndex + 2) / 5 + 1
-    let month = monthIndex < 10 ? monthIndex + 3 : monthIndex - 9
-    let year = yearOfEra + era * 400 + (month <= 2 ? 1 : 0)
 
-    func padded(_ value: Int64, _ width: Int) -> String {
-        let digits = String(value)
-        return String(repeating: "0", count: max(0, width - digits.count)) + digits
+extension ContainerStatus {
+    /// Status from the live system rather than from stored text, as runc's
+    /// refreshState does: a record without an init is creating while its creator
+    /// holds the lock and stopped otherwise; a recorded init that no longer
+    /// matches its identity is stopped; a live init is created until it consumes
+    /// the start socket and running afterwards, unless its cgroup is frozen.
+    static func derive(hasInit: Bool, initAlive: Bool, creatorActive: Bool, startSocketPresent: Bool, frozen: Bool = false) -> ContainerStatus {
+        guard hasInit else { return creatorActive ? .creating : .stopped }
+        guard initAlive else { return .stopped }
+        if frozen { return .paused }
+        return startSocketPresent ? .created : .running
     }
-    // Render whole seconds, then trim insignificant fractional zeros.
-    var text = "\(padded(year, 4))-\(padded(month, 2))-\(padded(day, 2))T"
-        + "\(padded(secondOfDay / 3600, 2)):\(padded(secondOfDay % 3600 / 60, 2)):\(padded(secondOfDay % 60, 2))"
-    if nanoseconds > 0 {
-        var fraction = padded(nanoseconds, 9)
-        while fraction.hasSuffix("0") { fraction.removeLast() }
-        text += "." + fraction
+}
+
+extension InitIdentity {
+    /// Kernel boot IDs are UUID strings; anything else is treated as corrupt.
+    static func isValidBootID(_ value: String) -> Bool {
+        value.utf8.count == 36 && value.utf8.allSatisfy { byte in
+            byte == UInt8(ascii: "-") || (byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102)
+        }
     }
-    return text + "Z"
 }
