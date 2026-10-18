@@ -417,7 +417,7 @@ func runLaunch(
                 }
                 pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
                 do {
-                    let identity = try processIdentity(of: initPID)
+                    let identity = try ProcFS.identity(of: initPID)
                     // Join the cgroup while the PID is still held by the
                     // blocked launcher, then let the launcher continue.
                     try hooks.placeInit(initPID)
@@ -468,7 +468,7 @@ func runLaunch(
         // The pidfd names this init even after it exits, so this cannot reach
         // a process that reused its PID.
         _ = try? pinned.withDescriptor { linux_pidfd_send_signal($0.rawValue, SIGKILL) }
-        _ = waitForExit(pinned, milliseconds: 10_000)
+        _ = pinned.poll(events: Int16(POLLIN), milliseconds: 10_000)
     }
     // A detached launcher still parents the child: after a failure it reaps
     // it, after success it exits on EOF. Never leave the launcher blocked.

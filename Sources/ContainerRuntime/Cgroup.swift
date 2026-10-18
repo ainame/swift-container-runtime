@@ -52,7 +52,7 @@ private final class CgroupDirectory {
         let child = CgroupDirectory(OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)), path: childPath(name))
         // A different filesystem mounted over a cgroup directory is not part
         // of the hierarchy.
-        guard let own = fileIdentity(descriptor), let other = fileIdentity(child.descriptor), own.device == other.device else {
+        guard let own = descriptor.identity(), let other = child.descriptor.identity(), own.device == other.device else {
             throw RuntimeError("cgroup \(child.displayPath) is not on the cgroup v2 mount")
         }
         return child
@@ -195,7 +195,7 @@ private final class CgroupDirectory {
         }
     }
 
-    var inode: UInt64? { fileIdentity(descriptor).map { UInt64($0.inode) } }
+    var inode: UInt64? { descriptor.identity().map { UInt64($0.inode) } }
 
     /// A new close-on-exec open file description of this directory holding
     /// an exclusive flock, or nil when another one holds it.
@@ -267,7 +267,7 @@ final class CgroupLeaf {
         let resources = plan.resources
         let required = resources.requiredControllers
         let optional = resources.optionalControllers
-        let bootID = try currentBootID()
+        let bootID = try ProcFS.bootID()
         let root = try CgroupDirectory.openRoot()
         var made: [(parent: CgroupDirectory, name: String)] = []
         do {
@@ -432,7 +432,7 @@ final class CgroupLeaf {
     static func remove(_ identity: CgroupIdentity, killRemaining: Bool) throws -> String? {
         // An inode from another boot says nothing about the cgroup at the
         // path now, so it is never touched.
-        guard try currentBootID() == identity.bootID else {
+        guard try ProcFS.bootID() == identity.bootID else {
             return "cgroup \(CgroupDirectory.mountPoint)\(identity.path) was recorded before a reboot; left untouched"
         }
 
@@ -492,7 +492,7 @@ final class CgroupLeaf {
     /// Opens only this recorded generation, never a replacement or a group
     /// from another boot. Freezer writes use this pinned directory throughout.
     private static func recordedDirectory(_ identity: CgroupIdentity) throws -> CgroupDirectory? {
-        guard identity.isValid, try currentBootID() == identity.bootID else { return nil }
+        guard identity.isValid, try ProcFS.bootID() == identity.bootID else { return nil }
         var directory = try CgroupDirectory.openRoot()
         for name in identity.components {
             guard let child = try directory.child(name) else { return nil }

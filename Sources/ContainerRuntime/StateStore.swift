@@ -17,19 +17,6 @@ enum StateFile {
     static let startSocket = "start.sock"
 }
 
-private func stateError(_ action: String, _ code: Int32 = errno) -> RuntimeError {
-    RuntimeError("\(action): \(Errno(rawValue: code))")
-}
-
-/// Device and inode numbers of an owned descriptor, or nil if fstat fails.
-func fileIdentity(_ owner: borrowing OwnedFileDescriptor) -> (device: dev_t, inode: ino_t)? {
-    try? owner.withDescriptor { descriptor -> (device: dev_t, inode: ino_t)? in
-        var status = stat()
-        guard unsafe fstat(descriptor.rawValue, &status) == 0 else { return nil }
-        return (status.st_dev, status.st_ino)
-    }
-}
-
 /// The directory holding one subdirectory per container, like runc's
 /// `--root`. Paths below it are resolved with `*at` calls relative to this
 /// descriptor and never follow symlinks; the root path's ancestors are
@@ -47,12 +34,12 @@ final class StateRoot {
         let raw = unsafe linux_open_at(AT_FDCWD, path.string, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0)
         guard raw >= 0 else {
             if errno == ENOENT && !create { return nil }
-            throw stateError("open state root \(path)")
+            throw RuntimeError.system("open state root \(path)")
         }
         let root = StateRoot(path: path, descriptor: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)))
         var status = stat()
         let result = try root.descriptor.withDescriptor { unsafe fstat($0.rawValue, &status) }
-        guard result == 0 else { throw stateError("inspect state root \(path)") }
+        guard result == 0 else { throw RuntimeError.system("inspect state root \(path)") }
         guard status.st_uid == geteuid(), status.st_mode & 0o022 == 0 else {
             throw RuntimeError("state root \(path) must be owned by uid \(geteuid()) and not writable by group or others")
         }
@@ -69,7 +56,7 @@ final class StateRoot {
         for component in path.split(separator: "/") {
             current += "/" + component
             guard unsafe mkdir(current, 0o700) == 0 || errno == EEXIST else {
-                throw stateError("create state root \(current)")
+                throw RuntimeError.system("create state root \(current)")
             }
         }
     }
@@ -81,12 +68,12 @@ final class StateRoot {
         let raw = try descriptor.withDescriptor {
             unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
         }
-        guard raw >= 0 else { throw stateError("open state root lock") }
+        guard raw >= 0 else { throw RuntimeError.system("open state root lock") }
         let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         return try owner.withDescriptor { lockDescriptor in
             // OS flock coordinates separate processes; this synchronous scope
             // never suspends and never waits for an existing container lock.
-            try takeStateLock(lockDescriptor, description: "state root")
+            try StateLock.acquire(lockDescriptor, description: "state root")
             defer { _ = flock(lockDescriptor.rawValue, LOCK_UN) }
             return try body()
         }
@@ -94,9 +81,9 @@ final class StateRoot {
 
     /// Pins an existing generation while membership is stable. The caller
     /// must release the root lock before waiting for this directory's lock.
-    func openContainer(_ id: ContainerID) throws -> OwnedFileDescriptor {
+    func openContainer(_ id: ContainerID) throws -> ContainerDirectory {
         let raw = try withMembershipLock { try openContainerRaw(id) }
-        return OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        return ContainerDirectory(id: id, descriptor: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)))
     }
 
     /// Only called while holding the root membership lock.
@@ -106,38 +93,25 @@ final class StateRoot {
         }
         guard raw >= 0 else {
             if errno == ENOENT || errno == ENOTDIR { throw LifecycleError.notFound(id) }
-            throw stateError("open state of container \(id.rawValue)")
+            throw RuntimeError.system("open state of container \(id.rawValue)")
         }
         return raw
     }
 
     /// Whether `directory` is still the entry named `id`, so an operation
     /// never touches a directory that was deleted and recreated meanwhile.
-    func contains(_ directory: borrowing OwnedFileDescriptor, as id: ContainerID) throws -> Bool {
-        guard let own = fileIdentity(directory) else { throw stateError("inspect state of container \(id.rawValue)") }
+    func contains(_ directory: borrowing ContainerDirectory) throws -> Bool {
+        let id = directory.id
+        guard let own = directory.descriptor.identity() else { throw RuntimeError.system("inspect state of container \(id.rawValue)") }
         var status = stat()
         let result = try descriptor.withDescriptor {
             unsafe fstatat($0.rawValue, id.rawValue, &status, AT_SYMLINK_NOFOLLOW)
         }
         guard result == 0 else {
             if errno == ENOENT { return false }
-            throw stateError("inspect state of container \(id.rawValue)")
+            throw RuntimeError.system("inspect state of container \(id.rawValue)")
         }
         return status.st_dev == own.device && status.st_ino == own.inode
-    }
-}
-
-/// Separate-process synchronous coordination requires a kernel lock rather
-/// than Swift actor isolation. Both lock scopes have bounded waits and no await.
-private func takeStateLock(_ descriptor: FileDescriptor, description: String) throws {
-    var attempts = 0
-    while flock(descriptor.rawValue, LOCK_EX | LOCK_NB) != 0 {
-        guard errno == EWOULDBLOCK || errno == EINTR else { throw stateError("lock \(description)") }
-        attempts += 1
-        guard attempts < LockedContainer.lockAttempts else {
-            throw RuntimeError("\(description) is busy: timed out waiting for its lock")
-        }
-        _ = usleep(LockedContainer.lockRetryMicroseconds)
     }
 }
 
@@ -151,17 +125,12 @@ private func takeStateLock(_ descriptor: FileDescriptor, description: String) th
 /// (`detachInForkedChild`) without unlocking the parent's shared flock.
 final class LockedContainer {
     let root: StateRoot
-    let id: ContainerID
-    private(set) var directory: OwnedFileDescriptor
+    var id: ContainerID { directory.id }
+    private(set) var directory: ContainerDirectory
     private var locked = false
 
-    /// Lock waits are bounded so a stuck holder produces an error, not a hang.
-    static let lockAttempts = 3000
-    static let lockRetryMicroseconds: UInt32 = 10_000
-
-    private init(root: StateRoot, id: ContainerID, directory: consuming OwnedFileDescriptor) {
+    private init(root: StateRoot, directory: consuming ContainerDirectory) {
         self.root = root
-        self.id = id
         self.directory = directory
     }
 
@@ -173,7 +142,7 @@ final class LockedContainer {
             let result = try root.descriptor.withDescriptor { unsafe mkdirat($0.rawValue, id.rawValue, 0o700) }
             guard result == 0 else {
                 if errno == EEXIST { throw LifecycleError.alreadyExists(id) }
-                throw stateError("create state of container \(id.rawValue)")
+                throw RuntimeError.system("create state of container \(id.rawValue)")
             }
 
             // The fresh directory cannot have an existing holder. Pin and
@@ -181,8 +150,8 @@ final class LockedContainer {
             do {
                 let raw = try root.openContainerRaw(id)
                 let container = LockedContainer(
-                    root: root, id: id,
-                    directory: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+                    root: root,
+                    directory: ContainerDirectory(id: id, descriptor: OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)))
                 )
                 try container.lock()
                 return container
@@ -195,7 +164,7 @@ final class LockedContainer {
 
     /// Opens and locks an existing state directory.
     static func acquire(in root: StateRoot, id: ContainerID) throws -> LockedContainer {
-        let container = LockedContainer(root: root, id: id, directory: try root.openContainer(id))
+        let container = LockedContainer(root: root, directory: try root.openContainer(id))
         try container.lock()
         return container
     }
@@ -203,11 +172,11 @@ final class LockedContainer {
     /// Takes the lock (again) and confirms the directory is still current.
     func lock() throws {
         guard !locked else { return }
-        try directory.withDescriptor { descriptor in
-            try takeStateLock(descriptor, description: "container \(id.rawValue)")
+        try directory.descriptor.withDescriptor { descriptor in
+            try StateLock.acquire(descriptor, description: "container \(id.rawValue)")
         }
         locked = true
-        guard try root.contains(directory, as: id) else {
+        guard try root.contains(directory) else {
             unlock()
             throw LifecycleError.notFound(id)
         }
@@ -216,7 +185,7 @@ final class LockedContainer {
     func unlock() {
         guard locked else { return }
         locked = false
-        _ = try? directory.withDescriptor { flock($0.rawValue, LOCK_UN) }
+        _ = try? directory.descriptor.withDescriptor { flock($0.rawValue, LOCK_UN) }
     }
 
     /// A fork shares the parent's flock open-file description. Invalidate
@@ -231,7 +200,7 @@ final class LockedContainer {
     }
 
     func readRecord() throws -> ContainerRecord? {
-        try loadRecord(directory, id: id)
+        try directory.readRecord()
     }
 
     /// Replaces `state.json` atomically: write and fsync a temporary file,
@@ -239,27 +208,27 @@ final class LockedContainer {
     func writeRecord(_ record: ContainerRecord) throws {
         // Prepare the complete replacement before touching the on-disk record.
         let bytes = try record.encoded()
-        try directory.withDescriptor { directoryDescriptor in
+        try directory.descriptor.withDescriptor { directoryDescriptor in
             let raw = unsafe linux_open_at(
                 directoryDescriptor.rawValue, StateFile.pendingRecord, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o600
             )
-            guard raw >= 0 else { throw stateError("write state of container \(id.rawValue)") }
+            guard raw >= 0 else { throw RuntimeError.system("write state of container \(id.rawValue)") }
             var file = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
             // Persist the temporary file before publishing it by atomic rename.
             try file.withDescriptor { descriptor in
                 _ = try descriptor.writeAll(bytes)
-                guard fsync(descriptor.rawValue) == 0 else { throw stateError("sync state of container \(id.rawValue)") }
+                guard fsync(descriptor.rawValue) == 0 else { throw RuntimeError.system("sync state of container \(id.rawValue)") }
             }
             try file.close()
             guard unsafe renameat(
                 directoryDescriptor.rawValue, StateFile.pendingRecord, directoryDescriptor.rawValue, StateFile.record
             ) == 0 else {
-                throw stateError("replace state of container \(id.rawValue)")
+                throw RuntimeError.system("replace state of container \(id.rawValue)")
             }
             // Persist the rename as well; success must not hide a directory
             // fsync error after the record has become visible.
             guard fsync(directoryDescriptor.rawValue) == 0 else {
-                throw stateError("sync state directory of container \(id.rawValue)")
+                throw RuntimeError.system("sync state directory of container \(id.rawValue)")
             }
         }
     }
@@ -267,7 +236,7 @@ final class LockedContainer {
     /// The live status; the caller holds the lock, so a record without an
     /// init belongs to an aborted create and is stopped.
     func status(of record: ContainerRecord?) throws -> ContainerStatus {
-        try containerStatus(record: record, directory: directory, lockHeldByCaller: true)
+        try ContainerObservation.status(of: record, in: directory)
     }
 
     /// Removes the state directory and its files, if it is still the entry
@@ -276,117 +245,103 @@ final class LockedContainer {
         // The container lock is already held. Membership is acquired only
         // for removal, so new opens cannot cross a delete/recreate boundary.
         try root.withMembershipLock {
-            guard try root.contains(directory, as: id) else { return }
+            guard try root.contains(directory) else { return }
             // Remove only files in our pinned generation before unlinking its name.
-            for name in try directoryEntries(directory) {
-                let result = try directory.withDescriptor { descriptor in
+            for name in try directory.descriptor.directoryEntries() {
+                let result = try directory.descriptor.withDescriptor { descriptor in
                     var result = unsafe unlinkat(descriptor.rawValue, name, 0)
                     if result != 0 && errno == EISDIR { result = unsafe unlinkat(descriptor.rawValue, name, AT_REMOVEDIR) }
                     return result
                 }
-                guard result == 0 || errno == ENOENT else { throw stateError("remove state file \(name) of container \(id.rawValue)") }
+                guard result == 0 || errno == ENOENT else { throw RuntimeError.system("remove state file \(name) of container \(id.rawValue)") }
             }
             let result = try root.descriptor.withDescriptor { unsafe unlinkat($0.rawValue, id.rawValue, AT_REMOVEDIR) }
-            guard result == 0 || errno == ENOENT else { throw stateError("remove state of container \(id.rawValue)") }
+            guard result == 0 || errno == ENOENT else { throw RuntimeError.system("remove state of container \(id.rawValue)") }
         }
     }
 }
 
-/// Reads and validates `state.json`; nil if it was never written.
-func loadRecord(_ directory: borrowing OwnedFileDescriptor, id: ContainerID) throws -> ContainerRecord? {
-    let raw = try directory.withDescriptor { unsafe linux_open_at($0.rawValue, StateFile.record, O_RDONLY | O_NOFOLLOW, 0) }
-    guard raw >= 0 else {
-        if errno == ENOENT { return nil }
-        throw stateError("read state of container \(id.rawValue)")
-    }
-    let file = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-    return try ContainerRecord.decode(try file.readAll(limit: ContainerRecord.maximumBytes), expectedID: id)
-}
 
-/// Whether `name` exists in `directory`, without following symlinks.
-func entryExists(_ directory: borrowing OwnedFileDescriptor, _ name: String) throws -> Bool {
-    var status = stat()
-    let result = try directory.withDescriptor { unsafe fstatat($0.rawValue, name, &status, AT_SYMLINK_NOFOLLOW) }
-    guard result == 0 else {
-        if errno == ENOENT { return false }
-        throw stateError("inspect \(name)")
-    }
-    return true
-}
+/// A pinned state-directory generation; opening or creating it requires the root membership lock.
+struct ContainerDirectory: ~Copyable {
+    let id: ContainerID
+    private(set) var descriptor: OwnedFileDescriptor
 
-/// Probes, through a separate open file description, whether another
-/// process holds the container lock.
-private func isLockedByAnother(_ directory: borrowing OwnedFileDescriptor) throws -> Bool {
-    let raw = try directory.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
-    guard raw >= 0 else { throw stateError("probe container lock") }
-    let probe = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-    let result = try probe.withDescriptor { flock($0.rawValue, LOCK_SH | LOCK_NB) }
-    if result == 0 {
-        _ = try probe.withDescriptor { flock($0.rawValue, LOCK_UN) }
-        return false
+    fileprivate init(id: ContainerID, descriptor: consuming OwnedFileDescriptor) {
+        self.id = id
+        self.descriptor = descriptor
     }
-    guard errno == EWOULDBLOCK else { throw stateError("probe container lock") }
-    return true
-}
 
-/// Derives the status from the record, the verified init, and the start
-/// socket. See `deriveStatus` for the rules.
-func containerStatus(
-    record: ContainerRecord?, directory: borrowing OwnedFileDescriptor, lockHeldByCaller: Bool
-) throws -> ContainerStatus {
-    guard let record, let process = record.initProcess else {
-        let creating = try !lockHeldByCaller && isLockedByAnother(directory)
-        return ContainerStatus.derive(hasInit: false, initAlive: false, creatorActive: creating, startSocketPresent: false)
+    /// Drops inherited ownership without unlocking the parent's shared flock.
+    mutating func close() throws {
+        try descriptor.close()
     }
-    let alive = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { _ in true } ?? false
-    let waiting = try alive && entryExists(directory, StateFile.startSocket)
-    // A dead init is stopped even if an empty cgroup is still frozen.
-    // Only the recorded cgroup generation may contribute a paused state.
-    let frozen = try alive && record.cgroup.map { try CgroupLeaf.isFrozen($0) } == true
-    return ContainerStatus.derive(hasInit: true, initAlive: alive, creatorActive: false, startSocketPresent: waiting, frozen: frozen)
-}
 
-/// Names in a directory other than `.` and `..`.
-func directoryEntries(_ directory: borrowing OwnedFileDescriptor) throws -> [String] {
-    let raw = try directory.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
-    guard raw >= 0 else { throw stateError("list state directory") }
-    // fdopendir takes ownership of the new descriptor; closedir closes it.
-    guard let stream = unsafe fdopendir(raw) else {
-        let code = errno
-        _ = close(raw)
-        throw stateError("list state directory", code)
-    }
-    defer { _ = unsafe closedir(stream) }
-    var names: [String] = []
-    while true {
-        // readdir signals an error only through errno, and the String work
-        // below may change errno, so clear it before every call.
-        errno = 0
-        guard let entry = unsafe readdir(stream) else {
-            guard errno == 0 else { throw stateError("list state directory") }
-            return names
+    /// Reads and validates `state.json`; nil if it was never written.
+    func readRecord() throws -> ContainerRecord? {
+        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, StateFile.record, O_RDONLY | O_NOFOLLOW, 0) }
+        guard raw >= 0 else {
+            if errno == ENOENT { return nil }
+            throw RuntimeError.system("read state of container \(id.rawValue)")
         }
-        let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
-            unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        let file = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        return try ContainerRecord.decode(try file.readAll(limit: ContainerRecord.maximumBytes), expectedID: id)
+    }
+
+    /// Whether `name` exists in `directory`, without following symlinks.
+    func contains(_ name: String) throws -> Bool {
+        var status = stat()
+        let result = try descriptor.withDescriptor { unsafe fstatat($0.rawValue, name, &status, AT_SYMLINK_NOFOLLOW) }
+        guard result == 0 else {
+            if errno == ENOENT { return false }
+            throw RuntimeError.system("inspect \(name)")
         }
-        if name != "." && name != ".." { names.append(name) }
+        return true
+    }
+
+    /// Probes, through a separate open file description, whether another
+    /// process holds the container lock.
+    func isLocked() throws -> Bool {
+        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
+        guard raw >= 0 else { throw RuntimeError.system("probe container lock") }
+        let probe = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        let result = try probe.withDescriptor { flock($0.rawValue, LOCK_SH | LOCK_NB) }
+        if result == 0 {
+            _ = try probe.withDescriptor { flock($0.rawValue, LOCK_UN) }
+            return false
+        }
+        guard errno == EWOULDBLOCK else { throw RuntimeError.system("probe container lock") }
+        return true
+    }
+
+    /// The state directory owner's user name, or `#uid` as in runc.
+    func ownerName() -> String {
+        var status = stat()
+        guard (try? descriptor.withDescriptor({ unsafe fstat($0.rawValue, &status) })) == 0 else { return "" }
+        guard let entry = unsafe getpwuid(status.st_uid), let name = unsafe entry.pointee.pw_name else {
+            return "#\(status.st_uid)"
+        }
+        return unsafe String(cString: name)
     }
 }
 
-/// The state directory owner's user name, or `#uid` as in runc.
-func ownerName(_ directory: borrowing OwnedFileDescriptor) -> String {
-    var status = stat()
-    guard (try? directory.withDescriptor({ unsafe fstat($0.rawValue, &status) })) == 0 else { return "" }
-    guard let entry = unsafe getpwuid(status.st_uid), let name = unsafe entry.pointee.pw_name else {
-        return "#\(status.st_uid)"
-    }
-    return unsafe String(cString: name)
-}
+/// Bounded synchronous coordination between independent runtime processes.
+private enum StateLock {
+    static let attemptsLimit = 3000
+    static let retryMicroseconds: UInt32 = 10_000
 
-/// The current UTC time in RFC 3339 form.
-func currentTimestamp() -> String {
-    var now = timespec()
-    _ = unsafe clock_gettime(CLOCK_REALTIME, &now)
-    return RFC3339.format(seconds: Int64(now.tv_sec), nanoseconds: Int64(now.tv_nsec))
+    /// Separate-process synchronous coordination requires a kernel lock rather
+    /// than Swift actor isolation. Both lock scopes have bounded waits and no await.
+    static func acquire(_ descriptor: FileDescriptor, description: String) throws {
+        var attempts = 0
+        while flock(descriptor.rawValue, LOCK_EX | LOCK_NB) != 0 {
+            guard errno == EWOULDBLOCK || errno == EINTR else { throw RuntimeError.system("lock \(description)") }
+            attempts += 1
+            guard attempts < attemptsLimit else {
+                throw RuntimeError("\(description) is busy: timed out waiting for its lock")
+            }
+            _ = usleep(retryMicroseconds)
+        }
+    }
 }
 #endif

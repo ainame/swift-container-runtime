@@ -101,13 +101,13 @@ final class StartGate {
         // so long --root paths and IDs work. The new socket file and the
         // handle on it are made under the container lock, in the private
         // directory, so both name the same inode.
-        let bound = try container.directory.withDescriptor { directoryDescriptor in
+        let bound = try container.directory.descriptor.withDescriptor { directoryDescriptor in
             try listener.withDescriptor { socket in
                 unixAddressCall(socket, path: "/proc/self/fd/\(directoryDescriptor.rawValue)/\(StateFile.startSocket)", connecting: false)
             }
         }
         guard bound == 0 else { throw launchError(.startSocket) }
-        let markerRaw = try container.directory.withDescriptor {
+        let markerRaw = try container.directory.descriptor.withDescriptor {
             unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
         }
         guard markerRaw >= 0 else { throw launchError(.startSocket) }
@@ -202,7 +202,7 @@ final class StartGate {
 }
 
 private func waitReadable(_ owner: borrowing OwnedFileDescriptor, milliseconds: Int32) -> Bool {
-    pollEvents(owner, events: Int16(POLLIN), milliseconds: milliseconds) != 0
+    owner.poll(events: Int16(POLLIN), milliseconds: milliseconds) != 0
 }
 
 /// Asks a created init to exec its workload and waits for the outcome.
@@ -212,7 +212,7 @@ func requestStart(_ container: LockedContainer) throws {
     // Step 1: open the socket file itself without following a symlink, then
     // connect through that handle with a separate, close-on-exec connection
     // whose lifetime in the init reports the exec result.
-    let socketFileRaw = try container.directory.withDescriptor {
+    let socketFileRaw = try container.directory.descriptor.withDescriptor {
         unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
     }
     guard socketFileRaw >= 0 else {
@@ -242,14 +242,14 @@ func requestStart(_ container: LockedContainer) throws {
     // A failed unlink closes the connection, which the init treats as a
     // start that never happened.
     var current = stat()
-    let inspected = try container.directory.withDescriptor {
+    let inspected = try container.directory.descriptor.withDescriptor {
         unsafe fstatat($0.rawValue, StateFile.startSocket, &current, AT_SYMLINK_NOFOLLOW)
     }
-    guard inspected == 0, let connectedIdentity = fileIdentity(socketFile),
+    guard inspected == 0, let connectedIdentity = socketFile.identity(),
           connectedIdentity.device == current.st_dev, connectedIdentity.inode == current.st_ino else {
         throw RuntimeError("container \(id) start socket changed during start")
     }
-    let unlinked = try container.directory.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }
+    let unlinked = try container.directory.descriptor.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }
     guard unlinked == 0 else { throw launchError(.startSocket) }
     guard sendPacket(connection, StartProtocol.commit) else {
         throw RuntimeError("container \(id) init vanished before the start commit: \(Errno(rawValue: errno))")

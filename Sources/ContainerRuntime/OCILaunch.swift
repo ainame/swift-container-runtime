@@ -183,7 +183,7 @@ private func initializeContainer(
     let rootRaw = unsafe linux_open_path(AT_FDCWD, rootfs, O_DIRECTORY | O_NOFOLLOW)
     guard rootRaw >= 0 else { return failureStatus(report, .openRootfs) }
     var root = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: rootRaw))
-    guard let pinnedIdentity = fileIdentity(pinned), let rootIdentity = fileIdentity(root),
+    guard let pinnedIdentity = pinned.identity(), let rootIdentity = root.identity(),
           pinnedIdentity == rootIdentity else {
         return failureStatus(report, .verifyRootfs, code: ESTALE)
     }
@@ -481,7 +481,7 @@ private func applyResourceLimits(_ limits: [ResourceLimit]) -> Int32? {
 func kernelLastCapability() throws -> Int {
     let path = "/proc/sys/kernel/cap_last_cap"
     let bytes: [UInt8]?
-    do { bytes = try readProcFile(path) } catch { throw RuntimeError("read \(path): \(error)") }
+    do { bytes = try ProcFS.read(path) } catch { throw RuntimeError("read \(path): \(error)") }
     guard let bytes else { throw RuntimeError("read \(path): file does not exist") }
     return try ProcessCapabilities.parseLastCapability(bytes)
 }

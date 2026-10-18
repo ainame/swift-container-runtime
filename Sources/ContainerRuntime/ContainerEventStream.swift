@@ -17,8 +17,9 @@ extension ContainerLifecycle {
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }
         let directory = try root.openContainer(id)
         guard interval > 0 else { throw RuntimeError("duration interval must be greater than 0") }
-        let record = try loadRecord(directory, id: id)
-        guard try containerStatus(record: record, directory: directory, lockHeldByCaller: false) != .stopped else {
+        let observation = try ContainerObservation.read(from: directory)
+        let record = observation.record
+        guard observation.status != .stopped else {
             throw RuntimeError("container with id \(id.rawValue) is not running")
         }
         guard let identity = record?.cgroup else { throw RuntimeError("container has no recorded cgroup") }
@@ -47,7 +48,7 @@ extension ContainerLifecycle {
 private struct EventWatch: ~Copyable {
     private let inotify: OwnedFileDescriptor
     private let root: StateRoot
-    private let directory: OwnedFileDescriptor
+    private let directory: ContainerDirectory
     private let source: CgroupEventSource
     /// False without memory.events at startup, that is, without the memory
     /// controller; run adds the watch if the controller appears later.
@@ -58,7 +59,7 @@ private struct EventWatch: ~Copyable {
     /// Receives only ready owners, so every stored property is initialized
     /// on the single path through it and nothing is partially owned.
     private init(
-        inotify: consuming OwnedFileDescriptor, root: StateRoot, directory: consuming OwnedFileDescriptor,
+        inotify: consuming OwnedFileDescriptor, root: StateRoot, directory: consuming ContainerDirectory,
         source: CgroupEventSource, watchesOOM: Bool, initialOOMKills: UInt64
     ) {
         self.inotify = inotify
@@ -71,7 +72,7 @@ private struct EventWatch: ~Copyable {
 
     /// Creates the inotify instance and its watches. A failure destroys the
     /// local owners, closing both descriptors, before anything is stored.
-    static func make(root: StateRoot, directory: consuming OwnedFileDescriptor, source: CgroupEventSource) throws -> EventWatch {
+    static func make(root: StateRoot, directory: consuming ContainerDirectory, source: CgroupEventSource) throws -> EventWatch {
         // O_NONBLOCK and O_CLOEXEC share IN_NONBLOCK and IN_CLOEXEC's values,
         // which libc headers declare with differing C types.
         let raw = inotify_init1(O_NONBLOCK | O_CLOEXEC)
@@ -89,7 +90,7 @@ private struct EventWatch: ~Copyable {
         _ = try watch(inotify, source.watchPath("cgroup.events"), modified, optional: false)
         let rootPath = try root.descriptor.withDescriptor { "/proc/self/fd/\($0.rawValue)" }
         _ = try watch(inotify, rootPath, entries, optional: false)
-        let directoryPath = try directory.withDescriptor { "/proc/self/fd/\($0.rawValue)" }
+        let directoryPath = try directory.descriptor.withDescriptor { "/proc/self/fd/\($0.rawValue)" }
         _ = try watch(inotify, directoryPath, entries, optional: false)
 
         return EventWatch(
@@ -164,10 +165,10 @@ private struct EventWatch: ~Copyable {
 
     private func ended(id: ContainerID, identity: CgroupIdentity) throws -> Bool {
         guard source.isPopulated() else { return true }
-        guard try root.contains(directory, as: id) else { return true }
+        guard try root.contains(directory) else { return true }
         // state.json is replaced atomically by updates, which keep the
         // cgroup generation; only a missing or different one ends the stream.
-        return try loadRecord(directory, id: id)?.cgroup != identity
+        return try directory.readRecord()?.cgroup != identity
     }
 
     /// Waits for an inotify event or the timeout, then drains the queue.

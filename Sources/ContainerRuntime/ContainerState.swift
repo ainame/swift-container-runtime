@@ -111,7 +111,7 @@ struct InitIdentity: Codable, Sendable, Equatable {
 /// the source bundle can be renamed or removed after `create`.
 ///
 /// The status is never stored: it is derived from the init identity, the
-/// live process, and the start socket (see `deriveStatus`).
+/// live process, and the start socket (see `ContainerStatus.derive`).
 struct ContainerRecord: Codable, Sendable, Equatable {
     static let currentFormat = 1
     static let maximumBytes = 1 << 20

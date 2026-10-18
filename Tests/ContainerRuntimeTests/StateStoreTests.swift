@@ -29,7 +29,7 @@ private func sampleRecord() throws -> ContainerRecord {
      "linux": {"namespaces": [{"type": "mount"}]}}
     """#.utf8))
     let plan = try OCIRunPlan(configuration, bundle: FilePath("/srv/b"), rootfs: FilePath("/srv/b/rootfs"))
-    return ContainerRecord(id: box, plan: plan, created: currentTimestamp())
+    return ContainerRecord(id: box, plan: plan, created: RFC3339.now())
 }
 
 @Test func createIsExclusiveAndDestroyRemovesState() throws {
@@ -39,7 +39,7 @@ private func sampleRecord() throws -> ContainerRecord {
         let record = try sampleRecord()
         try container.writeRecord(record)
         #expect(try container.readRecord() == record)
-        #expect(try !entryExists(container.directory, StateFile.pendingRecord))
+        #expect(try !container.directory.contains(StateFile.pendingRecord))
         #expect(throws: LifecycleError.alreadyExists(box)) { _ = try LockedContainer.create(in: root, id: box) }
         try container.destroy()
         #expect(throws: LifecycleError.notFound(box)) { _ = try root.openContainer(box) }
@@ -69,7 +69,7 @@ private func sampleRecord() throws -> ContainerRecord {
             ))
             try file.close()
         }
-        #expect(try directoryEntries(directory).sorted() == expected.sorted())
+        #expect(try directory.directoryEntries().sorted() == expected.sorted())
     }
 }
 
@@ -89,7 +89,7 @@ private func sampleRecord() throws -> ContainerRecord {
         #expect(throws: LifecycleError.notFound(box)) { try old.lock() }
         try old.destroy()
         #expect(try replacement.readRecord() == record)
-        #expect(try root.contains(replacement.directory, as: box))
+        #expect(try root.contains(replacement.directory))
     }
 }
 
@@ -119,14 +119,14 @@ private func sampleRecord() throws -> ContainerRecord {
 /// without forking Swift Testing's multithreaded process.
 private func detachedDuplicate(in root: StateRoot) throws -> OwnedFileDescriptor {
     let container = try LockedContainer.create(in: root, id: box)
-    let raw = try container.directory.withDescriptor { dup($0.rawValue) }
+    let raw = try container.directory.descriptor.withDescriptor { dup($0.rawValue) }
     try #require(raw >= 0)
     let duplicate = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
 
     // Detaching closes the owner's descriptor and prevents its deinit from
     // unlocking the shared flock retained by the duplicate.
     container.detachInForkedChild()
-    #expect(throws: Errno.badFileDescriptor) { try container.directory.withDescriptor { _ in } }
+    #expect(throws: Errno.badFileDescriptor) { try container.directory.descriptor.withDescriptor { _ in } }
     return duplicate
 }
 
@@ -135,11 +135,11 @@ private func detachedDuplicate(in root: StateRoot) throws -> OwnedFileDescriptor
         let root = try #require(try StateRoot.open(path, create: true))
         var duplicate = try detachedDuplicate(in: root)
         let observer = try root.openContainer(box)
-        #expect(try containerStatus(record: nil, directory: observer, lockHeldByCaller: false) == .creating)
+        #expect(try ContainerObservation.read(from: observer).status == .creating)
 
         // Only closing the final shared reference releases this flock.
         try duplicate.close()
-        #expect(try containerStatus(record: nil, directory: observer, lockHeldByCaller: false) == .stopped)
+        #expect(try ContainerObservation.read(from: observer).status == .stopped)
         let cleanup = try LockedContainer.acquire(in: root, id: box)
         try cleanup.destroy()
     }
@@ -155,9 +155,9 @@ private func detachedDuplicate(in root: StateRoot) throws -> OwnedFileDescriptor
         // The creator itself treats an init-less record as an aborted create.
         #expect(try container.status(of: record) == .stopped)
         let observer = try root.openContainer(box)
-        #expect(try containerStatus(record: record, directory: observer, lockHeldByCaller: false) == .creating)
+        #expect(try ContainerObservation.read(from: observer).status == .creating)
         container.unlock()
-        #expect(try containerStatus(record: record, directory: observer, lockHeldByCaller: false) == .stopped)
+        #expect(try ContainerObservation.read(from: observer).status == .stopped)
         try container.lock()
     }
 }
@@ -169,7 +169,7 @@ private func detachedDuplicate(in root: StateRoot) throws -> OwnedFileDescriptor
         defer { try? container.destroy() }
         var record = try sampleRecord()
         // A live process (the test runner's parent) with a different start time.
-        let parent = try processIdentity(of: getppid())
+        let parent = try ProcFS.identity(of: getppid())
         record.initProcess = InitIdentity(pid: parent.pid, startTime: parent.startTime + 1, bootID: parent.bootID)
         try container.writeRecord(record)
         #expect(try container.status(of: record) == .stopped)
@@ -197,22 +197,22 @@ private func detachedDuplicate(in root: StateRoot) throws -> OwnedFileDescriptor
 @Test func verificationRequiresMatchingIdentity() throws {
     let parentPID = getppid()
     try #require(parentPID > 1, "The test runner needs a parent other than PID 1")
-    let identity = try processIdentity(of: parentPID)
-    #expect(try withVerifiedProcess(identity, separatePIDNamespace: false) { $0.pid } == parentPID)
+    let identity = try ProcFS.identity(of: parentPID)
+    #expect(try ProcessHandle.withVerified(identity, separatePIDNamespace: false) { $0.pid } == parentPID)
     // A reused PID shows a different start time.
     var reused = identity
     reused.startTime += 1
-    #expect(try withVerifiedProcess(reused, separatePIDNamespace: false) { $0.pid } == nil)
+    #expect(try ProcessHandle.withVerified(reused, separatePIDNamespace: false) { $0.pid } == nil)
     // A start time from another boot.
     var otherBoot = identity
     otherBoot.bootID = "00000000-0000-0000-0000-000000000000"
-    #expect(try withVerifiedProcess(otherBoot, separatePIDNamespace: false) { $0.pid } == nil)
+    #expect(try ProcessHandle.withVerified(otherBoot, separatePIDNamespace: false) { $0.pid } == nil)
     // A container with its own PID namespace never names a process in ours.
-    #expect(try withVerifiedProcess(identity, separatePIDNamespace: true) { $0.pid } == nil)
+    #expect(try ProcessHandle.withVerified(identity, separatePIDNamespace: true) { $0.pid } == nil)
     // Nor PID 1 or this process, whatever the record says.
-    let own = try processIdentity(of: getpid())
-    #expect(try withVerifiedProcess(own, separatePIDNamespace: false) { $0.pid } == nil)
+    let own = try ProcFS.identity(of: getpid())
+    #expect(try ProcessHandle.withVerified(own, separatePIDNamespace: false) { $0.pid } == nil)
     let initIdentity = InitIdentity(pid: 1, startTime: identity.startTime, bootID: identity.bootID)
-    #expect(try withVerifiedProcess(initIdentity, separatePIDNamespace: false) { $0.pid } == nil)
+    #expect(try ProcessHandle.withVerified(initIdentity, separatePIDNamespace: false) { $0.pid } == nil)
 }
 #endif

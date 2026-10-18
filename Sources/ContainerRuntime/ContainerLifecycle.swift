@@ -115,7 +115,7 @@ public struct ContainerLifecycle: Sendable {
             bundle: FilePath(record.bundle), arguments: arguments, environment: environment, cwd: cwd, user: user,
             additionalGids: additionalGids, noNewPrivileges: noNewPrivileges, capabilities: capabilities,
             processFile: processFile.map { FilePath($0) })
-        let result = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { handle in
+        let result = try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace) { handle in
             let namespaces = try ExecNamespaceSet(process: handle)
             var hooks = LaunchHooks()
             hooks.detached = detach
@@ -155,7 +155,7 @@ public struct ContainerLifecycle: Sendable {
     private static func waitForThaw(
         _ process: InitIdentity, separatePIDNamespace: Bool, cgroup: CgroupIdentity
     ) throws {
-        let thawed = try withVerifiedProcess(process, separatePIDNamespace: separatePIDNamespace) { handle in
+        let thawed = try ProcessHandle.withVerified(process, separatePIDNamespace: separatePIDNamespace) { handle in
             while CgroupLeaf.isFreezeRequested(cgroup) {
                 if handle.waitForExit(milliseconds: 100) { return false }
             }
@@ -285,7 +285,7 @@ public struct ContainerLifecycle: Sendable {
         let record = try container.readRecord()
         _ = try LifecycleOperation.kill.action(for: try container.status(of: record), id: id)
         guard let record, let process = record.initProcess,
-              try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace, { try $0.signal(signal) }) == true else {
+              try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace, { try $0.signal(signal) }) == true else {
             throw LifecycleError.invalidTransition(id: id, operation: "kill", status: .stopped)
         }
         if signal == SIGKILL, let identity = record.cgroup {
@@ -340,7 +340,7 @@ public struct ContainerLifecycle: Sendable {
         // enumeration is ordinary concurrent deletion rather than a warning.
         var reports: [ContainerStateReport] = []
         var warnings: [String] = []
-        let names = try directoryEntries(root.descriptor).sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+        let names = try root.descriptor.directoryEntries().sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
         for name in names {
             guard let id = try? ContainerID(name) else { continue }
             do {
@@ -373,9 +373,8 @@ extension ContainerLifecycle {
         // Pin the generation under the root membership lock, after any
         // creator has locked its new directory and before a delete can race.
         let directory = try root.openContainer(id)
-        let record = try loadRecord(directory, id: id)
-        let status = try containerStatus(record: record, directory: directory, lockHeldByCaller: false)
-        return ContainerStateReport(record: record, id: id, status: status, owner: ownerName(directory))
+        let observation = try ContainerObservation.read(from: directory)
+        return ContainerStateReport(record: observation.record, id: id, status: observation.status, owner: directory.ownerName())
     }
 
     /// Kills the recorded init if it is still that process, and reports
@@ -383,7 +382,7 @@ extension ContainerLifecycle {
     /// process in it; without one, other workload processes may survive.
     private static func killInit(_ record: ContainerRecord?) throws -> Bool {
         guard let record, let process = record.initProcess else { return true }
-        let gone = try withVerifiedProcess(process, separatePIDNamespace: record.pidNamespace) { handle in
+        let gone = try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace) { handle in
             _ = try handle.signal(SIGKILL)
             // runc thaws a paused container after SIGKILL. Identity checks
             // keep this best-effort thaw away from a replacement cgroup.
@@ -461,7 +460,7 @@ extension ContainerLifecycle {
         // Reserve and pin the generation before recording or launching an init.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
-        var record = ContainerRecord(id: id, plan: plan, created: currentTimestamp())
+        var record = ContainerRecord(id: id, plan: plan, created: RFC3339.now())
         var leaf: CgroupLeaf? = nil
         do {
             try container.writeRecord(record)
@@ -510,7 +509,7 @@ extension ContainerLifecycle {
         // and unlock only after execution has been confirmed.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
         let container = try LockedContainer.create(in: root, id: id)
-        var record = ContainerRecord(id: id, plan: plan, created: currentTimestamp())
+        var record = ContainerRecord(id: id, plan: plan, created: RFC3339.now())
         var leaf: CgroupLeaf? = nil
         let status: Int32
         do {
