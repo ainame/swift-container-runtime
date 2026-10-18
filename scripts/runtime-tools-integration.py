@@ -107,15 +107,22 @@ def main():
         # path suites mknod a character device 0:0 there; overlayfs reserves
         # that as its whiteout and returns EPERM (a container job's /tmp), so
         # keep bundles in this private directory and require a filesystem
-        # that permits the node before running anything.
-        probe = work / "whiteout-probe"
+        # that permits the node before running anything. mkdtemp creates the
+        # directory 0700, but user-namespace suites open the rootfs as a mapped
+        # root that is not host root, so grant search (not listing) through it
+        # and the bundle parent, as a sticky world-writable /tmp would.
+        work.chmod(0o711)
+        bundles = work / "bundles"
+        bundles.mkdir(mode=0o711)
+        bundles.chmod(0o711)
+        probe = bundles / "whiteout-probe"
         try:
             os.mknod(probe, 0o600 | stat.S_IFCHR, os.makedev(0, 0))
         except OSError as error:
-            parser.error(f"{work} cannot hold character device 0:0 fixtures ({error.strerror}); "
+            parser.error(f"{bundles} cannot hold character device 0:0 fixtures ({error.strerror}); "
                          "set TMPDIR to a non-overlay filesystem")
         probe.unlink()
-        env = dict(os.environ, RUNTIME=str(wrapper), TMPDIR=str(work))
+        env = dict(os.environ, RUNTIME=str(wrapper), TMPDIR=str(bundles))
         for name in names:
             # Naming a suite explicitly or --strict always runs it unchanged.
             excluded = exclusions.get(name) if not args.strict and not args.tests else None
