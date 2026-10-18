@@ -269,7 +269,7 @@ public struct ContainerLifecycle: Sendable {
     /// or recreated. Holds no container lock while waiting.
     @available(*, noasync, message: "events blocks the calling thread while it waits")
     public func events(
-        id: ContainerID, interval: Int64, statsOnly: Bool, emit: (ContainerEvent) throws -> Void
+        id: ContainerID, interval: Duration, statsOnly: Bool, emit: (ContainerEvent) throws -> Void
     ) throws {
         #if os(Linux)
         try eventsOnLinux(id: id, interval: interval, statsOnly: statsOnly, emit: emit)

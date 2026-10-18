@@ -11,12 +11,12 @@ extension ContainerLifecycle {
     /// runc's `events`, with no lock held: a snapshot pins the container
     /// directory and its recorded cgroup generation, and the stream then
     /// observes only that pinned generation.
-    func eventsOnLinux(id: ContainerID, interval: Int64, statsOnly: Bool, emit: (ContainerEvent) throws -> Void) throws {
+    func eventsOnLinux(id: ContainerID, interval: Duration, statsOnly: Bool, emit: (ContainerEvent) throws -> Void) throws {
         // runc checks that the container exists, then the interval, then
         // that it is not stopped.
         guard let root = try StateRoot.open(root, create: false) else { throw LifecycleError.notFound(id) }
         let directory = try root.openContainer(id)
-        guard interval > 0 else { throw RuntimeError("duration interval must be greater than 0") }
+        guard interval > .zero else { throw RuntimeError("duration interval must be greater than 0") }
         let observation = try ContainerObservation.read(from: directory)
         let record = observation.record
         guard observation.status != .stopped else {
@@ -33,7 +33,7 @@ extension ContainerLifecycle {
             throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
         }
         let stream = try EventWatch.make(root: root, directory: directory, source: source)
-        try stream.run(identity: identity, interval: interval, emit: emit)
+        try stream.run(identity: identity, interval: EventSchedule.nanoseconds(interval), emit: emit)
     }
 }
 

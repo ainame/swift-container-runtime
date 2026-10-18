@@ -12,7 +12,7 @@ struct Events: ParsableCommand {
 
     @OptionGroup var globals: GlobalOptions
 
-    @Option(parsing: .unconditional, help:"Set the stats collection interval, as a Go duration such as 5s or 1m30s.")
+    @Option(parsing: .unconditional, help: "Set the stats collection interval, such as 5s, 300ms or 1m30s.")
     var interval = "5s"
 
     @Flag(help: "Display the container's stats then exit.")
@@ -26,7 +26,7 @@ struct Events: ParsableCommand {
     mutating func validate() throws {
         _ = try CommandValidation.id(id)
         do {
-            _ = try GoDuration.nanoseconds(from: interval)
+            _ = try Duration(parsing: interval)
         } catch {
             throw ValidationError("invalid value \"\(interval)\" for flag -interval: \(error)")
         }
@@ -34,8 +34,8 @@ struct Events: ParsableCommand {
 
     mutating func run() throws {
         do {
-            let nanoseconds = try GoDuration.nanoseconds(from: interval)
-            try globals.lifecycle().events(id: ContainerID(id), interval: nanoseconds, statsOnly: stats) { event in
+            let interval = try Duration(parsing: interval)
+            try globals.lifecycle().events(id: ContainerID(id), interval: interval, statsOnly: stats) { event in
                 // Each event is written whole, so a reader sees complete lines.
                 _ = try FileDescriptor.standardOutput.writeAll((event.json(id: id) + "\n").utf8)
             }

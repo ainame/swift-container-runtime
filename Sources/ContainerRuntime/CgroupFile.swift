@@ -6,7 +6,7 @@ enum CgroupFile {
         if value == "max" { return .max }
         if let parsed = UInt64(value) { return parsed }
         if let signed = Int64(value), signed < 0 { return 0 }
-        throw RuntimeError("unable to parse \(file) value \(GoText.quote(value))")
+        throw RuntimeError("unable to parse \(file) value \(value.debugDescription)")
     }
 
     /// "key value" lines (cpu.stat, memory.stat, *.events), in file order.
@@ -14,7 +14,7 @@ enum CgroupFile {
         try text.split(separator: "\n").map { line in
             let fields = line.split(separator: " ", omittingEmptySubsequences: false)
             guard fields.count == 2, let value = UInt64(fields[1]) else {
-                throw RuntimeError("unable to parse \(file) line \(GoText.quote(String(line)))")
+                throw RuntimeError("unable to parse \(file) line \(line.debugDescription)")
             }
             return (String(fields[0]), value)
         }
@@ -32,7 +32,7 @@ enum CgroupFile {
             let device = fields[0].split(separator: ":", omittingEmptySubsequences: false)
             guard device.count == 2 else { continue }
             guard let major = UInt64(device[0]), let minor = UInt64(device[1]) else {
-                throw RuntimeError("unable to parse io.stat device \(GoText.quote(String(fields[0])))")
+                throw RuntimeError("unable to parse io.stat device \(String(fields[0]).debugDescription)")
             }
             for item in fields.dropFirst() {
                 let pair = item.split(separator: "=", omittingEmptySubsequences: false)
@@ -46,7 +46,7 @@ enum CgroupFile {
                 default: continue
                 }
                 guard let value = UInt64(pair[1]) else {
-                    throw RuntimeError("unable to parse io.stat value \(GoText.quote(String(item)))")
+                    throw RuntimeError("unable to parse io.stat value \(String(item).debugDescription)")
                 }
                 let entry = BlkioEntry(major: major, minor: minor, op: target.op, value: value)
                 if target.bytes { serviceBytes.append(entry) } else { serviced.append(entry) }
@@ -65,16 +65,16 @@ enum CgroupFile {
             var data = PSIData()
             for field in fields.dropFirst() {
                 let pair = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-                guard pair.count == 2 else { throw RuntimeError("\(file): invalid psi data: \(GoText.quote(String(field)))") }
+                guard pair.count == 2 else { throw RuntimeError("\(file): invalid psi data: \(String(field).debugDescription)") }
                 switch pair[0] {
                 case "avg10", "avg60", "avg300":
                     guard let value = Double(pair[1]) else {
-                        throw RuntimeError("\(file): invalid \(pair[0]) PSI value: \(GoText.quote(String(pair[1])))")
+                        throw RuntimeError("\(file): invalid \(pair[0]) PSI value: \(String(pair[1]).debugDescription)")
                     }
                     if pair[0] == "avg10" { data.avg10 = value } else if pair[0] == "avg60" { data.avg60 = value } else { data.avg300 = value }
                 case "total":
                     guard let value = UInt64(pair[1]) else {
-                        throw RuntimeError("\(file): invalid total PSI value: \(GoText.quote(String(pair[1])))")
+                        throw RuntimeError("\(file): invalid total PSI value: \(String(pair[1]).debugDescription)")
                     }
                     data.total = value
                 default:

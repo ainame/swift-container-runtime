@@ -4,8 +4,12 @@ Keep each group responsible for one resource, format, or runtime phase. Prefer a
 instance method when an operation uses an owned resource or prepared inputs, an
 extension when an existing type already supplies the context, and a small static
 namespace for stateless operations. Keep helpers local to their only caller when
-possible. A top-level function needs a concrete reason; `parseGoDuration` remains
-as a compatibility entry point for existing library clients.
+possible. A top-level function needs a concrete reason.
+
+Implement formats natively in Swift instead of emulating Go's standard library:
+for example `Duration(parsing:)` for intervals and `debugDescription` for quoting
+values in diagnostics. Match runc's observable behavior where parity matters, not
+Go's internal quirks or error wording.
 
 ## Boundaries
 
@@ -34,7 +38,7 @@ Read the type and method together. Use `LaunchRecord.read(from:)`,
 `LaunchControl.send(over:)`, and `RFC3339.format(...)` without repeating the
 owning type in the method name. Retain words and labels that convey an essential
 operation, unit, or safety condition: `BundleConfiguration.resolveDirectory`,
-`GoDuration.nanoseconds(from:)`, and `ProcessHandle.withVerified`.
+`Duration(parsing:)`, and `ProcessHandle.withVerified`.
 
 Keep internal helpers private where possible. A short name must still describe
 what a caller can rely on; comments explain ordering and invariants rather than

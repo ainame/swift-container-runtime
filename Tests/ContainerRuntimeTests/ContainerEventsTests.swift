@@ -2,7 +2,7 @@ import SystemPackage
 import Testing
 @testable import ContainerRuntime
 
-// MARK: - Go durations
+// MARK: - Duration parsing
 
 @Test(arguments: [
     ("5s", Int64(5_000_000_000)),
@@ -18,38 +18,42 @@ import Testing
     ("2\u{00B5}s", 2_000),
     ("2\u{03BC}s", 2_000),
     ("10ns", 10),
+    ("1.0000000009s", 1_000_000_000),
+    ("0000000000000000000000001s", 1_000_000_000),
     ("9223372036854775807ns", Int64.max),
     ("-9223372036854775808ns", Int64.min),
 ])
-func parsesGoDurations(text: String, nanoseconds: Int64) throws {
-    #expect(try parseGoDuration(text) == nanoseconds)
+func parsesDurations(text: String, nanoseconds: Int64) throws {
+    #expect(try Duration(parsing: text) == .nanoseconds(nanoseconds))
 }
 
 @Test(arguments: [
-    ("", "time: invalid duration \"\""),
-    ("-", "time: invalid duration \"-\""),
-    ("s", "time: invalid duration \"s\""),
-    (".s", "time: invalid duration \".s\""),
-    ("5", "time: missing unit in duration \"5\""),
-    ("1s5", "time: missing unit in duration \"1s5\""),
-    ("5x", "time: unknown unit \"x\" in duration \"5x\""),
-    ("5 s", "time: unknown unit \" s\" in duration \"5 s\""),
-    ("9223372036854775808ns", "time: invalid duration \"9223372036854775808ns\""),
-    ("3000000h", "time: invalid duration \"3000000h\""),
-    // Each component is accepted alone; their sum must not wrap UInt64.
-    ("-9223372036854775808ns9223372036854775808ns", "time: invalid duration \"-9223372036854775808ns9223372036854775808ns\""),
-    ("9223372036854775807ns1ns", "time: invalid duration \"9223372036854775807ns1ns\""),
+    ("", "expected a number"),
+    ("-", "expected a number"),
+    ("s", "expected a number"),
+    (".s", "expected a number"),
+    ("1.2.3s", "expected a number"),
+    ("5", "missing unit"),
+    ("1s5", "missing unit"),
+    ("5x", "unknown unit \"x\""),
+    ("5 s", "unknown unit \" s\""),
+    ("9223372036854775808ns", "out of range"),
+    ("3000000h", "out of range"),
+    ("9223372036854775807ns1ns", "out of range"),
+    ("100000000000000000000000s", "out of range"),
 ])
-func rejectsMalformedGoDurations(text: String, message: String) {
-    #expect(throws: (any Error).self) { try parseGoDuration(text) }
+func rejectsMalformedDurations(text: String, reason: String) {
     do {
-        _ = try parseGoDuration(text)
+        let duration = try Duration(parsing: text)
+        Issue.record("parsed as \(duration)")
     } catch {
-        #expect("\(error)" == message)
+        #expect(error.reason == reason)
     }
 }
 
-// MARK: - Stream ticks
+@Test func describesRefusedDurationsWithTheText() {
+    #expect(DurationParseError(text: "5x", reason: "missing unit").description == #"invalid duration "5x": missing unit"#)
+}
 
 @Test func skipsMissedTicksInConstantTime() {
     #expect(EventSchedule.next(after: 0, interval: 5) == 5)
