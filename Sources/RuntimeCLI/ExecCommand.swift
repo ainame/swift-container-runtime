@@ -7,13 +7,18 @@ struct Exec: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "exec", abstract: "Run another nonterminal process in a container.",
         discussion: "Inherits process settings from the source bundle. Options must precede the container ID. "
-            + "Terminal, additional groups, and descriptor handoff options are not implemented."
+            + "Terminal, capability, and descriptor handoff options are not implemented."
     )
     @ParentCommand var parent: RuntimeCommand
     @Option(name: .customLong("root"), help: "Directory holding container state.") var stateRoot: String?
     @Option(name: [.customShort("e"), .long], help: "Add or replace an environment entry NAME=value.") var env: [String] = []
     @Option(help: "Working directory inside the container.") var cwd: String?
     @Option(name: [.customShort("u"), .long], help: "Numeric uid[:gid] for the exec process.") var user: String?
+    @Option(name: [.customShort("g"), .customLong("additional-gids")], help: "Append a numeric supplementary group ID (repeatable).")
+    var additionalGids: [UInt32] = []
+    // A bare flag sets no_new_privs, as in runc; absent keeps the process
+    // setting. runc's explicit --no-new-privs=false has no equivalent here.
+    @Flag(name: .customLong("no-new-privs"), help: "Set no_new_privs for the exec process.") var noNewPrivs = false
     @Option(name: .customLong("pid-file"), help: "Write the host exec PID atomically to this path.") var pidFile: String?
     @Option(name: [.customShort("p"), .customLong("process")], help: "OCI process JSON file; overrides the bundle and process CLI settings.") var processFile: String?
     @Flag(name: [.customShort("d"), .long], help: "Return once exec succeeds.") var detach = false
@@ -50,7 +55,7 @@ struct Exec: ParsableCommand {
         do {
             status = try globals.lifecycle().exec(
                 id: ContainerID(id), arguments: arguments, environment: env, cwd: cwd, user: user,
-                detach: detach, pidFile: pidFile, processFile: processFile)
+                additionalGids: additionalGids, noNewPrivileges: noNewPrivs ? true : nil, detach: detach, pidFile: pidFile, processFile: processFile)
         } catch { throw failure(error) }
         throw ExitCode(status)
     }

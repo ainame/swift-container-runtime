@@ -394,6 +394,76 @@ private func removeFile(_ path: FilePath) throws {
 }
 
 
+private let groupedProcess = """
+{"user": {"uid": 1000, "gid": 1000, "additionalGids": [2000]}, "args": ["/bin/sh"], "cwd": "/",
+ "noNewPrivileges": true}
+"""
+
+@Test func execAppendsGroupsAndKeepsSettingsByDefault() throws {
+    try withTemporaryBundle { bundle in
+        try write(config(process: groupedProcess), to: bundle.appending("config.json"))
+        func load(_ gids: [UInt32], _ noNewPrivileges: Bool?, user: String? = nil) throws -> OCIRunPlan.ProcessSecurity {
+            try OCIRunPlan.loadExec(
+                bundle: bundle, arguments: ["/bin/id"], environment: [], cwd: nil, user: user,
+                additionalGids: gids, noNewPrivileges: noNewPrivileges).security
+        }
+        // Absent flags keep the configured groups and no_new_privs.
+        let defaults = try load([], nil)
+        #expect(defaults.additionalGids == [2000])
+        #expect(defaults.noNewPrivileges)
+        // Repeated groups append in order, repeats included, as runc does.
+        let appended = try load([3000, 2000, 3000], false, user: "0:5")
+        #expect(appended.additionalGids == [2000, 3000, 2000, 3000])
+        #expect(!appended.noNewPrivileges)
+        #expect(appended.uid == 0 && appended.gid == 5)
+    }
+}
+
+@Test func execGroupsWithoutConfiguredUserDefaultToRoot() throws {
+    try withTemporaryBundle { bundle in
+        try write(config(process: #"{"args": ["/bin/sh"], "cwd": "/"}"#), to: bundle.appending("config.json"))
+        let plan = try OCIRunPlan.loadExec(
+            bundle: bundle, arguments: ["/bin/id"], environment: [], cwd: nil, user: nil,
+            additionalGids: [7], noNewPrivileges: true)
+        #expect(plan.security.uid == 0 && plan.security.gid == 0)
+        #expect(plan.security.additionalGids == [7])
+        #expect(plan.security.noNewPrivileges)
+    }
+}
+
+// (count, gid, message): the array is built in the body so that Swift
+// Testing does not print 65536 argument values.
+@Test(arguments: [
+    (1, UInt32.max, "unchanged"),
+    (65_536, UInt32(1), "exceeds 65536"),
+])
+func execRejectsInvalidAppendedGroups(_ count: Int, _ gid: UInt32, _ message: String) throws {
+    let gids = Array(repeating: gid, count: count)
+    try withTemporaryBundle { bundle in
+        // One configured group plus the appended ones are validated together.
+        try write(config(process: groupedProcess), to: bundle.appending("config.json"))
+        do {
+            _ = try OCIRunPlan.loadExec(
+                bundle: bundle, arguments: ["/bin/id"], environment: [], cwd: nil, user: nil, additionalGids: gids)
+            Issue.record("Expected appended groups \(gids.prefix(2)) to be rejected")
+        } catch let error as RuntimeError {
+            #expect(error.description.contains(message))
+        }
+    }
+}
+
+@Test func processFileIgnoresGroupAndNoNewPrivilegesOverrides() throws {
+    try withTemporaryBundle { directory in
+        let file = directory.appending("config.json")
+        try write(defaultProcess, to: file)
+        let process = try OCIRunPlan.loadExec(
+            bundle: directory.appending("missing"), arguments: ["ignored"], environment: [], cwd: nil, user: nil,
+            additionalGids: [3000], noNewPrivileges: true, processFile: file)
+        #expect(process.security.additionalGids.isEmpty)
+        #expect(!process.security.noNewPrivileges)
+    }
+}
+
 @Test func standaloneExecProcessDoesNotReadTheBundle() throws {
     try withTemporaryBundle { directory in
         let file = directory.appending("config.json")

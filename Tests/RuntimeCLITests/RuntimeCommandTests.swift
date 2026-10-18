@@ -267,6 +267,28 @@ func execAcceptsBareAndRelativeExecutables(_ executable: String) throws {
     #expect(command.arguments == [executable, "-c"])
 }
 
+@Test func execParsesGroupsAndNoNewPrivileges() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot([
+        "exec", "-g", "3000", "--additional-gids", "2000", "-g", "3000", "--no-new-privs", "box", "id", "-g", "1",
+    ]) as? Exec)
+    #expect(command.additionalGids == [3000, 2000, 3000])
+    #expect(command.noNewPrivs)
+    #expect(command.arguments == ["id", "-g", "1"])
+    let plain = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "id"]) as? Exec)
+    #expect(plain.additionalGids.isEmpty)
+    #expect(!plain.noNewPrivs)
+}
+
+@Test(arguments: [
+    ["exec", "-g", "-1", "box", "id"],
+    ["exec", "-g", "4294967296", "box", "id"],
+    ["exec", "--additional-gids", "x", "box", "id"],
+    ["exec", "--no-new-privs=false", "box", "id"],
+])
+func rejectsInvalidExecGroupsAndPrivilegeValues(_ arguments: [String]) {
+    #expect(throws: (any Error).self) { _ = try RuntimeCommand.parseAsRoot(arguments) }
+}
+
 @Test func execProcessJSONNeedsOnlyAnID() throws {
     let command = try #require(RuntimeCommand.parseAsRoot(["exec", "-p", "process.json", "box"]) as? Exec)
     #expect(command.processFile == "process.json")

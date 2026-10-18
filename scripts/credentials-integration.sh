@@ -119,6 +119,7 @@ write_config user-all '{"uid": 1000, "gid": 1000, "additionalGids": [3000, 2000]
 write_config user-plain '{"uid": 1000, "gid": 1000}' false "$probe"
 write_config root-nogroups '{"uid": 0, "gid": 0, "additionalGids": []}' false "$probe"
 write_config user-loop '{"uid": 1000, "gid": 1000, "additionalGids": [2000]}' true '["/bin/sh", "/scripts/loop.sh"]'
+write_config exec-loop '{"uid": 1000, "gid": 1000, "additionalGids": [2000]}' false '["/bin/sh", "/scripts/loop.sh"]'
 write_config user-fds '{"uid": 1000, "gid": 1000}' true '["/bin/sh", "/scripts/fds.sh"]'
 write_config user-rootonly '{"uid": 1000, "gid": 1000}' false '["/scripts/rootonly"]'
 write_config root-rootonly '{"uid": 0, "gid": 0}' false '["/scripts/rootonly"]'
@@ -241,6 +242,95 @@ implemented_fields() {
     grep -E '^(Uid|Gid|Groups|NoNewPrivs|Umask|Cap[A-Za-z]+):|^secret=|^suid-euid=' "$1"
 }
 
+# exec_identity RT ID [OPTION...]: credential lines the exec process sees
+# for itself. The command must succeed.
+exec_identity() {
+    exec_rt=$1 exec_id=$2
+    shift 2
+    $exec_rt exec "$@" "$exec_id" /bin/awk '/^(Uid|Gid|Groups|NoNewPrivs):/ { $1 = $1; print }' /proc/self/status \
+        < /dev/null 2> "$results/exec.err" || { cat "$results/exec.err" >&2; fail "exec $* failed"; }
+}
+# exec_fails RT ID EXEC_ARGUMENT...: the exec must fail with no stdout and
+# must not time out or be killed. ID names the container for the reader.
+exec_fails() {
+    exec_rt=$1 exec_id=$2
+    shift 2
+    set +e
+    $exec_rt exec "$@" < /dev/null > "$results/exec.out" 2> "$results/exec.err"
+    exec_status=$?
+    set -e
+    case "$exec_status" in
+    0) fail "exec $* succeeded" ;;
+    124 | 137 | 143) fail "exec $* timed out or was killed (status $exec_status)" ;;
+    esac
+    test ! -s "$results/exec.out" || fail "failed exec $* printed: $(cat "$results/exec.out")"
+}
+
+# same LABEL EXPECTED ACTUAL: fails with both values and the last exec's
+# stderr when they differ.
+same() {
+    [ "$2" = "$3" ] && return 0
+    printf '%s\n--- expected\n%s\n--- actual\n%s\n--- exec stderr\n' "$1" "$2" "$3" >&2
+    cat "$results/exec.err" >&2 2>/dev/null || :
+    fail "$1: unexpected exec identity"
+}
+
+# exec_checks IMPL RT: --additional-gids appends to the configured groups,
+# --no-new-privs sets the flag, absent flags keep the process settings,
+# --process ignores both, and nothing changes the init.
+exec_checks() {
+    impl=$1 rt=$2
+    id=exec-$impl
+    rm -f "$out/loop.started"
+    runtime_step "$id" $rt run --detach --bundle "$bundles/exec-loop" "$id" < /dev/null > /dev/null 2>&1
+    wait_until "$id to run" test -e "$out/loop.started"
+    pid=$(pid_of "$rt" "$id")
+    identity_of "$pid" > "$results/$id.before"
+    expected="Uid: 1000 1000 1000 1000
+Gid: 1000 1000 1000 1000
+Groups: 2000
+NoNewPrivs: 0"
+    same "$impl: exec without overrides" "$expected" "$(exec_identity "$rt" "$id")"
+    expected="Uid: 1000 1000 1000 1000
+Gid: 1000 1000 1000 1000
+Groups: 2000 3000 4000
+NoNewPrivs: 1"
+    # runc refuses mixing -g and --additional-gids in one invocation, so
+    # each spelling is repeated on its own.
+    same "$impl: exec with appended -g groups and no_new_privs" "$expected" "$(exec_identity "$rt" "$id" -g 4000 -g 3000 --no-new-privs)"
+    same "$impl: exec with appended --additional-gids groups and no_new_privs" "$expected" "$(exec_identity "$rt" "$id" --additional-gids 4000 --additional-gids 3000 --no-new-privs)"
+    # runc 1.4.0-0ubuntu1 appends a single supplied group twice (-g 3000 or
+    # --additional-gids 3000, with or without -u, gives "2000 3000 3000"),
+    # while two distinct groups are appended once each. Compare the user
+    # override with two groups; check the single-group case strictly for ours.
+    expected="Uid: 0 0 0 0
+Gid: 5 5 5 5
+Groups: 2000 3000 4000
+NoNewPrivs: 1"
+    same "$impl: exec with numeric user, groups, and no_new_privs" "$expected" "$(exec_identity "$rt" "$id" -u 0:5 -g 3000 -g 4000 --no-new-privs)"
+    if [ "$impl" = swift ]; then
+        expected="Uid: 0 0 0 0
+Gid: 5 5 5 5
+Groups: 2000 3000
+NoNewPrivs: 1"
+        same "$impl: exec with numeric user and one group" "$expected" "$(exec_identity "$rt" "$id" -u 0:5 -g 3000 --no-new-privs)"
+    fi
+    # A process file is authoritative: its own empty group list and unset
+    # no_new_privs win over the flags.
+    cat > "$scratch/exec-process-$impl.json" <<'EOF'
+{"terminal": false, "user": {"uid": 1000, "gid": 1000}, "cwd": "/", "env": ["PATH=/bin"],
+ "args": ["/bin/awk", "/^(Groups|NoNewPrivs):/ { $1 = $1; print }", "/proc/self/status"]}
+EOF
+    expected="Groups:
+NoNewPrivs: 0"
+    same "$impl: --process did not override the group and no_new_privs flags" "$expected" "$($rt exec -p "$scratch/exec-process-$impl.json" -g 3000 --no-new-privs "$id" < /dev/null 2> "$results/exec.err")"
+    # A failed exec with overrides runs nothing and leaves the init alone.
+    exec_fails "$rt" "$id" -g 3000 --no-new-privs "$id" /does/not/exist
+    test "$(status_of "$rt" "$id")" = running || fail "$impl: failed exec stopped the init"
+    identity_of "$pid" | cmp -s - "$results/$id.before" || fail "$impl: exec changed the init's credentials"
+    runtime_step "$id" $rt delete --force "$id"
+}
+
 shared_checks() {
     impl=$1 rt=$2
     for mode in foreground detached created; do
@@ -288,7 +378,8 @@ shared_checks() {
     test ! -e "$out/rootonly.ran"
     $rt run --bundle "$bundles/root-rootonly" "rootonly-root-$impl" < /dev/null > /dev/null 2>&1
     test "$(cat "$out/rootonly.ran")" = ran
-    echo "$impl: uid/gid, additionalGids, umask, no_new_privs, stdio, executable lookup ok"
+    exec_checks "$impl" "$rt"
+    echo "$impl: uid/gid, additionalGids, umask, no_new_privs, stdio, executable lookup, exec overrides ok"
 }
 
 shared_checks swift "$ours"
@@ -374,7 +465,17 @@ wait_status "$ours" fds-created stopped
 check_fds "$results/fds-created"
 $ours delete fds-created
 
+# Invalid group values fail before any process starts.
+$ours run --detach --bundle "$bundles/exec-loop" exec-invalid < /dev/null > /dev/null 2>&1
+for value in 4294967295 -1 4294967296 x; do
+    exec_fails "$ours" exec-invalid -g "$value" exec-invalid /bin/true
+done
+exec_fails "$ours" exec-invalid -g 4294967295 exec-invalid /bin/true
+grep -qF "'unchanged'" "$results/exec.err" || fail "unexpected diagnostic: $(cat "$results/exec.err")"
+test "$(status_of "$ours" exec-invalid)" = running
+$ours delete --force exec-invalid
+
 test -z "$(ls -A "$state_root")"
 comparison=skipped
 test "$compare" = 1 && comparison=runc
-printf '%s\n' "Credential integration checks passed (comparison: $comparison): uid/gid, additionalGids (also cleared), umask (default 0022), no_new_privs ($nnp_note), permitted/effective/ambient capabilities dropped for non-root and inherited sets matching runc, stdio reopen, credentials before start, root-only executable lookup, non-root parent-death cleanup, detached lifetime, descriptor isolation."
+printf '%s\n' "Credential integration checks passed (comparison: $comparison): uid/gid, additionalGids (also cleared), umask (default 0022), no_new_privs ($nnp_note), permitted/effective/ambient capabilities dropped for non-root and inherited sets matching runc, stdio reopen, credentials before start, root-only executable lookup, non-root parent-death cleanup, detached lifetime, descriptor isolation, exec --additional-gids/--no-new-privs/--user and --process precedence."

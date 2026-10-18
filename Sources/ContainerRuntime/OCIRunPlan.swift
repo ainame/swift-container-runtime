@@ -128,7 +128,10 @@ public struct OCIRunPlan: Sendable {
 
     /// Like runc's command-based exec, reread the bundle's process settings.
     /// The live root and namespaces are pinned separately by the lifecycle.
-    static func loadExec(bundle: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?, processFile: FilePath? = nil) throws -> OCIProcessPlan {
+    static func loadExec(
+        bundle: FilePath, arguments: [String], environment: [String], cwd: String?, user: String?,
+        additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil, processFile: FilePath? = nil
+    ) throws -> OCIProcessPlan {
         if let processFile {
             return try OCIProcessPlan(OCIConfiguration.decodeProcess(readConfiguration(processFile)))
         }
@@ -155,6 +158,14 @@ public struct OCIRunPlan: Sendable {
                 configuration.process.user?.gid = gid
             }
         }
+        // As runc's getProcess: groups are appended to the configured ones
+        // (validated with them below), and no_new_privs changes only when given.
+        if !additionalGids.isEmpty {
+            var staged = configuration.process.user ?? OCIConfiguration.User()
+            staged.additionalGids = (staged.additionalGids ?? []) + additionalGids
+            configuration.process.user = staged
+        }
+        if let noNewPrivileges { configuration.process.noNewPrivileges = noNewPrivileges }
         return try OCIProcessPlan(configuration.process)
     }
 
