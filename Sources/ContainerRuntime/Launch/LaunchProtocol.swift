@@ -9,7 +9,7 @@ enum LaunchStage: Int32 {
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
     case setResourceLimit, startDescriptor, readonlyRoot
     case resolveReadonlyPath, readonlyPath, openDevNull, resolveMaskedPath, maskPath, verifyMaskedPath
-    case findExecutable, relativeExecutable, pidfdOpen, pidfdSend
+    case findExecutable, relativeExecutable, pidfdOpen, pidfdSend, openMountSource
 
     var description: String {
         switch self {
@@ -29,6 +29,7 @@ enum LaunchStage: Int32 {
         case .openRootfs: "open rootfs"
         case .resolveMount: "resolve mount destination"
         case .mount: "mount"
+        case .openMountSource: "open bind mount source"
         case .devices: "create /dev entries"
         case .pivotRoot: "pivot_root"
         case .cwd: "change to process.cwd"

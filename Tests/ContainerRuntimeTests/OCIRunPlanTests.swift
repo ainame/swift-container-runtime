@@ -184,7 +184,7 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "cgroup"}]}"#), "cgroup is not implemented"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "mount"}]}"#), "duplicate"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "rootfsPropagation": "shared"}"#), "rootfsPropagation"),
-    (config(mounts: #"[{"destination": "/data", "type": "bind", "source": "/etc", "options": ["rbind"]}]"#), "bind"),
+    (config(mounts: #"[{"destination": "/data", "type": "bind", "options": ["rbind"]}]"#), "source is required"),
     (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup2"}]"#), "cgroup2"),
     (config(mounts: #"[{"destination": "/sys", "type": "sysfs", "options": ["mode=755"]}]"#), "mode=755"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["uid=1000"]}]"#), "uid=1000"),
@@ -491,4 +491,36 @@ func mountReadonlyOptionsUseLastRequestedMode(_ options: String, _ readonly: Boo
     let value = try plan(config(mounts: #"[{"destination":"/sys","type":"sysfs","options":\#(options)}]"#))
     #expect(value.mounts[0].flags.contains(.readonly) == readonly)
     #expect(value.mounts[0].flags.kernelFlags.contains(.readOnly) == readonly)
+}
+
+@Test func plansBindSourcesAndExplicitFlagClears() throws {
+    let value = try plan(config(mounts: #"""
+    [
+        {"destination":"/etc/resolv.conf","source":"../resolv.conf","type":"none","options":["rbind","bind","ro","rprivate"]},
+        {"destination":"/data","source":"/host/data","type":"bind","options":["ro","rw","nosuid","suid","noexec","exec","nodev"]}
+    ]
+    """#))
+    #expect(value.mounts[0].type == .bind)
+    #expect(value.mounts[0].source == "/bundle/../resolv.conf")
+    #expect(value.mounts[0].recursiveBind)
+    #expect(value.mounts[0].recursivePrivate == true)
+    #expect(value.mounts[0].flags.contains(.readonly))
+    #expect(value.mounts[1].flags == [.nodev])
+    #expect(value.mounts[1].clearedFlags == [.readonly, .nosuid, .noexec])
+}
+
+@Test(arguments: [
+    #"{"destination":"/data","type":"bind","source":""}"#,
+    #"{"destination":"/data","type":"bind","source":"/x","options":["rshared"]}"#,
+    #"{"destination":"/data","type":"bind","source":"/x","options":["idmap"]}"#,
+    #"{"destination":"/data","type":"bind","source":"/x","options":["remount"]}"#,
+    #"{"destination":"/proc/sys","type":"bind","source":"/host"}"#,
+])
+func rejectsUnimplementedBindRequests(_ mount: String) {
+    #expect(throws: RuntimeError.self) { try plan(config(mounts: "[" + mount + "]")) }
+}
+
+@Test func bindingDevNeverPopulatesHostBackedDirectory() throws {
+    let value = try plan(config(mounts: #"[{"destination":"/dev","type":"tmpfs"},{"destination":"/dev","type":"bind","source":"/host/dev"}]"#))
+    #expect(!value.populatesDev)
 }

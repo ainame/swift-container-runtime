@@ -207,6 +207,20 @@ static inline int linux_set_mount_readonly(int fd) {
     return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH, &attr, sizeof attr);
 }
 
+/* Change only requested bind-clone attributes. A nonzero propagation is
+ * MS_PRIVATE; recursion applies to propagation, not the mount attributes. */
+static inline int linux_set_bind_attributes(int fd, uint64_t set, uint64_t clear) {
+    struct mount_attr attr = {0};
+    attr.attr_set = set;
+    attr.attr_clr = clear;
+    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH, &attr, sizeof(attr));
+}
+static inline int linux_set_bind_private(int fd, int recursive) {
+    struct mount_attr attr = {0};
+    attr.propagation = MS_PRIVATE;
+    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH | (recursive ? AT_RECURSIVE : 0), &attr, sizeof(attr));
+}
+
 /* A close-on-exec filesystem context for type, as fsopen(FSOPEN_CLOEXEC). */
 static inline int linux_open_filesystem(const char *type) {
     return (int)syscall(SYS_fsopen, type, FSOPEN_CLOEXEC);

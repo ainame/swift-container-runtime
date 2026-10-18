@@ -99,6 +99,25 @@ extension Kernel {
             #endif
         }
 
+        /// Change the requested VFS flags on a detached bind clone, preserving
+        /// unmentioned inherited flags and all submount attributes (Linux 5.12+).
+        static func setBindAttributes(_ mount: FileDescriptor, set: UInt64, clear: UInt64) throws(Errno) {
+            #if os(Linux)
+            guard set != 0 || clear != 0 else { return }
+            guard linux_set_bind_attributes(mount.rawValue, set, clear) == 0 else { throw .current }
+            #else
+            throw .noFunction
+            #endif
+        }
+
+        static func makePrivate(_ mount: FileDescriptor, recursive: Bool) throws(Errno) {
+            #if os(Linux)
+            guard linux_set_bind_private(mount.rawValue, recursive ? 1 : 0) == 0 else { throw .current }
+            #else
+            throw .noFunction
+            #endif
+        }
+
         /// fsopen(2): a filesystem context for `type`.
         static func openFilesystem(_ type: UnsafePointer<CChar>) throws(Errno) -> OwnedFileDescriptor {
             #if os(Linux)

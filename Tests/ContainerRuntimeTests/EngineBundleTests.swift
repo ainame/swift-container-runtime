@@ -33,3 +33,14 @@ private func engineFixture(_ name: String) throws -> Data {
     #expect(plan.mounts.contains { $0.type == .mqueue && $0.destinationPath == "/dev/mqueue" })
     #expect(plan.mounts.contains { $0.type == .tmpfs && $0.destinationPath == "/dev/shm" })
 }
+
+@Test func capturedImageBindBundlePlansItsOriginalRestrictions() throws {
+    let config = try JSONDecoder().decode(OCIConfiguration.self, from: engineFixture("image-bind/create.config.json"))
+    let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/rootfs"))
+    let binds = plan.mounts.filter { $0.type == .bind }
+    #expect(binds.count == 2)
+    #expect(binds.allSatisfy { $0.recursiveBind && $0.recursivePrivate == true })
+    #expect(binds.first { $0.destinationPath == "/etc/resolv.conf" }?.flags.contains(.readonly) == true)
+    #expect(binds.first { $0.destinationPath == "/volume" }?.clearedFlags.contains(.readonly) == true)
+    #expect(plan.cgroup.resources.devicePolicy != nil)
+}

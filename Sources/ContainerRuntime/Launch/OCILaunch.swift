@@ -51,6 +51,9 @@ extension OCIRunPlan {
         let lastCapability = try capabilities?.validatedKernelLimit() ?? -1
         let context: (LaunchStage, Int32) -> String? = { stage, detail in
             switch stage {
+            case .openMountSource:
+                guard mounts.indices.contains(Int(detail)) else { return nil }
+                return "open bind mount source \(mounts[Int(detail)].source) for \(mounts[Int(detail)].destinationPath)"
             case .resolveMount, .mount:
                 guard mounts.indices.contains(Int(detail)) else { return nil }
                 return "\(stage.description) \(mounts[Int(detail)].destinationPath)"

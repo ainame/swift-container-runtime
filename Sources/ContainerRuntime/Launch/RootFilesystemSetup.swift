@@ -29,10 +29,13 @@ struct RootFilesystemSetup {
     /// The setup steps in runc's order; each returns its failure.
     @unsafe
     private func prepareSteps() -> LaunchFailure? {
+        let sources: [BindMountSource?]
+        do { sources = try BindMountSource.pin(unsafe mounts) }
+        catch { return error }
         let rootfs = unsafe group(InitStringGroup.rootfs)[0]!
         var root = OwnedFileDescriptor()
         if let failure = unsafe Self.bindRootfs(rootfs, pinningInto: &root) { return failure }
-        if let failure = unsafe mountAll(beneath: root) { return failure }
+        if let failure = unsafe mountAll(beneath: root, sources: sources) { return failure }
         if unsafe populatesDev, let failure = unsafe populateDev(beneath: root) { return failure }
         if let failure = unsafe Self.switchRoot(to: root) { return failure }
         if let hostname = unsafe group(InitStringGroup.hostname)[0],
@@ -94,8 +97,13 @@ struct RootFilesystemSetup {
 
     /// The configured mounts in order, each on a destination resolved beneath `root`.
     @unsafe
-    private func mountAll(beneath root: borrowing OwnedFileDescriptor) -> LaunchFailure? {
+    private func mountAll(beneath root: borrowing OwnedFileDescriptor, sources: [BindMountSource?]) -> LaunchFailure? {
         for (index, mount) in unsafe mounts.enumerated() {
+            if let source = sources[index] {
+                do { try source.apply(mount, beneath: root) }
+                catch var failure { failure.detail = Int32(index); return failure }
+                continue
+            }
             let filesystem = unsafe group(InitStringGroup.filesystem(index))
             if var failure = unsafe Self.mount(
                 root, unsafe group(InitStringGroup.destination(index)),

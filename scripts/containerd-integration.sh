@@ -12,7 +12,7 @@ cg=/sys/fs/cgroup
 root=$scratch/runtime/$namespace
 c() { timeout -k 2 30 ctr --address "$address" --namespace "$namespace" "$@"; }
 cleanup() {
-    for id in holder stdio bad-create; do
+    for id in holder stdio bad-create binds; do
         c tasks kill --all --signal SIGKILL "$id" >/dev/null 2>&1 || :
         c tasks rm "$id" >/dev/null 2>&1 || :
         c containers delete "$id" >/dev/null 2>&1 || :
@@ -75,6 +75,19 @@ wait_until 'shim reaped detached exec' absent "/proc/$exec_pid"
 wait_until 'shim closed its file descriptors' no_open_fds "$shim"
 [ ! -e "$root/holder" ] && [ ! -e "$cg$fixture/holder" ] || fail 'holder state/cgroup leaked'
 
+# Engine-supplied regular-file and directory mounts: readonly configuration,
+# explicitly writable volume, and their cleanup through the real shim.
+printf 'nameserver 192.0.2.1\n' > "$scratch/resolv.conf"
+mkdir "$scratch/volume"
+c run --rootfs --runc-binary "$runtime" --runc-root "$scratch/runtime" --cgroup "$fixture/binds" --rm \
+    --mount "type=bind,src=$scratch/resolv.conf,dst=/etc/resolv.conf,options=rbind:ro:rprivate" \
+    --mount "type=bind,src=$scratch/volume,dst=/volume,options=rbind:rw:rprivate" \
+    "$scratch/rootfs" binds /bin/busybox sh -ec '/bin/busybox cat /etc/resolv.conf; echo engine-volume > /volume/result; if (echo forbidden > /etc/resolv.conf) 2>/dev/null; then exit 3; fi' > "$scratch/binds.out" 2> "$scratch/binds.err"
+grep -qx 'nameserver 192.0.2.1' "$scratch/binds.out" || fail 'engine file mount differs'
+[ "$(cat "$scratch/volume/result")" = engine-volume ] || fail 'engine volume write did not reach source'
+[ "$(cat "$scratch/resolv.conf")" = 'nameserver 192.0.2.1' ] || fail 'readonly engine file source changed'
+[ ! -e "$cg$fixture/binds" ] && [ ! -e "$root/binds" ] || fail 'engine bind state/cgroup leaked'
+
 # Keep input open until the task is RUNNING. ctr's stdinCloser callback is
 # assigned after NewTask: immediate EOF before then is lost in ctr 2.2.2 under
 # both runc and Swift. This synchronizes with setup, without a fixed delay.
@@ -100,4 +113,4 @@ if c run --rootfs --runc-binary "$runtime" --runc-root "$scratch/runtime" --cgro
 grep -q 'OCI runtime create failed: exec workload' "$scratch/create.err" || fail 'shim did not extract create error'
 [ ! -e "$cg$fixture/bad-create" ] && [ ! -e "$root/bad-create" ] || fail 'failed create leaked state/cgroup'
 [ "$(c tasks list | wc -l)" -eq 1 ] || fail 'tasks left behind'
-echo 'containerd: PASS (cgroupfs, directory rootfs, pipes, init/exec PID files, exit codes, kill/delete and error cleanup)'
+echo 'containerd: PASS (cgroupfs, directory rootfs, bind files/volumes, pipes, init/exec PID files, exit codes, kill/delete and error cleanup)'

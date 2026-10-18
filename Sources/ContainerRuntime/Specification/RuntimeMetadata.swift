@@ -87,7 +87,7 @@ public struct RuntimeFeatures: Codable, Equatable, Sendable {
             hooks: [],
             // Generic flags the mount planner maps to MS_* bits. Filesystem data options such as
             // mode= or size= are excluded, as the schema requires.
-            mountOptions: linux ? ["nodev", "noexec", "nosuid", "strictatime", "ro", "rw"] : [],
+            mountOptions: linux ? ["nodev", "noexec", "nosuid", "strictatime", "ro", "rw", "dev", "exec", "suid", "bind", "rbind", "private", "rprivate"] : [],
             linux: linux
                 ? Linux(
                     namespaces: OCIRunPlan.Namespace.allCases.map(\.rawValue),

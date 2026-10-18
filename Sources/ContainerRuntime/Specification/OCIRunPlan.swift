@@ -30,9 +30,9 @@ public struct OCIRunPlan: Sendable {
         case pid, mount, uts, ipc, network
     }
 
-    /// The filesystems a configured mount may create.
+    /// Filesystems and bind operations a configured mount may use.
     public enum FilesystemType: String, Sendable {
-        case proc, tmpfs, devpts, sysfs, mqueue
+        case proc, tmpfs, devpts, sysfs, mqueue, bind
     }
 
     /// The supported mount options that map to mount flags.
@@ -49,11 +49,16 @@ public struct OCIRunPlan: Sendable {
     /// One validated entry of `mounts`.
     public struct Mount: Sendable, Equatable {
         public let type: FilesystemType
-        /// The mount source, such as `proc` or `tmpfs`.
+        /// A filesystem source label, or an absolute host path for a bind.
         public let source: String
         /// Destination components below the rootfs, without `.` or `..`.
         public let destination: [String]
         public let flags: MountFlags
+        /// Flags explicitly cleared (for example rw or exec) on a bind clone.
+        public let clearedFlags: MountFlags
+        public let recursiveBind: Bool
+        /// nil keeps the private launch namespace's default propagation.
+        public let recursivePrivate: Bool?
         /// Comma-separated filesystem data (for example `mode=755`).
         public let data: String
 
@@ -288,7 +293,7 @@ public struct OCIRunPlan: Sendable {
         }
 
         let mounts = try configuration.mounts.enumerated().map { index, mount in
-            try Self.mount(mount, index: index, namespaces: namespaces)
+            try Self.mount(mount, index: index, namespaces: namespaces, bundle: bundle)
         }
         let pathControls = try PathControls(
             readonly: configuration.linux.readonlyPaths ?? [], masked: configuration.linux.maskedPaths ?? []
@@ -303,7 +308,7 @@ public struct OCIRunPlan: Sendable {
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.hostname = configuration.hostname
         self.mounts = mounts
-        self.populatesDev = mounts.contains { $0.type == .tmpfs && $0.destination == ["dev"] }
+        self.populatesDev = mounts.last(where: { $0.destination == ["dev"] })?.type == .tmpfs
         self.arguments = process.arguments
         self.environment = process.environment
         self.executable = process.executable
@@ -360,13 +365,19 @@ public struct OCIRunPlan: Sendable {
         return kept.reversed()
     }
 
-    private static func mount(_ mount: OCIConfiguration.Mount, index: Int, namespaces: Set<Namespace>) throws -> Mount {
+    private static func mount(_ mount: OCIConfiguration.Mount, index: Int, namespaces: Set<Namespace>, bundle: FilePath) throws -> Mount {
         let field = "mounts[\(index)]"
         guard !(mount.source ?? "").utf8.contains(0) else {
             throw RuntimeError("config.json: \(field).source must not contain NUL")
         }
-        guard let typeName = mount.type, let type = FilesystemType(rawValue: typeName) else {
-            throw RuntimeError("config.json: \(field).type \(mount.type ?? "<missing>") is not implemented; supported: proc, tmpfs, devpts, sysfs, mqueue")
+        let options = mount.options ?? []
+        // A bind/rbind option defines the operation even with OCI type none.
+        let binds = options.contains("bind") || options.contains("rbind")
+        guard let type = binds ? .bind : mount.type.flatMap(FilesystemType.init(rawValue:)) else {
+            throw RuntimeError("config.json: \(field).type \(mount.type ?? "<missing>") is not implemented; supported: proc, tmpfs, devpts, sysfs, mqueue, bind")
+        }
+        if type == .bind, mount.source?.isEmpty != false {
+            throw RuntimeError("config.json: \(field).source is required for a bind mount")
         }
         let destination = try components(mount.destination, field: "\(field).destination")
         guard !destination.isEmpty else {
@@ -380,20 +391,34 @@ public struct OCIRunPlan: Sendable {
             }
         case .devpts:
             guard destination == ["dev", "pts"] else { throw RuntimeError("config.json: \(field): devpts is only supported at /dev/pts") }
+        case .bind:
+            guard destination.first != "proc" else {
+                throw RuntimeError("config.json: \(field): bind mounts over /proc are not implemented")
+            }
         case .tmpfs, .sysfs, .mqueue:
             break
         }
 
         var flags: MountFlags = []
+        var cleared: MountFlags = []
+        var recursiveBind = false
+        var recursivePrivate: Bool?
         var data: [String] = []
-        for option in mount.options ?? [] {
+        for option in options {
             switch option {
-            case "nosuid": flags.insert(.nosuid)
-            case "nodev": flags.insert(.nodev)
-            case "noexec": flags.insert(.noexec)
+            case "nosuid": flags.insert(.nosuid); cleared.remove(.nosuid)
+            case "nodev": flags.insert(.nodev); cleared.remove(.nodev)
+            case "noexec": flags.insert(.noexec); cleared.remove(.noexec)
+            case "suid": flags.remove(.nosuid); cleared.insert(.nosuid)
+            case "dev": flags.remove(.nodev); cleared.insert(.nodev)
+            case "exec": flags.remove(.noexec); cleared.insert(.noexec)
             case "strictatime": flags.insert(.strictatime)
-            case "ro": flags.insert(.readonly)
-            case "rw": flags.remove(.readonly)
+            case "ro": flags.insert(.readonly); cleared.remove(.readonly)
+            case "rw": flags.remove(.readonly); cleared.insert(.readonly)
+            case "bind" where type == .bind: break
+            case "rbind" where type == .bind: recursiveBind = true
+            case "private" where type == .bind: recursivePrivate = false
+            case "rprivate" where type == .bind: recursivePrivate = true
             default:
                 guard isSupportedData(option, for: type) else {
                     throw RuntimeError("config.json: \(field).options \(option) is not implemented for \(type.rawValue)")
@@ -404,7 +429,16 @@ public struct OCIRunPlan: Sendable {
         if type == .tmpfs, destination == ["dev"], flags.contains(.nodev) {
             throw RuntimeError("config.json: \(field): nodev on /dev would make the created device nodes unusable")
         }
-        return Mount(type: type, source: mount.source ?? type.rawValue, destination: destination, flags: flags, data: data.joined(separator: ","))
+        let source: String
+        if type == .bind, let path = mount.source {
+            let file = FilePath(path)
+            source = (file.isAbsolute ? file : bundle.pushing(file)).string
+        } else {
+            source = mount.source ?? type.rawValue
+        }
+        return Mount(type: type, source: source, destination: destination, flags: flags,
+                     clearedFlags: cleared, recursiveBind: recursiveBind, recursivePrivate: recursivePrivate,
+                     data: data.joined(separator: ","))
     }
 
     private static func isSupportedData(_ option: String, for type: FilesystemType) -> Bool {

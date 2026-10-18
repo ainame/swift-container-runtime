@@ -23,6 +23,18 @@ extension Kernel.File {
             path, in: directory?.rawValue ?? AT_FDCWD, access, options, permissions)))
     }
 
+    /// openat2 RESOLVE_IN_ROOT|RESOLVE_NO_MAGICLINKS for setup paths built
+    /// in Swift. All absolute links are interpreted from the pinned root.
+    static func openPathInRoot(_ path: String, beneath root: FileDescriptor, options: FileDescriptor.OpenOptions = []) throws(Errno) -> OwnedFileDescriptor {
+        #if os(Linux)
+        let raw = unsafe linux_open_path_in_root(root.rawValue, path, options.rawValue)
+        guard raw >= 0 else { throw .current }
+        return OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        #else
+        throw .noFunction
+        #endif
+    }
+
     /// openat(2) relative to an owned directory, kept open throughout.
     static func open(
         _ path: String, in directory: borrowing OwnedFileDescriptor, _ access: FileDescriptor.AccessMode,
