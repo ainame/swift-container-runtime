@@ -115,7 +115,7 @@ extension OCIRunPlan {
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 var root = unsafe RootFilesystemSetup(
                     strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
-                    readonlyRoot: readonlyRoot, pathControls: pathControls, terminal: terminal)
+                    readonlyRoot: readonlyRoot, rootPropagation: rootPropagation, pathControls: pathControls, terminal: terminal)
                 // Hook buffers point into the launch strings, which outlive the launch.
                 func prepared(_ hooks: [ContainerHooks.Hook], from first: Int, defaultEnvironment: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [PreparedHook] {
                     unsafe hooks.enumerated().map { offset, hook in

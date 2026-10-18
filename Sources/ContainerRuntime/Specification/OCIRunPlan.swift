@@ -52,11 +52,15 @@ public struct OCIRunPlan: Sendable {
     }
 
     /// The propagation a bind clone is given before it is attached.
-    public enum BindPropagation: Sendable, Equatable {
+    public enum BindPropagation: String, Sendable, Equatable {
         /// `private`: the clone's top mount only.
-        case `private`
+        case `private` = "private"
         /// `rprivate`: the clone and every mount below it.
-        case recursivePrivate
+        case recursivePrivate = "rprivate"
+        /// Create a peer group, or receive mounts from the current master.
+        case shared, slave, unbindable
+        /// Apply the requested mode to every mount below the target.
+        case recursiveShared = "rshared", recursiveSlave = "rslave", recursiveUnbindable = "runbindable"
     }
 
     /// One validated entry of `mounts`.
@@ -109,6 +113,8 @@ public struct OCIRunPlan: Sendable {
     /// `root.readonly`: after setup, the container's root mount (not its
     /// child mounts, and not the host's mount of the rootfs) is read-only.
     public let readonlyRoot: Bool
+    /// Propagation of the isolated root mount, finalized after pivot_root.
+    public let rootPropagation: BindPropagation
     /// Recorded in container state; they do not affect setup.
     public let annotations: [String: String]
     /// The namespaces created for the container; others are inherited or joined.
@@ -327,10 +333,8 @@ public struct OCIRunPlan: Sendable {
         guard namespaces.contains(.mount) else {
             throw RuntimeError("config.json: a mount namespace is required for pivot_root")
         }
-        switch configuration.linux.rootfsPropagation {
-        case nil, "private", "rprivate": break
-        case let other?:
-            throw RuntimeError("config.json: linux.rootfsPropagation \(other) is not implemented; only rprivate is used")
+        guard let rootPropagation = BindPropagation(rawValue: configuration.linux.rootfsPropagation ?? "rprivate") else {
+            throw RuntimeError("config.json: invalid linux.rootfsPropagation")
         }
 
         if let hostname = configuration.hostname {
@@ -360,6 +364,7 @@ public struct OCIRunPlan: Sendable {
         self.bundle = bundle
         self.rootfs = rootfs
         self.readonlyRoot = configuration.root.readonly ?? false
+        self.rootPropagation = rootPropagation
         self.annotations = configuration.annotations
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.networkNamespacePath = networkNamespacePath
@@ -487,12 +492,8 @@ public struct OCIRunPlan: Sendable {
             case "rw": flags.remove(.readonly); cleared.insert(.readonly)
             case "bind" where type == .bind: break
             case "rbind" where type == .bind: recursiveBind = true
-            case "private" where type == .bind: propagation = .private
-            case "rprivate" where type == .bind: propagation = .recursivePrivate
-            // A new filesystem mount under the container's rprivate tree is
-            // already private, so the request (as Docker's --tmpfs sends it)
-            // holds without another mount call. Shared or slave stays refused.
-            case "private", "rprivate": break
+            case let value where BindPropagation(rawValue: value) != nil:
+                propagation = BindPropagation(rawValue: value)
             default:
                 guard isSupportedData(option, for: type) else {
                     throw RuntimeError("config.json: \(field).options \(option) is not implemented for \(type.rawValue)")

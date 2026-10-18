@@ -29,6 +29,21 @@ struct MountFlags: OptionSet, Sendable {
     static let strictAccessTime = MountFlags(rawValue: 1 << 24)
 }
 
+extension OCIRunPlan.BindPropagation {
+    /// Linux mount propagation flags, kept separate from filesystem mount data.
+    var kernelFlags: MountFlags {
+        let recursive: MountFlags = rawValue.hasPrefix("r") ? .recursive : []
+        let mode: UInt
+        switch self {
+        case .private, .recursivePrivate: mode = 1 << 18 // MS_PRIVATE
+        case .shared, .recursiveShared: mode = 1 << 20 // MS_SHARED
+        case .slave, .recursiveSlave: mode = 1 << 19 // MS_SLAVE
+        case .unbindable, .recursiveUnbindable: mode = 1 << 17 // MS_UNBINDABLE
+        }
+        return recursive.union(MountFlags(rawValue: mode))
+    }
+}
+
 extension Kernel {
     /// Mounts, the root switch, and the descriptor-based mount API (Linux
     /// 5.2+; mount_setattr 5.12+). Paths are C strings so that code between

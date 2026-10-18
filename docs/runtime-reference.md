@@ -407,3 +407,11 @@ use the existing Linux 5.2+ descriptor mount API.
 
 The [engine baseline](engine-baseline.md) records the pinned native-snapshotter
 Alpine scenario, complete with original create JSON and its remaining exclusions.
+
+### Mount propagation
+
+`linux.rootfsPropagation` and mount options accept private, shared, slave, and
+unbindable modes, including their recursive forms (`rprivate`, `rshared`,
+`rslave`, `runbindable`). Setup first isolates the mount tree from the host,
+then finalizes root propagation after `pivot_root` and restores explicit child
+mount modes. Filesystem-specific data on bind mounts remains rejected.

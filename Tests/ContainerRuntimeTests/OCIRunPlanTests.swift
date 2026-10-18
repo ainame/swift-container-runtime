@@ -186,7 +186,7 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "cgroup", "path": "/proc/1/ns/cgroup"}]}"#), "only network paths"),
     (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup", "source": "cgroup"}]"#), "requires a cgroup namespace"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "mount"}]}"#), "duplicate"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "rootfsPropagation": "shared"}"#), "rootfsPropagation"),
+    (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "rootfsPropagation": "invalid"}"#), "rootfsPropagation"),
     (config(mounts: #"[{"destination": "/data", "type": "bind", "options": ["rbind"]}]"#), "source is required"),
     (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup2"}]"#), "cgroup2"),
     (config(mounts: #"[{"destination": "/sys", "type": "sysfs", "options": ["mode=755"]}]"#), "mode=755"),
@@ -514,7 +514,6 @@ func mountReadonlyOptionsUseLastRequestedMode(_ options: String, _ readonly: Boo
 
 @Test(arguments: [
     #"{"destination":"/data","type":"bind","source":""}"#,
-    #"{"destination":"/data","type":"bind","source":"/x","options":["rshared"]}"#,
     #"{"destination":"/data","type":"bind","source":"/x","options":["idmap"]}"#,
     #"{"destination":"/data","type":"bind","source":"/x","options":["remount"]}"#,
     #"{"destination":"/proc/sys","type":"bind","source":"/host"}"#,
@@ -556,11 +555,14 @@ func rejectsConflictingOrUnsupportedNamespacePaths(_ entries: String, _ reason: 
     }
 }
 
-@Test func filesystemMountsAcceptPrivatePropagationOnly() throws {
-    let tmpfs = #"[{"destination": "/tmp", "type": "tmpfs", "source": "tmpfs", "options": ["rprivate", "noexec", "nosuid", "nodev"]}]"#
+@Test(arguments: ["private", "rprivate", "shared", "rshared", "slave", "rslave", "unbindable", "runbindable"])
+func filesystemMountsKeepPropagationSeparateFromFlags(_ mode: String) throws {
+    let tmpfs = #"[{"destination":"/tmp","type":"tmpfs","options":["\#(mode)","noexec","nosuid","nodev"]}]"#
     let accepted = try plan(config(mounts: tmpfs))
-    #expect(accepted.mounts[0].propagation == nil)
+    #expect(accepted.mounts[0].propagation?.rawValue == mode)
     #expect(accepted.mounts[0].flags == [.noexec, .nosuid, .nodev])
-    let shared = #"[{"destination": "/tmp", "type": "tmpfs", "source": "tmpfs", "options": ["rshared"]}]"#
-    #expect(throws: RuntimeError.self) { try plan(config(mounts: shared)) }
+    let bind = #"[{"destination":"/data","type":"bind","source":"/host","options":["rbind","\#(mode)"]}]"#
+    #expect(try plan(config(mounts: bind)).mounts[0].propagation?.rawValue == mode)
+    let linux = #"{"namespaces":[{"type":"mount"},{"type":"uts"},{"type":"pid"}],"rootfsPropagation":"\#(mode)"}"#
+    #expect(try plan(config(linux: linux)).rootPropagation.rawValue == mode)
 }
