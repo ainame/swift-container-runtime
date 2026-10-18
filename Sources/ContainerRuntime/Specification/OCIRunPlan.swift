@@ -27,7 +27,7 @@ public struct ContainerID: Sendable, Equatable {
 public struct OCIRunPlan: Sendable {
     /// A namespace the container gets newly created (`linux.namespaces`).
     public enum Namespace: String, Sendable, CaseIterable {
-        case pid, mount, uts, ipc, network, cgroup
+        case pid, mount, uts, ipc, network, cgroup, user
     }
 
     /// Filesystems and bind operations a configured mount may use.
@@ -124,6 +124,8 @@ public struct OCIRunPlan: Sendable {
     /// A supplied network namespace to join; nil creates one only when listed
     /// in namespaces. Supplied paths must be absolute host paths.
     public let networkNamespacePath: String?
+    /// Non-nil only when init creates a mapped, rootful user namespace.
+    let userNamespace: UserNamespace?
     /// The UTS hostname; nil keeps the inherited one.
     public let hostname: String?
     /// `linux.sysctl`, validated against the container's namespaces and
@@ -360,6 +362,15 @@ public struct OCIRunPlan: Sendable {
         let pathControls = try PathControls(
             readonly: configuration.linux.readonlyPaths ?? [], masked: configuration.linux.maskedPaths ?? []
         )
+        let uidMappings = configuration.linux.uidMappings ?? [], gidMappings = configuration.linux.gidMappings ?? []
+        if namespaces.contains(.user) {
+            userNamespace = try UserNamespace(uid: uidMappings, gid: gidMappings)
+        } else {
+            guard uidMappings.isEmpty && gidMappings.isEmpty else {
+                throw RuntimeError("config.json: UID/GID mappings require a new user namespace")
+            }
+            userNamespace = nil
+        }
         let cgroup = try CgroupPlan.validated(path: configuration.linux.cgroupsPath, resources: configuration.linux.resources)
 
         self.ociVersion = version

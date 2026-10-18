@@ -219,7 +219,7 @@ private func decode(_ bytes: [UInt8]) throws -> DefaultSpecification {
     #expect(linux.hooks == ["prestart", "createRuntime", "createContainer", "startContainer", "poststart", "poststop"])
     #expect(linux.mountOptions == ["nodev", "noexec", "nosuid", "strictatime", "ro", "rw", "dev", "exec", "suid", "bind", "rbind", "private", "rprivate"])
     let section = try #require(linux.linux)
-    #expect(section.namespaces == ["pid", "mount", "uts", "ipc", "network", "cgroup"])
+    #expect(section.namespaces == ["pid", "mount", "uts", "ipc", "network", "cgroup", "user"])
     #expect(section.capabilities == CapabilitySet.knownNames)
     #expect(section.cgroup == .init(v1: false, v2: true, systemd: false, systemdUser: false, rdma: false))
     for surface in [section.seccomp, section.apparmor, section.selinux] {

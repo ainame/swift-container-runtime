@@ -188,8 +188,8 @@ write_config "$scratch/oomscore" '{"args": ["/bin/touch", "/ran"], "cwd": "/", "
 expect_setup_failure "$scratch/oomscore" 'process.oomScoreAdj must be -1000...1000'
 write_config "$scratch/caps" '{"args": ["/bin/touch", "/ran"], "cwd": "/", "capabilities": {"bounding": ["CAP_NOPE"]}}'
 expect_setup_failure "$scratch/caps" 'unknown capability "CAP_NOPE"'
-write_config "$scratch/bind" "$touch_ran" "" '[{"destination": "/host", "type": "bind", "source": "/", "options": ["rbind", "rshared"]}]'
-expect_setup_failure "$scratch/bind" 'rshared is not implemented'
+write_config "$scratch/bind" "$touch_ran" "" '[{"destination": "/host", "type": "bind", "source": "/", "options": ["rbind", "idmap"]}]'
+expect_setup_failure "$scratch/bind" 'idmap is not implemented'
 write_config "$scratch/norootfs" "$touch_ran" "" "" "$scratch/absent"
 expect_setup_failure "$scratch/norootfs" 'resolve root.path'
 

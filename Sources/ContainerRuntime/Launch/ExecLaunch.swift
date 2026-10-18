@@ -3,13 +3,8 @@ import SystemPackage
 /// One owner for namespace and root descriptors opened while the recorded
 /// init is pinned. Later PID reuse cannot redirect any of these handles.
 struct ExecNamespaceSet: ~Copyable {
-    let mount: OwnedFileDescriptor
-    let pid: OwnedFileDescriptor
-    let uts: OwnedFileDescriptor
-    let ipc: OwnedFileDescriptor
-    let network: OwnedFileDescriptor
-    /// The init's cgroup namespace, the host's when the container has none.
-    let cgroup: OwnedFileDescriptor
+    /// Pinned before the init can exit, in user-first setns order.
+    let handles: [NamespaceHandle]
     let root: OwnedFileDescriptor
 
     init(process: borrowing ProcessHandle) throws {
@@ -27,39 +22,26 @@ struct ExecNamespaceSet: ~Copyable {
         }
         // The proc directory and each namespace are pinned before checking
         // the pidfd again: an exit during acquisition invalidates this set.
-        let mount = try open("ns/mnt")
-        let pid = try open("ns/pid")
-        let uts = try open("ns/uts")
-        let ipc = try open("ns/ipc")
-        let network = try open("ns/net")
-        let cgroup = try open("ns/cgroup")
+        let handles = try NamespaceHandle.joinOrder.map { namespace in
+            try NamespaceHandle(path: "/proc/\(process.pid)/ns/\(namespace.procName)", namespace: namespace)
+        }
         let root = try open("root", root: true)
         guard !process.waitForExit(timeout: .zero) else {
             throw RuntimeError("container init exited while opening exec namespaces")
         }
         // Complete every throwing operation before moving the owners into
         // self; partial noncopyable initialization is not supported yet.
-        self.mount = consume mount
-        self.pid = consume pid
-        self.uts = consume uts
-        self.ipc = consume ipc
-        self.network = consume network
-        self.cgroup = consume cgroup
+        self.handles = handles
         self.root = consume root
     }
 
     /// Called only in the single-threaded launcher. PID namespace entry
     /// applies to the next fork; the launcher remains outside that namespace.
     func join() -> Errno? {
-        func enter(_ owner: borrowing OwnedFileDescriptor, _ namespace: OCIRunPlan.Namespace) -> Errno? {
-            owner.failure(in: { descriptor in Errno.failure { () throws(Errno) in try Kernel.Namespace.enter(descriptor, namespace) } })
+        for handle in handles {
+            if let error = handle.join() { return error }
         }
-        if let error = enter(network, .network) { return error }
-        if let error = enter(cgroup, .cgroup) { return error }
-        if let error = enter(ipc, .ipc) { return error }
-        if let error = enter(uts, .uts) { return error }
-        if let error = enter(mount, .mount) { return error }
-        return enter(pid, .pid)
+        return nil
     }
 
     /// Chroot through the live init's root descriptor, never its host path.

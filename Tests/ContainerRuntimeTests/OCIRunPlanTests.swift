@@ -180,8 +180,8 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(hostname: "\"\""), "hostname"),
     (config(linux: #"{"namespaces": [{"type": "mount"}]}"#), "uts namespace"),
     (config(linux: #"{"namespaces": [{"type": "uts"}, {"type": "pid"}]}"#), "mount namespace"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "user"}]}"#), "user is not implemented"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "user"}]}"#), "user is not implemented"),
+    (config(linux: #"{"namespaces": [{"type": "pid"}, {"type": "mount"}, {"type": "uts"}, {"type": "user"}]}"#), "uidMappings"),
+    (config(linux: #"{"namespaces": [{"type": "pid"}, {"type": "mount"}, {"type": "uts"}, {"type": "user"}]}"#), "uidMappings"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "cgroup", "path": "/proc/1/ns/cgroup"}]}"#), "only network paths"),
     (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup", "source": "cgroup"}]"#), "requires a cgroup namespace"),
     (config(linux: #"{"namespaces": [{"type": "mount"}, {"type": "mount"}]}"#), "duplicate"),
@@ -588,4 +588,24 @@ func filesystemMountsKeepPropagationSeparateFromFlags(_ mode: String) throws {
 func rejectsInvalidDeviceNodes(_ device: String) {
     let linux = #"{"namespaces":[{"type":"mount"},{"type":"uts"}],"devices":[\#(device)]}"#
     #expect(throws: RuntimeError.self) { try plan(config(mounts: "[]", linux: linux)) }
+}
+
+@Test func validatesRootfulUserNamespaceMappings() throws {
+    let linux = #"{"namespaces":[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"user"}],"uidMappings":[{"containerID":0,"hostID":1000,"size":1000}],"gidMappings":[{"containerID":0,"hostID":2000,"size":1000}]}"#
+    let value = try plan(config(linux: linux))
+    #expect(value.userNamespace?.uidMap == "0 1000 1000\n")
+    #expect(value.userNamespace?.gidMap == "0 2000 1000\n")
+}
+
+@Test(arguments: [
+    #"[]"#,
+    #"[{"containerID":0,"hostID":1000,"size":0}]"#,
+    #"[{"containerID":0,"hostID":4294967295,"size":1}]"#,
+    #"[{"containerID":1,"hostID":1000,"size":1}]"#,
+    #"[{"containerID":0,"hostID":1000,"size":10},{"containerID":5,"hostID":2000,"size":10}]"#,
+    #"[{"containerID":0,"hostID":1000,"size":10},{"containerID":20,"hostID":1005,"size":10}]"#,
+])
+func rejectsInvalidUserNamespaceMappings(_ mappings: String) {
+    let linux = #"{"namespaces":[{"type":"pid"},{"type":"mount"},{"type":"uts"},{"type":"user"}],"uidMappings":\#(mappings),"gidMappings":[{"containerID":0,"hostID":1000,"size":1000}]}"#
+    #expect(throws: RuntimeError.self) { try plan(config(linux: linux)) }
 }

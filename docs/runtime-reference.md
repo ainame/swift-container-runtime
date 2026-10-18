@@ -422,3 +422,14 @@ mount modes. Filesystem-specific data on bind mounts remains rejected.
 read-only. Paths are resolved relative to the pinned root without following
 symlink parents; permissions and numeric UID/GID are applied explicitly. FIFO
 nodes have no device number. Device-cgroup access rules remain a separate policy.
+
+### Rootful user namespaces
+
+A new `user` namespace requires non-overlapping `linux.uidMappings` and
+`linux.gidMappings`, including container ID 0. The root supervisor writes maps
+while its launcher waits, then init creates the remaining namespaces with
+mapped credentials. `exec` enters the same user namespace before the other
+namespace handles. The rootfs and its host ancestors must be searchable by
+the mapped root. Rootless operation and mapping-helper delegation remain
+unimplemented. Standard devices are bind-mounted because a user namespace
+cannot create host device nodes with `mknod`.

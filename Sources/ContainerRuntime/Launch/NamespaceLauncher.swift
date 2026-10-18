@@ -7,6 +7,8 @@ struct LaunchHooks {
     /// parent-death signal, starts a new session, and outlives the launcher
     /// and this process. Used by `create` and detached `run`.
     var detached = false
+    /// Supervisor writes UID/GID maps while its launcher waits after unshare.
+    var mapUserNamespace: ((pid_t) throws -> Void)? = nil
     /// Exec detaches its lifetime but confirms exec rather than waiting at a start gate.
     var waitsForReady = true
     /// Runs first in the forked launcher to close inherited descriptors that
@@ -103,11 +105,29 @@ enum NamespaceLauncher {
 
         // Apply process bootstrap settings and enter the namespaces init will start in.
         if let failure = prepare() { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, failure)) }
-        if namespaceFlags != 0 {
-            if let error = Errno.failure({ () throws(Errno) in try Kernel.Namespace.unshare(namespaceFlags) }) {
+        let createsUserNamespace = namespaceFlags & OCIRunPlan.Namespace.user.cloneFlag != 0
+        if createsUserNamespace {
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Namespace.unshare(OCIRunPlan.Namespace.user.cloneFlag) }) {
                 Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .namespaces, error: error))
             }
+            guard LaunchRecord(.userNamespace, value: Int64(Kernel.Process.id)).write(to: channels.reportWrite),
+                  LaunchControl.receive(from: channels.releaseRead) == .proceed else { Kernel.Process.exit(125) }
             if let error = Errno.failure({ () throws(Errno) in
+                try Kernel.Credentials.setGroupID(0)
+                try Kernel.Credentials.setUserID(0)
+                // Credential changes clear PDEATHSIG. Re-arm it before the
+                // launcher can fork, then close the parent-death race.
+                try Kernel.Process.setParentDeathSignal(Kernel.Signal.kill)
+            }) { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .setUserID, error: error)) }
+        }
+        guard Kernel.Process.parentID == supervisor else { Kernel.Process.exit(125) }
+        let remainingFlags = namespaceFlags & ~OCIRunPlan.Namespace.user.cloneFlag
+        if remainingFlags != 0 {
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Namespace.unshare(remainingFlags) }) {
+                Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .namespaces, error: error))
+            }
+            if remainingFlags & OCIRunPlan.Namespace.mount.cloneFlag != 0,
+               let error = Errno.failure({ () throws(Errno) in
                 try unsafe Kernel.Mount.mount(source: nil, target: "/", type: nil, flags: [.recursive, .privatePropagation])
             }) {
                 Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .propagation, error: error))
@@ -188,7 +208,7 @@ enum NamespaceLauncher {
     ) throws -> Int32 {
         try? channels.reportWrite.close(); try? channels.releaseRead.close(); try? channels.commitRead.close()
         var progress = LaunchProgress()
-        progress.follow(channels, hooks: hooks)
+        progress.follow(channels, launcher: launcher, hooks: hooks)
         // The release socket stays open for the launch verdict below.
         try? channels.reportRead.close()
 
@@ -309,7 +329,7 @@ private struct LaunchProgress: ~Copyable {
     var thrown: (any Error)? = nil
 
     /// Reads records until EOF, an error, or (detached) both the init PID and readiness.
-    mutating func follow(_ channels: borrowing LaunchChannels, hooks: LaunchHooks) {
+    mutating func follow(_ channels: borrowing LaunchChannels, launcher: pid_t, hooks: LaunchHooks) {
         while thrown == nil {
             switch LaunchRecord.read(from: channels.reportRead) {
             case .end:
@@ -318,6 +338,15 @@ private struct LaunchProgress: ~Copyable {
                 thrown = RuntimeError.launch(.protocolRead, error)
             case let .record(record):
                 switch LaunchRecord.Kind(rawValue: record.kind) {
+                case .userNamespace?:
+                    guard record.value == Int64(launcher), initPID == 0, let map = hooks.mapUserNamespace else {
+                        thrown = RuntimeError.launch(.protocolRead, .protocolError)
+                        continue
+                    }
+                    do {
+                        try map(launcher)
+                        try LaunchControl.proceed.send(over: channels.releaseWrite)
+                    } catch { thrown = error }
                 case .initProcess?:
                     place(record, channels, hooks: hooks)
                     if ready { return }
