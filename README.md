@@ -6,7 +6,9 @@ root filesystems, process isolation, and cgroups fit together in a small OCI run
 **For learning and experimentation.** This is not a production runtime or a security
 boundary. Custom device entries, user namespaces, rootless operation
 and foreground terminals are not implemented; detached terminals are handed to
-`--console-socket`. The [roadmap](docs/roadmap.md) targets
+`--console-socket`. Experimental Docker support (`--runtime swift`) passes an
+acceptance gate on one declared Ubuntu/cgroupfs profile; see
+[Docker integration](docs/docker-integration.md). The [roadmap](docs/roadmap.md) targets
 kontainer-runtime-level functionality and eventual Docker integration.
 
 ## Try it

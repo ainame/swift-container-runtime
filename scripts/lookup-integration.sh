@@ -173,9 +173,9 @@ run_case relative-miss third "" '["tool"]' '["PATH=missing:/third"]' /work
 run_case explicit-relative work "" '["./tool"]' '["PATH=/third"]' /work
 run_case explicit-nested third "" '["../third/tool"]' '[]' /work
 run_case explicit-absolute all "" '["/all/tool"]' '["PATH=/third"]'
-run_case explicit-not-executable "" 'Permission denied' '["/second/tool"]' '["PATH=/third"]'
-run_case explicit-directory "" 'Is a directory' '["/first/tool"]' '["PATH=/third"]'
-run_case explicit-missing "" 'No such file' '["./tool"]' '["PATH=/third"]' /
+run_case explicit-not-executable "" 'permission denied' '["/second/tool"]' '["PATH=/third"]'
+run_case explicit-directory "" 'is a directory' '["/first/tool"]' '["PATH=/third"]'
+run_case explicit-missing "" 'no such file' '["./tool"]' '["PATH=/third"]' /
 
 # create resolves the name (and fails) before start; start executes the
 # resolved file, so a file that vanishes in between never runs. This

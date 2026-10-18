@@ -680,3 +680,40 @@ sudo sh scripts/containerd-console-integration.sh BINARY /run/containerd/contain
 Not verified: Docker `run -it`/`exec -it`, later resizes (SIGWINCH) beyond the
 initial one, release builds, and the runtime's own foreground terminal proxy,
 which is not implemented.
+
+## Docker
+
+**Profile B** (Ubuntu 26.04.1 arm64 VM, kernel 7.0.0-34-generic, AppArmor enabled)
+with `docker.io 29.1.3-0ubuntu4.1`, containerd 2.2.2 and runc 1.4.0. The daemon
+uses `"exec-opts": ["native.cgroupdriver=cgroupfs"]` and registers `swift` (the
+Swift binary) and `capture` (the tracing wrapper) as extra runtimes; runc stays
+the default.
+
+A capture of Docker's default bundle showed no hooks and a runtime-created
+network namespace that Docker configures afterwards. Its gaps were fixed in turn:
+`linux.sysctl` (`c5d7ebf`), the empty `linux.resources.blockIO` (`a2376dd`), the
+cgroup namespace and read-only cgroup mount (`17d565f`), Go-style errno text for
+Docker's 127/126 exit mapping (`4a3a1c6`) and `rprivate` on `--tmpfs` mounts
+(`8c29c37`).
+
+[`scripts/docker-integration.sh`](../scripts/docker-integration.sh) then passes
+with the `8c29c37` **release** build (`--static-swift-stdlib`, SHA256
+`23848253d6ffb039bd4240f88bfa10dd1d90bae58e04a31b13203ac496f5eeac`) and with
+runc; see the [results](engine-baseline/docker/result.txt) and
+[Docker integration](docker-integration.md#current-result) for what the gate covers.
+
+```sh
+sudo sh scripts/docker-integration.sh swift alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+sudo sh scripts/docker-integration.sh runc alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+Not verified: Docker on x86_64 or another distribution, the systemd cgroup
+driver, rootless or user-remapped daemons, `--network host` and other namespace
+sharing, plugins that supply hooks, SELinux hosts, Docker Desktop, and a denied
+seccomp syscall through Docker itself (covered by the containerd seccomp gate).
+
+Milestone validation: with the `8c29c37` sources (later commits change only scripts
+and docs), `scripts/test-linux.sh --configuration all` passes on the Apple
+`container` guest (Profile A): Linux unit targets (217 runtime and 46 CLI tests) and
+all 32 integration suites in both debug and release, compared with runc where the
+suites do so.

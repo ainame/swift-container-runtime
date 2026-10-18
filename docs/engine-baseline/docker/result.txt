@@ -1,0 +1,26 @@
+host: Ubuntu 26.04.1 LTS, kernel 7.0.0-34-generic, aarch64, AppArmor parser version 5.0.2, runc version 1.4.0-0ubuntu1
+swift binary: 8c29c37 release, --static-swift-stdlib, sha256 23848253d6ffb039bd4240f88bfa10dd1d90bae58e04a31b13203ac496f5eeac
+daemon.json: {"exec-opts":["native.cgroupdriver=cgroupfs"],"runtimes":{"capture":{"path":"/usr/local/bin/sct-capture"},"swift":{"path":"/usr/local/bin/swift-container-runtime"}}}
+image: alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+== swift
+docker 29.1.3, containerd 2.2.2
+swift: provenance and state cleanup
+swift: stdout/stderr, exit 7 and missing executable 127
+swift: docker-default AppArmor, seccomp mode 2, default capabilities and device denial
+swift: bridge address, resolv.conf, published port, container TCP and network sysctl
+swift: bind and named volumes, read-only root with tmpfs, non-root user, capability drop and no-new-privileges
+swift: memory/CPU/pids limits, update, pause/unpause, stats, exec status and detached exec
+swift: run -it and exec -it terminals with resize and exit status
+swift: stop timeout with SIGKILL, forced removal with descendants and no leaked state
+docker-integration: PASS (swift)
+== runc
+docker 29.1.3, containerd 2.2.2
+runc: provenance and state cleanup
+runc: stdout/stderr, exit 7 and missing executable 127
+runc: docker-default AppArmor, seccomp mode 2, default capabilities and device denial
+runc: bridge address, resolv.conf, published port, container TCP and network sysctl
+runc: bind and named volumes, read-only root with tmpfs, non-root user, capability drop and no-new-privileges
+runc: memory/CPU/pids limits, update, pause/unpause, stats, exec status and detached exec
+runc: run -it and exec -it terminals with resize and exit status
+runc: stop timeout with SIGKILL, forced removal with descendants and no leaked state
+docker-integration: PASS (runc)

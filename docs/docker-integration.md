@@ -1,13 +1,13 @@
 # Docker integration gap
 
-Assessment date: 2026-10-18. **Not supported or verified yet.** The runtime has a
-useful lifecycle core, but several independent gaps block normal engine-generated
-bundles. Registering its path with Docker alone will not make it usable.
-The original assessment was source-based. The subsequent [engine baseline](engine-baseline.md)
-records a real containerd/runc capture and a successful Swift containerd 2.2.2
-cgroupfs directory-rootfs scenario plus a pinned Alpine image using the native
-snapshotter, file/volume binds and a supplied private network namespace. Docker
-remains unverified.
+Assessment date: 2026-10-18. **Experimental Docker support is verified on one
+declared profile:** rootful Docker 29.1.3 with containerd 2.2.2 and the cgroupfs
+driver on an Ubuntu 26.04 arm64 VM (kernel 7.0, AppArmor enabled), registered as
+an extra runtime and selected with `--runtime swift`. The [Docker gate](#current-result)
+passes with Docker's default security there, as it does with runc. Other hosts,
+cgroup drivers, architectures and rootless setups are unverified. The original
+assessment was source-based; the [engine baseline](engine-baseline.md) records the
+captures and execution evidence.
 
 ## Integration route
 
@@ -52,20 +52,18 @@ no user remapping, and an explicit host security profile.
 | Launch/control lifecycle | create/start/state/delete, PID files, detached exec with process JSON, process identity protection, update, pause/resume and stats exist. The constrained directory-rootfs shim test verifies PID publication/reaping, pipes/EOF, exit codes and failure cleanup. | Remaining integration work includes concurrent exec/control, richer image/namespace profiles, forced-removal variations and richer host profiles. Check PID-file publication failures after launcher exit. |
 | CLI and diagnostics | Global `--root`; command options cover much of go-runc's basic API. Global log/debug options and text/JSON error logging are implemented. | The real containerd 2.2.2 shim extracts failed create/exec errors from Swift JSON logs. Captured create/exec bundles and argv are recorded in the engine baseline. `--no-new-keyring` now persists an explicit init/exec opt-out. Audit `--no-pivot`, `--rootless` and `--systemd-cgroup` against the chosen versions. |
 | Engine-generated OCI JSON | Strict decoding accepts a deliberately narrow subset, including annotations. Directory-rootfs and pinned Alpine create/exec JSON now work through containerd. | Large for richer engine bundles: add applying support for requested fields such as non-network namespace paths, custom device entries, seccomp notification, hooks and process security settings. Null/empty/default objects from engine serializers need explicit tests; never silently drop requested restrictions. |
-| Rootfs/mounts | proc/tmpfs/devpts/sysfs/mqueue, shm, file/directory bind/rbind, ro/rw and explicit VFS flags, private/rprivate propagation, default devices, pivot_root, readonly root and path controls. Pinned-image file/volume binds pass. | Remaining: cgroup mounts, broader propagation/remount flags, dangling target symlinks and protected-proc bind handling. Docker's supplied hosts/resolv.conf/hostname and volume mounts must work. Snapshotter rootfs preparation remains upstream. |
-| Namespaces/network | New mount/pid/uts/ipc/network namespaces; absolute supplied network paths join on create/run, and exec joins the live init. The pinned image passes namespace identity and private loopback TCP through the shim. | Remaining: other namespace joins, cgroup namespaces and broader host/shared combinations. Engine-provisioned bridge, routes and DNS still need real Docker evidence. |
-| Security | Credentials, capabilities, rlimits, no-new-privileges, path controls, OOM adjustment, named session keyrings, device BPF rules, non-notification seccomp and requested AppArmor/SELinux process and key labels exist; unavailable modules fail before launch. containerd's generated default AppArmor profile confines image init and exec on an Ubuntu AppArmor host. Containerd default/custom seccomp profiles pass the pinned image with active syscall-denial evidence. | Remaining ordinary-use gates: custom devices, SELinux mount labels, positive SELinux evidence and Docker-default security verification. A run with security disabled proves only that explicit profile. Hooks are also needed when an engine/integration supplies them. |
-| Console | Nonterminal stdio, descriptor/pidfd handoff, and PTY allocation with controlling terminal, `/dev/console`, initial size and `--console-socket` master handoff for init and exec. containerd's shim attaches, resizes and reports exit status for `ctr run -t` and `ctr tasks exec -t`. | Remaining: Docker `run -it`/`exec -it` evidence and the runtime's own foreground terminal proxy. The shim owns attached I/O and resize after handoff; direct foreground CLI forwarding is a separate responsibility. |
+| Rootfs/mounts | proc/tmpfs/devpts/sysfs/mqueue, shm, read-only cgroup2 with a cgroup namespace, file/directory bind/rbind, ro/rw and explicit VFS flags, private/rprivate propagation, default devices, pivot_root, readonly root and path controls. Docker's hosts/resolv.conf/hostname binds, bind and named volumes and `--tmpfs` pass. | Remaining: broader propagation/remount flags, dangling target symlinks and protected-proc bind handling, a cgroup mount without a cgroup namespace. |
+| Namespaces/network | New mount/pid/uts/ipc/network/cgroup namespaces; absolute supplied network paths join on create/run, and exec joins the live init. Docker's default bridge, published ports, container-to-container TCP, resolv.conf and namespaced sysctls pass. | Remaining: other namespace joins and broader host/shared combinations (for example `--network host`, `--ipc container:`). |
+| Security | Credentials, capabilities, rlimits, no-new-privileges, path controls, OOM adjustment, named session keyrings, device BPF rules, non-notification seccomp and requested AppArmor/SELinux process and key labels exist; unavailable modules fail before launch. containerd's generated default AppArmor profile confines image init and exec on an Ubuntu AppArmor host. Containerd default/custom seccomp profiles pass the pinned image with active syscall-denial evidence. | Docker's default security (docker-default AppArmor, default seccomp, capabilities, device rules) passes the Docker gate. Remaining: custom devices, SELinux mount labels and positive SELinux evidence. A run with security disabled proves only that explicit profile. Hooks are also needed when an engine/integration supplies them. |
+| Console | Nonterminal stdio, descriptor/pidfd handoff, and PTY allocation with controlling terminal, `/dev/console`, initial size and `--console-socket` master handoff for init and exec. containerd's shim attaches, resizes and reports exit status for `ctr run -t` and `ctr tasks exec -t`. Docker `run -it`/`exec -it` pass with the caller's size and exit status. | Remaining: the runtime's own foreground terminal proxy and later resize evidence. The shim owns attached I/O and resize after handoff; direct foreground CLI forwarding is a separate responsibility. |
 | Cgroups/resources | v2 memory/pids/CPU/cpuset, updates, stats, freezer and identity-safe cleanup. | Moderate to large: integration with an engine-created hierarchy, I/O limits, live device-rule updates and owned ancestor cleanup. Shared-PID SIGKILL subtree cleanup and `--all` compatibility now have focused Linux evidence; the constrained nonterminal shim lifecycle passes, with broader image/profile acceptance still open. Current support does not include systemd cgroup management. Never interpret a systemd slice tuple as a filesystem path. |
 | Packaging/portability | SwiftPM executable and Linux debug/release CI definition. | Moderate: release-mode daemon-host installation and runtime library requirements; execute on both arm64 and x86_64. Musl/static distribution remains unverified. A dynamic build can serve the first experiment if its libraries are installed. |
 
-**Overall:** this is beyond a namespace demo, but still multiple substantial
-feature increments away from ordinary Docker use. The strongest reusable pieces
-are lifecycle, credentials and basic cgroups. The live containerd baseline now
-runs directory-rootfs and pinned-image workloads with enforced device rules,
-binds, supplied network paths and exec. Other namespace paths, normal Docker
-security and consoles remain gates. This is a constrained containerd result,
-not a Docker execution result.
+**Overall:** ordinary rootful Docker usage works on the declared profile, with
+default security, networking, volumes, limits, terminals and cleanup. It is an
+experimental claim for that one profile, not general Docker compatibility: a
+systemd cgroup driver, rootless or user-remapped daemons, other architectures,
+hooks supplied by plugins and non-network namespace sharing remain open.
 
 Kontainer already documents a `ctr --runc-binary` example using an Alpine image,
 seccomp, read-only rootfs, UID/GID mappings and resource controls. Reproducing that
@@ -114,11 +112,25 @@ rootless setup or another engine version is a later profile, not a multiplier on
 every implementation iteration. Hooks are required when supplied; completing all
 six phases is not necessary for a hook-free first engine scenario.
 
-## Future registration example
+## Current result
 
-This is the intended configuration shape **after the gates pass**, not a working
-installation recipe for today's binary. Merge the entry into the test daemon's
-existing configuration and follow that engine version's reload/restart procedure:
+On the declared profile, `scripts/docker-integration.sh` passes for both `swift`
+and Docker's default `runc` with the same pinned Alpine image; see the
+[engine baseline](engine-baseline.md#docker) and
+[results](engine-baseline/docker/result.txt). The gate checks the Swift runtime
+actually created the container (its state format), then covers gates 3 and 4:
+exit statuses including 127, default AppArmor/seccomp/capabilities with device
+denial, bridge and published-port TCP, DNS configuration, volumes, read-only root,
+non-root with dropped capabilities and no-new-privileges, memory/CPU/pids limits
+and `docker update`, pause, stats, exec, `run -it`/`exec -it`, stop timeout and
+forced removal without leaked processes or state. Denied seccomp syscalls are
+covered by the containerd seccomp gate rather than this one.
+
+## Registration
+
+Merge the entry into the daemon's existing configuration, select the cgroupfs
+driver this runtime manages, and follow that engine version's reload/restart
+procedure. Keep runc as the default runtime:
 
 ```json
 {
@@ -136,8 +148,9 @@ Then select it explicitly:
 docker run --rm --runtime swift hello-world
 ```
 
-The small registration entry hides the work in the contracts above; it does not
-supply missing OCI support, choose a cgroup driver, or disable security settings.
+The registration entry does not supply missing OCI support or change security
+settings. The verified profile also sets `"exec-opts": ["native.cgroupdriver=cgroupfs"]`;
+the Linux build needs the host's libseccomp2 (or a matching static build).
 
 ## Source baseline
 
