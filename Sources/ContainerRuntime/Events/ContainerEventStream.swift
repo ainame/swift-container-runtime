@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 extension ContainerLifecycle {
@@ -73,15 +67,12 @@ private struct EventWatch: ~Copyable {
     /// Creates the inotify instance and its watches. A failure destroys the
     /// local owners, closing both descriptors, before anything is stored.
     static func make(root: StateRoot, directory: consuming ContainerDirectory, source: CgroupEventSource) throws -> EventWatch {
-        // O_NONBLOCK and O_CLOEXEC share IN_NONBLOCK and IN_CLOEXEC's values,
-        // which libc headers declare with differing C types.
-        let raw = inotify_init1(O_NONBLOCK | O_CLOEXEC)
-        guard raw >= 0 else { throw RuntimeError("inotify_init1: \(Errno.current)") }
-        let inotify = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        let inotify: OwnedFileDescriptor
+        do { inotify = try Kernel.Notify.open() } catch { throw RuntimeError("inotify_init1: \(error)") }
 
         // Watches go through /proc/self/fd paths of the pinned descriptors.
-        let modified = UInt32(IN_MODIFY)
-        let entries = UInt32(IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF | IN_ONLYDIR)
+        let modified = NotifyEvents.modified
+        let entries: NotifyEvents = [.created, .deleted, .movedFrom, .movedTo, .deletedSelf, .movedSelf, .onlyDirectory]
         // The baseline is read before the watch exists: kills before it are
         // not replayed, and one during setup leaves the count above the
         // baseline, so run's first read reports it even without a wakeup.
@@ -102,12 +93,15 @@ private struct EventWatch: ~Copyable {
     /// Adds a watch through a /proc/self/fd path, which resolves to the
     /// pinned file rather than whatever the original path names now.
     /// Returns false when an optional file does not exist.
-    private static func watch(_ inotify: borrowing OwnedFileDescriptor, _ path: String, _ mask: UInt32, optional: Bool) throws -> Bool {
-        let result = try inotify.withDescriptor { unsafe inotify_add_watch($0.rawValue, path, mask) }
-        if result >= 0 { return true }
-        let error = Errno.current
-        if optional && error == .noSuchFileOrDirectory { return false }
-        throw RuntimeError("unable to add inotify watch for \(path): \(error)")
+    private static func watch(_ inotify: borrowing OwnedFileDescriptor, _ path: String, _ events: NotifyEvents, optional: Bool) throws -> Bool {
+        do {
+            try inotify.withDescriptor { try Kernel.Notify.addWatch($0, path: path, events: events) }
+            return true
+        } catch Errno.noSuchFileOrDirectory where optional {
+            return false
+        } catch {
+            throw RuntimeError("unable to add inotify watch for \(path): \(error)")
+        }
     }
 
     /// Emits OOM events as they happen and statistics every `interval`
@@ -131,7 +125,7 @@ private struct EventWatch: ~Copyable {
             // the baseline of 0 kept for the absent counter, so a kill during
             // activation is still reported.
             if !watchingOOM {
-                watchingOOM = try Self.watch(inotify, source.watchPath("memory.events"), UInt32(IN_MODIFY), optional: true)
+                watchingOOM = try Self.watch(inotify, source.watchPath("memory.events"), .modified, optional: true)
             }
             if watchingOOM, let count = source.oomKillCount(), count > oomKills {
                 oomKills = count
@@ -173,25 +167,11 @@ private struct EventWatch: ~Copyable {
 
     /// Waits for an inotify event or the timeout, then drains the queue.
     private func waitForChange(timeout: Duration) throws {
-        try inotify.withDescriptor { descriptor in
-            var target = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
-            let result = unsafe poll(&target, 1, timeout.pollTimeout)
-            if result < 0 {
-                guard errno == EINTR else { throw RuntimeError("poll inotify: \(Errno.current)") }
-                return
-            }
-            guard result > 0 else { return }
-            var buffer = [UInt8](repeating: 0, count: 4096)
-            while true {
-                do {
-                    let count = try buffer.withUnsafeMutableBytes { bytes in unsafe try descriptor.read(into: bytes) }
-                    if count == 0 { return }
-                } catch let error as Errno where error == .interrupted {
-                    continue
-                } catch let error as Errno where error == .resourceTemporarilyUnavailable {
-                    return
-                }
-            }
+        guard !inotify.poll(.input, timeout: timeout).isEmpty else { return }
+        do {
+            try inotify.withDescriptor { try Kernel.Notify.drain($0) }
+        } catch {
+            throw RuntimeError("read inotify: \(error)")
         }
     }
 }

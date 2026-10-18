@@ -8,7 +8,6 @@ import Testing
 /// Runtime files that still import libc directly; each migration step to
 /// `Kernel/` removes entries until the list is empty.
 private let pendingMigration: Set<String> = [
-    "Events/ContainerEventStream.swift",
     "Launch/ExecLaunch.swift",
     "Launch/LaunchProtocol.swift",
     "Launch/NamespaceCommand.swift",
