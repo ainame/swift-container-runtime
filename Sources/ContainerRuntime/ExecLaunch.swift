@@ -35,7 +35,7 @@ struct ExecNamespaceSet: ~Copyable {
         let ipc = try open("ns/ipc")
         let network = try open("ns/net")
         let root = try open("root", root: true)
-        guard !process.waitForExit(milliseconds: 0) else {
+        guard !process.waitForExit(timeout: .zero) else {
             throw RuntimeError("container init exited while opening exec namespaces")
         }
         // Complete every throwing operation before moving the owners into

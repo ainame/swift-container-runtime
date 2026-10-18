@@ -70,7 +70,7 @@ private final class CgroupDirectory {
     /// (1 ms doubling, 10 retries) while exiting tasks are released.
     /// Returns nil or the error; a missing child counts as removed.
     func removeChild(_ name: String) -> Errno? {
-        var delay: Int32 = 1
+        var delay = Duration.milliseconds(1)
         for attempt in 0...10 {
             let result = (try? descriptor.withDescriptor { unsafe unlinkat($0.rawValue, name, AT_REMOVEDIR) }) ?? -1
             if result == 0 { return nil }
@@ -78,7 +78,7 @@ private final class CgroupDirectory {
             if error == .noSuchFileOrDirectory { return nil }
             if error == .interrupted { continue }
             guard error == .resourceBusy, attempt < 10 else { return error }
-            CgroupRetry.wait(milliseconds: delay)
+            CgroupRetry.wait(delay)
             delay *= 2
         }
         return .resourceBusy
@@ -457,7 +457,7 @@ final class CgroupLeaf {
                 guard waited < 10_000 else {
                     throw RuntimeError("processes in cgroup \(current.displayPath) remain 10 seconds after cgroup.kill")
                 }
-                CgroupRetry.wait(milliseconds: 10)
+                CgroupRetry.wait(.milliseconds(10))
                 waited += 10
             }
         }
@@ -593,7 +593,7 @@ final class CgroupLeaf {
     private static func waitFrozen(_ directory: CgroupDirectory) throws {
         for _ in 0..<1000 {
             if try directory.keyedValue("cgroup.events", "frozen") == "1" { return }
-            CgroupRetry.wait(milliseconds: 10)
+            CgroupRetry.wait(.milliseconds(10))
         }
         throw RuntimeError("cgroup \(directory.displayPath) did not freeze within 10 seconds")
     }
@@ -676,8 +676,8 @@ extension CgroupDirectory {
 }
 /// Synchronous backoff for bounded cgroup kernel transitions.
 private enum CgroupRetry {
-    static func wait(milliseconds: Int32) {
-        _ = poll(nil, 0, milliseconds)
+    static func wait(_ duration: Duration) {
+        _ = poll(nil, 0, duration.pollTimeout)
     }
 }
 #endif

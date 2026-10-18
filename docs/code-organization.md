@@ -49,6 +49,7 @@ the meaning, and add a small type only when values are easy to mix up:
 - errno values are `Errno?` (nil on success) or a thrown `Errno`; read
   `Errno.current` right after the failing call. Child-side launch steps return
   `Errno?` or `LaunchFailure?` so each step reports and exits explicitly.
+- Timeouts are `Duration`; `Duration.pollTimeout` converts at the poll(2) call.
 - Descriptors are `FileDescriptor` or `OwnedFileDescriptor` outside raw
   syscall and post-fork mount code.
 

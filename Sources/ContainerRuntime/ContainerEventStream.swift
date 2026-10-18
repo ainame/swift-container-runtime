@@ -157,9 +157,9 @@ private struct EventWatch: ~Copyable {
             // Enabling a controller creates files without any watched event
             // (a rejected update may not rewrite state), so until memory.events
             // exists it is rescanned every 100ms; stats deadlines are unchanged.
-            var timeout = Self.milliseconds(until: start + .nanoseconds(tick), clock: clock)
-            if !watchingOOM { timeout = min(timeout, 100) }
-            try waitForChange(milliseconds: timeout)
+            var timeout = clock.now.duration(to: start + .nanoseconds(tick))
+            if !watchingOOM { timeout = min(timeout, .milliseconds(100)) }
+            try waitForChange(timeout: timeout)
         }
     }
 
@@ -172,10 +172,10 @@ private struct EventWatch: ~Copyable {
     }
 
     /// Waits for an inotify event or the timeout, then drains the queue.
-    private func waitForChange(milliseconds: Int32) throws {
+    private func waitForChange(timeout: Duration) throws {
         try inotify.withDescriptor { descriptor in
             var target = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
-            let result = unsafe poll(&target, 1, milliseconds)
+            let result = unsafe poll(&target, 1, timeout.pollTimeout)
             if result < 0 {
                 guard errno == EINTR else { throw RuntimeError("poll inotify: \(Errno.current)") }
                 return
@@ -193,16 +193,6 @@ private struct EventWatch: ~Copyable {
                 }
             }
         }
-    }
-
-    /// poll(2)'s timeout: the time left, rounded up so a wakeup is never
-    /// early, and capped at its Int32 range.
-    private static func milliseconds(until deadline: ContinuousClock.Instant, clock: ContinuousClock) -> Int32 {
-        let remaining = clock.now.duration(to: deadline)
-        guard remaining > .zero else { return 0 }
-        let (seconds, attoseconds) = remaining.components
-        let total = seconds * 1000 + (attoseconds + 999_999_999_999_999) / 1_000_000_000_000_000
-        return Int32(clamping: total)
     }
 }
 #endif

@@ -92,3 +92,27 @@ private func readByte(from descriptor: FileDescriptor) throws -> (count: Int, by
     }
     return (count, byte)
 }
+
+#if os(Linux)
+@Test(arguments: [
+    (Duration.zero, Int32(0)),
+    (.milliseconds(-5), 0),
+    (.nanoseconds(1), 1),
+    (.milliseconds(100), 100),
+    (.microseconds(1_500), 2),
+    (.seconds(30), 30_000),
+    (.seconds(Int64.max), .max),
+])
+func pollTimeoutRoundsUpAndClamps(_ duration: Duration, _ expected: Int32) {
+    #expect(duration.pollTimeout == expected)
+}
+
+@Test func pollTimesOutOnAnIdlePipe() throws {
+    let pipe = try FileDescriptor.pipe()
+    let reader = OwnedFileDescriptor(takingOwnershipOf: pipe.readEnd)
+    let writer = OwnedFileDescriptor(takingOwnershipOf: pipe.writeEnd)
+    #expect(reader.poll(events: Int16(POLLIN), timeout: .milliseconds(10)) == 0)
+    try writer.withDescriptor { _ = try $0.writeAll([1]) }
+    #expect(reader.poll(events: Int16(POLLIN), timeout: .seconds(1)) & Int16(POLLIN) != 0)
+}
+#endif

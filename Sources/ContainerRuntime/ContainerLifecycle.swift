@@ -157,7 +157,7 @@ public struct ContainerLifecycle: Sendable {
     ) throws {
         let thawed = try ProcessHandle.withVerified(process, separatePIDNamespace: separatePIDNamespace) { handle in
             while CgroupLeaf.isFreezeRequested(cgroup) {
-                if handle.waitForExit(milliseconds: 100) { return false }
+                if handle.waitForExit(timeout: .milliseconds(100)) { return false }
             }
             return true
         }
@@ -387,7 +387,7 @@ extension ContainerLifecycle {
             // runc thaws a paused container after SIGKILL. Identity checks
             // keep this best-effort thaw away from a replacement cgroup.
             if let identity = record.cgroup { try? CgroupLeaf.setFrozen(identity, frozen: false) }
-            return handle.waitForExit(milliseconds: 10_000)
+            return handle.waitForExit(timeout: .seconds(10))
         }
         return gone ?? true
     }

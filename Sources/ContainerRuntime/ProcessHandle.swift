@@ -20,8 +20,8 @@ struct ProcessHandle: ~Copyable {
         throw RuntimeError("signal container init \(pid): \(Errno.current)")
     }
 
-    func waitForExit(milliseconds: Int32) -> Bool {
-        descriptor.poll(events: Int16(POLLIN), milliseconds: milliseconds) & Int16(POLLIN | POLLHUP) != 0
+    func waitForExit(timeout: Duration) -> Bool {
+        descriptor.poll(events: Int16(POLLIN), timeout: timeout) & Int16(POLLIN | POLLHUP) != 0
     }
 }
 

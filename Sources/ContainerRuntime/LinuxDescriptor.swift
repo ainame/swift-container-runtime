@@ -46,29 +46,31 @@ extension OwnedFileDescriptor {
 
     /// Polls with a monotonic deadline, so interruption cannot restart the full
     /// timeout. A zero result means timeout or an invalid/unusable descriptor.
-    func poll(
-        events: Int16, milliseconds: Int32
-    ) -> Int16 {
-        func now() -> Int64? {
-            var value = timespec()
-            guard unsafe clock_gettime(CLOCK_MONOTONIC, &value) == 0 else { return nil }
-            return Int64(value.tv_sec) * 1_000 + Int64(value.tv_nsec) / 1_000_000
-        }
-        guard let started = now() else { return 0 }
-        let deadline = started + Int64(max(0, milliseconds))
+    func poll(events: Int16, timeout: Duration) -> Int16 {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
 
         // Keep ownership through every retry and recompute only the remaining wait.
         return (try? withDescriptor { descriptor -> Int16 in
             while true {
-                guard let current = now() else { return 0 }
-                let remaining = Int32(max(0, min(Int64(Int32.max), deadline - current)))
                 var target = pollfd(fd: descriptor.rawValue, events: events, revents: 0)
-                let result = unsafe LinuxAPI.poll(&target, 1, remaining)
+                let result = unsafe LinuxAPI.poll(&target, 1, clock.now.duration(to: deadline).pollTimeout)
                 if result > 0 { return target.revents & Int16(POLLNVAL) == 0 ? target.revents : 0 }
                 if result == 0 || errno != EINTR { return 0 }
-                guard let resumed = now(), resumed < deadline else { return 0 }
+                guard clock.now < deadline else { return 0 }
             }
         }) ?? 0
+    }
+}
+
+extension Duration {
+    /// poll(2)'s timeout in milliseconds: rounded up so a wakeup is never
+    /// early, zero for a past deadline, and capped at the Int32 range.
+    var pollTimeout: Int32 {
+        guard self > .zero else { return 0 }
+        let (seconds, attoseconds) = components
+        guard seconds < Int64(Int32.max / 1000) + 1 else { return .max }
+        return Int32(clamping: seconds * 1000 + (attoseconds + 999_999_999_999_999) / 1_000_000_000_000_000)
     }
 }
 #endif

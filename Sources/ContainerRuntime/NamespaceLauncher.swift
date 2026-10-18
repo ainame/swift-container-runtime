@@ -245,7 +245,7 @@ enum NamespaceLauncher {
             // The pidfd names this init even after it exits, so this cannot reach
             // a process that reused its PID.
             _ = try? pinned.withDescriptor { linux_pidfd_send_signal($0.rawValue, SIGKILL) }
-            _ = pinned.poll(events: Int16(POLLIN), milliseconds: 10_000)
+            _ = pinned.poll(events: Int16(POLLIN), timeout: .seconds(10))
         }
         // A detached launcher still parents the child: after a failure it reaps
         // it, after success it exits on EOF. Never leave the launcher blocked.

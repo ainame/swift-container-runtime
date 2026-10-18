@@ -36,9 +36,9 @@ enum StartProtocol {
     static let request: [UInt8] = Array("start-v2".utf8)
     static let commit: [UInt8] = Array("commit-v2".utf8)
     /// A connected client gets this long to send its request.
-    static let requestTimeoutMilliseconds: Int32 = 5_000
+    static let requestTimeout = Duration.seconds(5)
     /// Bound on each wait for the init in `start`.
-    static let resultTimeoutMilliseconds: Int32 = 30_000
+    static let resultTimeout = Duration.seconds(30)
 }
 
 /// Descriptors a created init inherits for the start handshake. They are
@@ -143,7 +143,7 @@ final class StartGate {
     }
 
     private func receiveRequest(_ connection: borrowing OwnedFileDescriptor) -> Bool {
-        guard StartProtocol.waitReadable(connection, milliseconds: StartProtocol.requestTimeoutMilliseconds) else { return false }
+        guard StartProtocol.waitReadable(connection, timeout: StartProtocol.requestTimeout) else { return false }
         return StartProtocol.receivePacket(connection) == StartProtocol.request
     }
 
@@ -202,8 +202,8 @@ extension StartProtocol {
         return count > 0 ? Array(buffer[..<count]) : nil
     }
 
-    fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, milliseconds: Int32) -> Bool {
-        owner.poll(events: Int16(POLLIN), milliseconds: milliseconds) != 0
+    fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, timeout: Duration) -> Bool {
+        owner.poll(events: Int16(POLLIN), timeout: timeout) != 0
     }
 
     /// Asks a created init to exec its workload and waits for the outcome.
@@ -263,7 +263,7 @@ extension StartProtocol {
     /// Waits a bounded time for the init's next record: `expected`, or EOF when
     /// `expected` is nil. A failure record becomes its launch error.
     private static func waitForInit(_ connection: borrowing OwnedFileDescriptor, id: String, expecting expected: LaunchRecord.Kind?) throws {
-        guard StartProtocol.waitReadable(connection, milliseconds: StartProtocol.resultTimeoutMilliseconds) else {
+        guard StartProtocol.waitReadable(connection, timeout: StartProtocol.resultTimeout) else {
             throw RuntimeError("container \(id) init did not answer the start request within 30 seconds")
         }
         switch LaunchRecord.read(from: connection) {
