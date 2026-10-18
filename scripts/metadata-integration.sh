@@ -65,7 +65,7 @@ for expected in '"ociVersionMin":"1.0.0"' '"hooks":["prestart","createRuntime","
     '"seccomp":{"enabled":true}' '"idmap":{"enabled":false}' '"apparmor":{"enabled":true}' '"selinux":{"enabled":true}' '"CAP_CHOWN"' '"pid"' '"network","cgroup","user"]'; do
     grep -qF "$expected" "$scratch/features.canon" || fail "features lacks $expected"
 done
-for unexpected in '"annotations"' '"potentiallyUnsafeConfigAnnotations"' '"user"'; do
+for unexpected in '"annotations"' '"potentiallyUnsafeConfigAnnotations"'; do
     if grep -qF "$unexpected" "$scratch/features.canon"; then fail "features claims $unexpected"; fi
 done
 

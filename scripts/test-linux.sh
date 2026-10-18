@@ -24,7 +24,9 @@ esac
 sh "$root/scripts/run-integration.sh" --check "$@"
 # container 1.5 restricts default capabilities; namespace/mount/BPF tests need
 # the full set inside this disposable VM, just like privileged CI jobs.
-container run --rm --cap-add ALL --cpus 4 --memory 4G \
+# Match a privileged CI job: masked/readonly proc submounts otherwise make a
+# new proc mount inside a user namespace fail Linux's mount-too-revealing check.
+container run --rm --cap-add ALL --masked-path NONE --read-only-path NONE --cpus 4 --memory 4G \
     --volume "$root:/workspace" --workdir /workspace swift:6.4.1 \
     /bin/sh -eu -c '
         # cgroup v2 delegation for the cgroup and CPU integration, before any
