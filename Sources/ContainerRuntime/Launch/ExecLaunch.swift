@@ -8,6 +8,8 @@ struct ExecNamespaceSet: ~Copyable {
     let uts: OwnedFileDescriptor
     let ipc: OwnedFileDescriptor
     let network: OwnedFileDescriptor
+    /// The init's cgroup namespace, the host's when the container has none.
+    let cgroup: OwnedFileDescriptor
     let root: OwnedFileDescriptor
 
     init(process: borrowing ProcessHandle) throws {
@@ -30,6 +32,7 @@ struct ExecNamespaceSet: ~Copyable {
         let uts = try open("ns/uts")
         let ipc = try open("ns/ipc")
         let network = try open("ns/net")
+        let cgroup = try open("ns/cgroup")
         let root = try open("root", root: true)
         guard !process.waitForExit(timeout: .zero) else {
             throw RuntimeError("container init exited while opening exec namespaces")
@@ -41,6 +44,7 @@ struct ExecNamespaceSet: ~Copyable {
         self.uts = consume uts
         self.ipc = consume ipc
         self.network = consume network
+        self.cgroup = consume cgroup
         self.root = consume root
     }
 
@@ -51,6 +55,7 @@ struct ExecNamespaceSet: ~Copyable {
             owner.failure(in: { descriptor in Errno.failure { () throws(Errno) in try Kernel.Namespace.enter(descriptor, namespace) } })
         }
         if let error = enter(network, .network) { return error }
+        if let error = enter(cgroup, .cgroup) { return error }
         if let error = enter(ipc, .ipc) { return error }
         if let error = enter(uts, .uts) { return error }
         if let error = enter(mount, .mount) { return error }

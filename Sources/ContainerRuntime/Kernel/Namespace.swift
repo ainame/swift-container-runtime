@@ -19,6 +19,7 @@ extension OCIRunPlan.Namespace {
         case .ipc: 0x0800_0000
         case .pid: 0x2000_0000
         case .network: 0x4000_0000
+        case .cgroup: 0x0200_0000
         }
     }
 }

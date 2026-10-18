@@ -62,10 +62,10 @@ test "$("$runtime" -v)" = "$version" || fail "-v and --version differ"
 "$runtime" features > "$scratch/features.json"
 canon "$scratch/features.json" > "$scratch/features.canon" || fail "features is not valid JSON"
 for expected in '"ociVersionMin":"1.0.0"' '"hooks":[]' '"v2":true' '"v1":false' '"systemd":false' \
-    '"seccomp":{"enabled":true}' '"idmap":{"enabled":false}' '"apparmor":{"enabled":true}' '"selinux":{"enabled":true}' '"CAP_CHOWN"' '"pid"'; do
+    '"seccomp":{"enabled":true}' '"idmap":{"enabled":false}' '"apparmor":{"enabled":true}' '"selinux":{"enabled":true}' '"CAP_CHOWN"' '"pid"' '"network","cgroup"]'; do
     grep -qF "$expected" "$scratch/features.canon" || fail "features lacks $expected"
 done
-for unexpected in '"annotations"' '"potentiallyUnsafeConfigAnnotations"' '"cgroup","' '"user"'; do
+for unexpected in '"annotations"' '"potentiallyUnsafeConfigAnnotations"' '"user"'; do
     if grep -qF "$unexpected" "$scratch/features.canon"; then fail "features claims $unexpected"; fi
 done
 

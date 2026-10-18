@@ -37,7 +37,7 @@ extension OCIRunPlan {
         ]
         for mount in mounts {
             groups.append(mount.destination)
-            groups.append([mount.source, mount.type.rawValue, mount.data])
+            groups.append([mount.source, mount.type.kernelName, mount.data])
             groups.append(mount.type == .bind
                 ? mount.destination.indices.map { "/" + mount.destination[...$0].joined(separator: "/") } : [])
         }
@@ -101,6 +101,7 @@ extension OCIRunPlan {
             }
         }
         let firstInternal = hooks.preserved.closeRangeStart
+        let createsCgroupNamespace = namespaces.contains(.cgroup)
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 let root = unsafe RootFilesystemSetup(
@@ -112,13 +113,21 @@ extension OCIRunPlan {
                     directory: (pointers + starts[InitStringGroup.cwdPrefixes])[max(0, cwdCount - 1)],
                     security: security, supplementaryGids: gidBuffer, capabilities: capabilities,
                     lastCapability: lastCapability, resourceLimits: resourceLimits, seccomp: filter, labels: labels, foreground: !hooks.detached)
-                return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context, prepareLauncher: {
+                // The cgroup namespace is unshared by the init itself, below.
+                return unsafe try NamespaceLauncher.run(unsharing: namespaces.filter { $0 != .cgroup }, hooks: hooks, context: context, prepareLauncher: {
                     if let failure = oom.apply() { return failure }
                     return network.join().map { LaunchFailure(stage: .joinNamespaces, error: $0) }
                 }) { report, commit, launcher in
                     // Preserve caller descriptors before any rootfs setup opens temporary handles.
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
+                    }
+                    // As runc: only after the supervisor placed the init in the
+                    // container cgroup, so that cgroup becomes the namespace root.
+                    if createsCgroupNamespace, let error = Errno.failure({ () throws(Errno) in
+                        try Kernel.Namespace.unshare(OCIRunPlan.Namespace.cgroup.cloneFlag)
+                    }) {
+                        return LaunchRecord.reportFailure(to: report, at: .cgroupNamespace, error: error)
                     }
                     if let failure = keyring?.apply(labels: labels) { return LaunchRecord.reportFailure(to: report, failure) }
                     if let status = unsafe root.prepare(report: report) { return status }

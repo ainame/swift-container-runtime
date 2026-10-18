@@ -27,12 +27,17 @@ public struct ContainerID: Sendable, Equatable {
 public struct OCIRunPlan: Sendable {
     /// A namespace the container gets newly created (`linux.namespaces`).
     public enum Namespace: String, Sendable, CaseIterable {
-        case pid, mount, uts, ipc, network
+        case pid, mount, uts, ipc, network, cgroup
     }
 
     /// Filesystems and bind operations a configured mount may use.
     public enum FilesystemType: String, Sendable {
         case proc, tmpfs, devpts, sysfs, mqueue, bind
+        /// OCI's `cgroup`, mounted as cgroup v2 (`cgroup2`).
+        case cgroup
+
+        /// The filesystem type passed to the kernel.
+        var kernelName: String { self == .cgroup ? "cgroup2" : rawValue }
     }
 
     /// The supported mount options that map to mount flags.
@@ -300,7 +305,7 @@ public struct OCIRunPlan: Sendable {
         var networkNamespacePath: String?
         for entry in configuration.linux.namespaces {
             guard let namespace = Namespace(rawValue: entry.type) else {
-                throw RuntimeError("config.json: namespace type \(entry.type) is not implemented; supported: pid, mount, uts, ipc, network")
+                throw RuntimeError("config.json: namespace type \(entry.type) is not implemented; supported: pid, mount, uts, ipc, network, cgroup")
             }
             guard seenNamespaces.insert(namespace).inserted else {
                 throw RuntimeError("config.json: duplicate \(entry.type) namespace")
@@ -450,6 +455,12 @@ public struct OCIRunPlan: Sendable {
         case .bind:
             guard destination.first != "proc" else {
                 throw RuntimeError("config.json: \(field): bind mounts over /proc are not implemented")
+            }
+        case .cgroup:
+            // Without its own cgroup namespace, cgroup2 would show the host's
+            // whole hierarchy; runc's host-namespace bind fallback is not implemented.
+            guard namespaces.contains(.cgroup) else {
+                throw RuntimeError("config.json: \(field): a cgroup mount requires a cgroup namespace in this runtime")
             }
         case .tmpfs, .sysfs, .mqueue:
             break
