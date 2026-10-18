@@ -1,10 +1,3 @@
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
 import SystemPackage
 
 /// Resolves bundle directories and reads the bounded OCI configuration.
@@ -13,12 +6,11 @@ enum BundleConfiguration {
     /// not round-trip through String are rejected, because launch strings are
     /// built from `FilePath.string` and would otherwise be silently repaired.
     static func resolveDirectory(_ path: FilePath, role: String) throws -> FilePath {
-        let resolved: FilePath = unsafe try path.withPlatformString { input in
-            guard let output = unsafe realpath(input, nil) else {
-                throw RuntimeError("resolve \(role) \(path): \(Errno.current)")
-            }
-            defer { unsafe free(output) }
-            return unsafe FilePath(platformString: output)
+        let resolved: FilePath
+        do {
+            resolved = try Kernel.File.resolvedPath(path)
+        } catch {
+            throw RuntimeError("resolve \(role) \(path): \(error)")
         }
         guard FilePath(resolved.string) == resolved else {
             throw RuntimeError("\(role) \(resolved) is not valid UTF-8, which this runtime does not support")

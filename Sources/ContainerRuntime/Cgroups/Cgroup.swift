@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// One directory of the cgroup v2 hierarchy, opened beneath the mount root
@@ -12,10 +6,6 @@ import SystemPackage
 /// leave the hierarchy. Interface files are opened relative to it.
 private final class CgroupDirectory {
     static let mountPoint = "/sys/fs/cgroup"
-    /// CGROUP2_SUPER_MAGIC from <linux/magic.h>.
-    static let cgroup2Magic: Int64 = 0x6367_7270
-    /// DT_DIR from <dirent.h>, identical on every Linux architecture.
-    static let directoryType: UInt8 = 4
 
     let descriptor: OwnedFileDescriptor
     /// The path below the mount root, for diagnostics ("/" for the root).
@@ -30,13 +20,19 @@ private final class CgroupDirectory {
 
     /// Opens /sys/fs/cgroup and requires it to be a cgroup v2 mount.
     static func openRoot() throws -> CgroupDirectory {
-        let raw = unsafe linux_open_at(AT_FDCWD, mountPoint, O_RDONLY | O_DIRECTORY, 0)
-        guard raw >= 0 else { throw RuntimeError("open \(mountPoint): \(Errno.current) (cgroup v2 is required)") }
-        let root = CgroupDirectory(OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)), path: "/")
-        var status = statfs()
-        let result = (try? root.descriptor.withDescriptor { unsafe fstatfs($0.rawValue, &status) }) ?? -1
-        guard result == 0 else { throw RuntimeError("inspect \(mountPoint): \(Errno.current)") }
-        guard Int64(status.f_type) == cgroup2Magic else {
+        let root: CgroupDirectory
+        do {
+            root = CgroupDirectory(try Kernel.File.open(mountPoint, .readOnly, options: .directory), path: "/")
+        } catch {
+            throw RuntimeError("open \(mountPoint): \(error) (cgroup v2 is required)")
+        }
+        let type: UInt64
+        do {
+            type = try root.descriptor.withDescriptor { try Kernel.File.filesystemType(of: $0) }
+        } catch {
+            throw RuntimeError("inspect \(mountPoint): \(error)")
+        }
+        guard type == Kernel.File.cgroup2FilesystemType else {
             throw RuntimeError("\(mountPoint) is not a cgroup v2 (unified) mount; cgroup v1 and hybrid hierarchies are not supported")
         }
         return root
@@ -44,12 +40,15 @@ private final class CgroupDirectory {
 
     /// The existing child cgroup `name`, or nil when it does not exist.
     func child(_ name: String) throws -> CgroupDirectory? {
-        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW, 0) }
-        guard raw >= 0 else {
-            if errno == ENOENT { return nil }
-            throw RuntimeError("open cgroup \(childPath(name)): \(Errno.current)")
+        let opened: OwnedFileDescriptor
+        do {
+            opened = try Kernel.File.open(name, in: descriptor, .readOnly, options: [.directory, .noFollow])
+        } catch Errno.noSuchFileOrDirectory {
+            return nil
+        } catch {
+            throw RuntimeError("open cgroup \(childPath(name)): \(error)")
         }
-        let child = CgroupDirectory(OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw)), path: childPath(name))
+        let child = CgroupDirectory(opened, path: childPath(name))
         // A different filesystem mounted over a cgroup directory is not part
         // of the hierarchy.
         guard let own = descriptor.identity(), let other = child.descriptor.identity(), own.device == other.device else {
@@ -60,10 +59,14 @@ private final class CgroupDirectory {
 
     /// Creates the child cgroup `name`; false when it already existed.
     func makeChild(_ name: String) throws -> Bool {
-        let result = try descriptor.withDescriptor { unsafe mkdirat($0.rawValue, name, 0o755) }
-        if result == 0 { return true }
-        if errno == EEXIST { return false }
-        throw RuntimeError("create cgroup \(childPath(name)): \(Errno.current)")
+        do {
+            try descriptor.withDescriptor { try Kernel.File.makeDirectory(name, in: $0, permissions: [.ownerReadWriteExecute, .groupReadExecute, .otherReadExecute]) }
+            return true
+        } catch Errno.fileExists {
+            return false
+        } catch {
+            throw RuntimeError("create cgroup \(childPath(name)): \(error)")
+        }
     }
 
     /// Removes the empty child cgroup `name`. EBUSY is retried as runc does
@@ -72,13 +75,17 @@ private final class CgroupDirectory {
     func removeChild(_ name: String) -> Errno? {
         var delay = Duration.milliseconds(1)
         for attempt in 0...10 {
-            let result = (try? descriptor.withDescriptor { unsafe unlinkat($0.rawValue, name, AT_REMOVEDIR) }) ?? -1
-            if result == 0 { return nil }
-            let error = Errno.current
-            if error == .noSuchFileOrDirectory { return nil }
-            if error == .interrupted { continue }
-            guard error == .resourceBusy, attempt < 10 else { return error }
-            CgroupRetry.wait(delay)
+            let failure: Errno
+            do {
+                try descriptor.withDescriptor { try Kernel.File.remove(name, in: $0, isDirectory: true) }
+                return nil
+            } catch {
+                failure = (error as? Errno) ?? .badFileDescriptor
+            }
+            if failure == .noSuchFileOrDirectory { return nil }
+            if failure == .interrupted { continue }
+            guard failure == .resourceBusy, attempt < 10 else { return failure }
+            Kernel.Process.sleep(for: delay)
             delay *= 2
         }
         return .resourceBusy
@@ -86,12 +93,14 @@ private final class CgroupDirectory {
 
     /// An interface file's contents, or nil when it does not exist.
     func read(_ file: String) throws -> String? {
-        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_RDONLY | O_NOFOLLOW, 0) }
-        guard raw >= 0 else {
-            if errno == ENOENT { return nil }
-            throw RuntimeError("open \(displayPath)/\(file): \(Errno.current)")
+        let owner: OwnedFileDescriptor
+        do {
+            owner = try openInterfaceFile(file, .readOnly)
+        } catch Errno.noSuchFileOrDirectory {
+            return nil
+        } catch {
+            throw RuntimeError("open \(displayPath)/\(file): \(error)")
         }
-        let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         do {
             return String(decoding: try owner.readAll(limit: 1 << 20), as: UTF8.self)
         } catch let error as Errno where file == "cgroup.procs" && error == .notSupported {
@@ -106,14 +115,16 @@ private final class CgroupDirectory {
     /// Like `read`, but keeps ENOTSUP as an `Errno`, which runc's stats
     /// collection treats as "unavailable" for PSI and cgroup.procs.
     func contents(_ file: String) throws -> String? {
-        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_RDONLY | O_NOFOLLOW, 0) }
-        guard raw >= 0 else {
-            let error = Errno.current
-            if error == .noSuchFileOrDirectory { return nil }
-            if error == .notSupported { throw error }
+        let owner: OwnedFileDescriptor
+        do {
+            owner = try openInterfaceFile(file, .readOnly)
+        } catch Errno.noSuchFileOrDirectory {
+            return nil
+        } catch Errno.notSupported {
+            throw Errno.notSupported
+        } catch {
             throw RuntimeError("open \(displayPath)/\(file): \(error)")
         }
-        let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         do {
             return String(decoding: try owner.readAll(limit: 1 << 20), as: UTF8.self)
         } catch let error as Errno where error == .notSupported {
@@ -126,9 +137,12 @@ private final class CgroupDirectory {
     /// Writes `text` to an interface file in one write(2), as the kernel
     /// parses each write separately. Returns nil or the error.
     func write(_ file: String, _ text: String) -> Errno? {
-        let raw = (try? descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, file, O_WRONLY | O_NOFOLLOW, 0) }) ?? -1
-        guard raw >= 0 else { return .current }
-        var owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        var owner: OwnedFileDescriptor
+        do {
+            owner = try openInterfaceFile(file, .writeOnly)
+        } catch {
+            return (error as? Errno) ?? .badFileDescriptor
+        }
         defer { try? owner.close() }
         let bytes = Array(text.utf8)
         do {
@@ -169,27 +183,10 @@ private final class CgroupDirectory {
 
     /// Names of child cgroups.
     func subdirectories() throws -> [String] {
-        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
-        guard raw >= 0 else { throw RuntimeError("list cgroup \(displayPath): \(Errno.current)") }
-        // fdopendir takes ownership of the new descriptor; closedir closes it.
-        guard let stream = unsafe fdopendir(raw) else {
-            let error = Errno.current
-            _ = close(raw)
+        do {
+            return try descriptor.directoryEntries(onlyDirectories: true)
+        } catch {
             throw RuntimeError("list cgroup \(displayPath): \(error)")
-        }
-        defer { _ = unsafe closedir(stream) }
-        var names: [String] = []
-        while true {
-            errno = 0
-            guard let entry = unsafe readdir(stream) else {
-                guard errno == 0 else { throw RuntimeError("list cgroup \(displayPath): \(Errno.current)") }
-                return names
-            }
-            guard unsafe entry.pointee.d_type == Self.directoryType else { continue }
-            let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
-                unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
-            }
-            if name != "." && name != ".." { names.append(name) }
         }
     }
 
@@ -198,19 +195,29 @@ private final class CgroupDirectory {
     /// A new close-on-exec open file description of this directory holding
     /// an exclusive flock, or nil when another one holds it.
     func lockExclusively() throws -> OwnedFileDescriptor? {
-        let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
-        guard raw >= 0 else { throw RuntimeError("lock cgroup \(displayPath): \(Errno.current)") }
-        let lock = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-        while true {
-            let result = try lock.withDescriptor { flock($0.rawValue, LOCK_EX | LOCK_NB) }
-            if result == 0 { return lock }
-            if errno == EINTR { continue }
-            if errno == EWOULDBLOCK { return nil }
-            throw RuntimeError("lock cgroup \(displayPath): \(Errno.current)")
+        do {
+            let lock = try Kernel.File.open(".", in: descriptor, .readOnly, options: .directory)
+            while true {
+                do {
+                    try lock.withDescriptor { try Kernel.File.lock($0, .exclusive) }
+                    return lock
+                } catch Errno.interrupted {
+                    continue
+                }
+            }
+        } catch Errno.wouldBlock {
+            return nil
+        } catch {
+            throw RuntimeError("lock cgroup \(displayPath): \(error)")
         }
     }
 
     private func childPath(_ name: String) -> String { path == "/" ? "/" + name : path + "/" + name }
+
+    /// An interface file of this cgroup, never through a symbolic link.
+    private func openInterfaceFile(_ file: String, _ access: FileDescriptor.AccessMode) throws -> OwnedFileDescriptor {
+        try Kernel.File.open(file, in: descriptor, access, options: .noFollow)
+    }
 }
 
 /// A container's cgroup, prepared by the supervisor before the init exists.
@@ -343,7 +350,7 @@ final class CgroupLeaf {
     /// executes (close-on-exec), so closing this copy alone would not
     /// release it; LOCK_UN does, for every copy.
     private func releaseSetupLock() {
-        _ = try? setupLock.withDescriptor { flock($0.rawValue, LOCK_UN) }
+        try? setupLock.withDescriptor { Kernel.File.unlock($0) }
         try? setupLock.close()
     }
 
@@ -457,7 +464,7 @@ final class CgroupLeaf {
                 guard waited < 10_000 else {
                     throw RuntimeError("processes in cgroup \(current.displayPath) remain 10 seconds after cgroup.kill")
                 }
-                CgroupRetry.wait(.milliseconds(10))
+                Kernel.Process.sleep(for: .milliseconds(10))
                 waited += 10
             }
         }
@@ -593,7 +600,7 @@ final class CgroupLeaf {
     private static func waitFrozen(_ directory: CgroupDirectory) throws {
         for _ in 0..<1000 {
             if try directory.keyedValue("cgroup.events", "frozen") == "1" { return }
-            CgroupRetry.wait(.milliseconds(10))
+            Kernel.Process.sleep(for: .milliseconds(10))
         }
         throw RuntimeError("cgroup \(directory.displayPath) did not freeze within 10 seconds")
     }
@@ -656,28 +663,15 @@ extension CgroupDirectory {
     /// runc's fs2 Manager.Stats over one directory. Errors are tolerated when
     /// not running as root, as runc does for rootless containers.
     func stats() throws -> ContainerStats {
-        try CgroupStatsReader(read: { try self.contents($0) }, hugePageSizes: Self.hugePageSizes()).collect(tolerateErrors: geteuid() != 0)
+        try CgroupStatsReader(read: { try self.contents($0) }, hugePageSizes: Self.hugePageSizes()).collect(tolerateErrors: Kernel.Process.effectiveUserID != 0)
     }
 
     /// runc's HugePageSizes: names from /sys/kernel/mm/hugepages, or none when
     /// the directory cannot be read (no hugetlb support).
     private static func hugePageSizes() -> [String] {
-        guard let stream = unsafe opendir("/sys/kernel/mm/hugepages") else { return [] }
-        defer { _ = unsafe closedir(stream) }
-        var sizes: [String] = []
-        while let entry = unsafe readdir(stream) {
-            let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
-                unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
-            }
-            if let size = CgroupFile.hugePageSize(directoryEntry: name) { sizes.append(size) }
-        }
-        return sizes
-    }
-}
-/// Synchronous backoff for bounded cgroup kernel transitions.
-private enum CgroupRetry {
-    static func wait(_ duration: Duration) {
-        _ = poll(nil, 0, duration.pollTimeout)
+        guard let directory = try? Kernel.File.open("/sys/kernel/mm/hugepages", .readOnly, options: .directory),
+              let names = try? directory.directoryEntries() else { return [] }
+        return names.compactMap(CgroupFile.hugePageSize(directoryEntry:))
     }
 }
 #endif

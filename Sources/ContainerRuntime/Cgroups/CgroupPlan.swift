@@ -1,10 +1,3 @@
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#endif
 import SystemPackage
 
 /// One value written to a cgroup v2 interface file, formatted as runc
@@ -340,9 +333,9 @@ public struct CgroupPlan: Sendable, Equatable {
         if shares == 0 { return 0 }
         if shares <= 2 { return 1 }
         if shares >= 262_144 { return 10_000 }
-        let l = log2(Double(shares))
+        let l = Kernel.Math.log2(Double(shares))
         let exponent = (l * l + 125 * l) / 612.0 - 7.0 / 34.0
-        return UInt64(pow(10, exponent).rounded(.up))
+        return UInt64(Kernel.Math.power(10, exponent).rounded(.up))
     }
 
     /// runc's ConvertMemorySwapToCgroupV2Value followed by its setMemory

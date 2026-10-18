@@ -62,8 +62,9 @@ extension OwnedFileDescriptor {
         try? withDescriptor { descriptor in try? Kernel.File.status(of: descriptor).identity }
     }
 
-    /// Names in this directory other than `.` and `..`.
-    func directoryEntries() throws(Errno) -> [String] {
+    /// Names in this directory other than `.` and `..`; only subdirectories
+    /// (by the entry's type) when `onlyDirectories` is set.
+    func directoryEntries(onlyDirectories: Bool = false) throws(Errno) -> [String] {
         let raw: Int32
         do {
             raw = try withDescriptor { unsafe openat($0.rawValue, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
@@ -87,6 +88,7 @@ extension OwnedFileDescriptor {
                 guard errno == 0 else { throw .current }
                 return names
             }
+            if onlyDirectories, unsafe entry.pointee.d_type != UInt8(DT_DIR) { continue }
             let name = unsafe withUnsafeBytes(of: entry.pointee.d_name) { bytes in
                 unsafe String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
             }

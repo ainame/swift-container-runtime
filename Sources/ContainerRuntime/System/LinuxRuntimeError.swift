@@ -8,8 +8,8 @@ import LinuxAPI
 import SystemPackage
 
 extension RuntimeError {
-    static func system(_ action: String, _ error: Errno = .current) -> RuntimeError {
-        RuntimeError("\(action): \(error)")
+    static func system(_ action: String) -> RuntimeError {
+        system(action, Errno.current)
     }
 }
 extension RuntimeError {

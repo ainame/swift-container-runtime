@@ -1,10 +1,3 @@
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
 import SystemPackage
 
 /// Publish a decimal host PID without exposing a partially written file.
@@ -25,16 +18,13 @@ enum PIDFile {
             temporary, .writeOnly, options: [.create, .exclusiveCreate, .closeOnExec],
             permissions: FilePermissions(rawValue: 0o666)))
         var published = false
-        defer { if !published { _ = unsafe temporary.withCString { unsafe unlink($0) } } }
+        defer { if !published { try? Kernel.File.remove(temporary.string) } }
         try file.withDescriptor { descriptor in
             _ = try descriptor.writeAll(Array(String(pid).utf8))
-            guard fsync(descriptor.rawValue) == 0 else { throw Errno.current }
+            try Kernel.File.synchronize(descriptor)
         }
         try file.close()
-        let result = unsafe temporary.withCString { source in
-            unsafe destination.withCString { target in unsafe rename(source, target) }
-        }
-        guard result == 0 else { throw Errno.current }
+        try Kernel.File.rename(temporary.string, to: destination.string)
         published = true
     }
 }

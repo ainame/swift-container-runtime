@@ -4,16 +4,6 @@ import FoundationEssentials
 import Foundation
 #endif
 import SystemPackage
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
-#if os(Linux)
-import LinuxAPI
-#endif
 
 /// The starter `config.json` written by `spec`, field for field what runc's `specconv.Example`
 /// and `ToRootless` produce. It is a write-only model: optional fields are omitted when nil so the
@@ -177,25 +167,16 @@ public struct DefaultSpecification: Codable, Equatable, Sendable {
     /// The starter spec for this host and caller, as `spec [--rootless]` writes it.
     public static func forCurrentHost(rootless: Bool) -> DefaultSpecification {
         let spec = example(cgroupNamespace: hostUsesUnifiedCgroupHierarchy())
-        return rootless ? spec.rootless(effectiveUID: geteuid(), effectiveGID: getegid()) : spec
+        return rootless ? spec.rootless(effectiveUID: Kernel.Process.effectiveUserID, effectiveGID: Kernel.Process.effectiveGroupID) : spec
     }
 
     /// Whether /sys/fs/cgroup is a cgroup2 mount, the check runc uses to add the cgroup namespace.
-    /// Always false off Linux.
+    /// False off Linux, where the path does not exist.
     public static func hostUsesUnifiedCgroupHierarchy() -> Bool {
-        #if os(Linux)
         // Opened the same way as Cgroup.swift's mount root.
-        let raw = unsafe linux_open_at(AT_FDCWD, "/sys/fs/cgroup", O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
-        guard raw >= 0 else { return false }
-        let descriptor = FileDescriptor(rawValue: raw)
-        defer { try? descriptor.close() }
-        var status = statfs()
-        guard unsafe fstatfs(descriptor.rawValue, &status) == 0 else { return false }
-        // CGROUP2_SUPER_MAGIC from <linux/magic.h>.
-        return Int64(status.f_type) == 0x6367_7270
-        #else
-        return false
-        #endif
+        guard let root = try? Kernel.File.open("/sys/fs/cgroup", .readOnly, options: .directory),
+              let type = try? root.withDescriptor({ try Kernel.File.filesystemType(of: $0) }) else { return false }
+        return type == Kernel.File.cgroup2FilesystemType
     }
 
     /// Indented JSON with sorted keys and a trailing newline.

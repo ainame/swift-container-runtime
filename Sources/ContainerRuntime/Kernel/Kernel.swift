@@ -43,5 +43,20 @@ extension Kernel {
     enum Process {
         /// getpid(2).
         static var id: pid_t { getpid() }
+
+        static var effectiveUserID: uid_t { geteuid() }
+        static var effectiveGroupID: gid_t { getegid() }
+
+        /// The password database's name for `uid`, or nil.
+        static func userName(of uid: uid_t) -> String? {
+            guard let entry = unsafe getpwuid(uid), let name = unsafe entry.pointee.pw_name else { return nil }
+            return unsafe String(cString: name)
+        }
+
+        /// Sleeps the calling thread without signals or timers, for short
+        /// synchronous backoff.
+        static func sleep(for duration: Duration) {
+            _ = poll(nil, 0, duration.pollTimeout)
+        }
     }
 }

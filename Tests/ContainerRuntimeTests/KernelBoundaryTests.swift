@@ -8,8 +8,6 @@ import Testing
 /// Runtime files that still import libc directly; each migration step to
 /// `Kernel/` removes entries until the list is empty.
 private let pendingMigration: Set<String> = [
-    "Cgroups/Cgroup.swift",
-    "Cgroups/CgroupPlan.swift",
     "Events/ContainerEventStream.swift",
     "Launch/ExecLaunch.swift",
     "Launch/LaunchProtocol.swift",
@@ -23,11 +21,7 @@ private let pendingMigration: Set<String> = [
     "Launch/WorkloadSetup.swift",
     "Lifecycle/ContainerLifecycle.swift",
     "Lifecycle/ContainerObservation.swift",
-    "Lifecycle/PIDFile.swift",
     "Lifecycle/ProcessTable.swift",
-    "Lifecycle/StateStore.swift",
-    "Specification/BundleConfiguration.swift",
-    "Specification/DefaultSpecification.swift",
     "Specification/OCIRunPlan.swift",
     "Specification/PathControls.swift",
     "System/LinuxDevice.swift",

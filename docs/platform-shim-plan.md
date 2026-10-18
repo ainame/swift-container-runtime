@@ -75,8 +75,12 @@ From the 29 importing files:
    names, `FileStatus`/`FileIdentity`, `PollEvents` polling, directory
    listing and pidfds, plus `KernelBoundaryTests`. `ProcFS`, `ProcessHandle`,
    `ContainerState` and `RuntimeError` no longer import libc.
-2. Files and directories: `StateStore`, `PIDFile`, `LinuxDescriptor`,
-   `BundleConfiguration`, `DefaultSpecification`, `Cgroup` I/O.
+2. **Done.** Files and directories: `Kernel.File` gained `open` (also
+   relative to a borrowed `OwnedFileDescriptor`), `makeDirectory`, `remove`,
+   `rename`, `synchronize`, `resolvedPath`, `filesystemType`, `lock`/`unlock`;
+   `Kernel.Process` gained effective IDs, `userName(of:)` and `sleep(for:)`;
+   `Kernel.Math` wraps libm. `StateStore`, `PIDFile`, `BundleConfiguration`,
+   `DefaultSpecification`, `Cgroup` and `CgroupPlan` no longer import libc.
 3. Events: inotify and poll (`ContainerEventStream`).
 4. Lifecycle and supervision: `ContainerLifecycle`, `ContainerObservation`,
    `ProcessTable` (`posix_spawnp`), `StartGate`, `PidfdSocket`.
