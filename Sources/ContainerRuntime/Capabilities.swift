@@ -138,3 +138,14 @@ public struct ProcessCapabilities: Sendable, Equatable {
         return value
     }
 }
+
+#if os(Linux)
+extension ProcessCapabilities {
+    /// Checks this request against the running kernel before forking.
+    func validatedKernelLimit() throws -> Int32 {
+        let last = try ProcFS.lastCapability()
+        try checkSupported(lastCapability: last)
+        return Int32(last)
+    }
+}
+#endif

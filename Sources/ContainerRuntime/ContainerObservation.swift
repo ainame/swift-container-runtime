@@ -25,7 +25,8 @@ struct ContainerObservation {
     }
 
     /// Derives the status from the record, the verified init, and the start
-    /// socket. See `ContainerStatus.derive` for the rules.
+    /// socket. The caller holds the directory lock, so a missing init is stopped.
+    /// See `ContainerStatus.derive` for the rules.
     static func status(of record: ContainerRecord?, in directory: borrowing ContainerDirectory) throws -> ContainerStatus {
         guard let record, let process = record.initProcess else {
             return .stopped

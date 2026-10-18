@@ -117,7 +117,7 @@ enum RecordRead {
 
 /// Bytes the supervisor sends on the commit socket, in this order.
 enum LaunchControl: UInt8 {
-    /// A detached init may leave setup (see `receiveCommit`).
+    /// A detached init may leave setup (see `LaunchControl.receive`).
     case commit = 1
     /// The init is in its cgroup and may start setup. On the release socket:
     /// the init is pinned and placed, so the launcher may continue.

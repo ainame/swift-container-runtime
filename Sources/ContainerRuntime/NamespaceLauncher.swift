@@ -42,7 +42,7 @@ enum NamespaceLauncher {
     /// propagation, then forks the namespace init. The init runs `initialize`
     /// with the report pipe, the commit socket, and (in the foreground only) a
     /// pidfd for the launcher, which `restoreParentDeathSignal` needs after a
-    /// credential change; it must exec or return a status from `failureStatus`.
+    /// credential change; it must exec or return a status from `LaunchRecord.reportFailure`.
     ///
     /// The launcher reports the init PID and waits until the supervisor has
     /// pinned it with a pidfd. In the foreground the launcher then waits for the

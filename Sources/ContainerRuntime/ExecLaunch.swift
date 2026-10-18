@@ -95,19 +95,20 @@ extension OCIProcessPlan {
             }
         }
         let gids = security.additionalGids.map { gid_t($0) }
-        let last: Int32
-        if let capabilities {
-            let value = try kernelLastCapability()
-            try capabilities.checkSupported(lastCapability: value)
-            last = Int32(value)
-        } else { last = -1 }
+        let last = try capabilities?.validatedKernelLimit() ?? -1
 
         // All borrowed C storage spans the complete synchronous launch. The
         // original CLI never changes its own namespaces or root directory.
         let firstInternal = hooks.preserved.closeRangeStart
         return try gids.withUnsafeBufferPointer { groups in
             unsafe try strings.withPointers { pointers in
-                unsafe try NamespaceLauncher.run(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
+                let workload = unsafe WorkloadSetup(
+                    argv: pointers + starts[0], environment: pointers + starts[1],
+                    executables: pointers + starts[3], searchesPath: searchesPath,
+                    directory: (pointers + starts[2])[0], security: security,
+                    supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
+                    resourceLimits: resourceLimits, foreground: !hooks.detached)
+                return unsafe try NamespaceLauncher.run(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
                     guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors)
                     }
@@ -118,14 +119,7 @@ extension OCIProcessPlan {
                     if let failure = pidfdSocket?.handOff(label: .setns) {
                         return LaunchRecord.reportFailure(to: report, at: failure.stage, code: failure.code)
                     }
-                    return unsafe finishContainerProcess(
-                        argv: pointers + starts[0], environment: pointers + starts[1],
-                        executables: pointers + starts[3], searchesPath: searchesPath,
-                        directory: (pointers + starts[2])[0], security: security,
-                        supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
-                        resourceLimits: resourceLimits, foreground: !hooks.detached,
-                        report: report, commit: commit, launcher: launcher, gate: nil
-                    )
+                    return unsafe workload.run(report: report, commit: commit, launcher: launcher, gate: nil)
                 }
             }
         }

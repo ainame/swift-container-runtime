@@ -89,4 +89,14 @@ extension ProcFS {
         return count
     }
 }
+extension ProcFS {
+    /// The highest capability number the running kernel supports.
+    static func lastCapability() throws -> Int {
+        let path = "/proc/sys/kernel/cap_last_cap"
+        let bytes: [UInt8]?
+        do { bytes = try ProcFS.read(path) } catch { throw RuntimeError("read \(path): \(error)") }
+        guard let bytes else { throw RuntimeError("read \(path): file does not exist") }
+        return try ProcessCapabilities.parseLastCapability(bytes)
+    }
+}
 #endif

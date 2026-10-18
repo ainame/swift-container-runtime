@@ -299,8 +299,7 @@ struct ContainerDirectory: ~Copyable {
         return true
     }
 
-    /// Probes, through a separate open file description, whether another
-    /// process holds the container lock.
+    /// Probes a separate open file description for a holder of this generation's lock.
     func isLocked() throws -> Bool {
         let raw = try descriptor.withDescriptor { unsafe linux_open_at($0.rawValue, ".", O_RDONLY | O_DIRECTORY, 0) }
         guard raw >= 0 else { throw RuntimeError.system("probe container lock") }

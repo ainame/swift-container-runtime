@@ -82,8 +82,6 @@ public enum GoDuration {
         guard total <= UInt64(Int64.max) else { throw invalid }
         return Int64(total)
     }
-
-
 }
 
 /// Compatibility entry point; new callers can use `GoDuration.nanoseconds(from:)`.

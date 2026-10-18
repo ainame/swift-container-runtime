@@ -60,7 +60,7 @@ extension NamespaceCommand {
     /// All borrowed buffers remain alive until both launch branches finish. This
     /// entry point is private to the synchronous, single-thread-checked Swift path.
     @unsafe
-    static func launch(
+    private static func launch(
         hostname: UnsafePointer<CChar>,
         arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>
     ) throws -> Int32 {

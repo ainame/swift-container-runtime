@@ -12,7 +12,7 @@ enum BundleConfiguration {
     /// Resolves symlinks and confirms the result is a directory. Paths that do
     /// not round-trip through String are rejected, because launch strings are
     /// built from `FilePath.string` and would otherwise be silently repaired.
-    static func directory(_ path: FilePath, role: String) throws -> FilePath {
+    static func resolveDirectory(_ path: FilePath, role: String) throws -> FilePath {
         let resolved: FilePath = unsafe try path.withPlatformString { input in
             guard let output = unsafe realpath(input, nil) else {
                 throw RuntimeError("resolve \(role) \(path): \(Errno(rawValue: errno))")

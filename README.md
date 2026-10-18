@@ -188,6 +188,8 @@ Strict memory diagnostics and warnings-as-errors are package settings, so ordina
 
 ## Development on macOS
 
+See [code organization](docs/code-organization.md) for responsibility boundaries, naming, and launch lifetime constraints.
+
 The commands perform Linux kernel operations; macOS builds cannot run containers or the namespace lab directly. Unit tests for configuration decoding and validation run on macOS. Use a Linux VM or Apple's [`container`](https://github.com/apple/container) command to build and test the Linux executable.
 
 Run the complete Linux build, unit tests, and privileged integration checks from macOS:

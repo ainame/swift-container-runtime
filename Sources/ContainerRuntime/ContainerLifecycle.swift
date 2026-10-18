@@ -443,7 +443,7 @@ extension ContainerLifecycle {
     }
 
     /// Early check, before state, locks, or cgroups open descriptors that
-    /// could fill a hole in the preserved range; `runLaunch` repeats it.
+    /// could fill a hole in the preserved range; `NamespaceLauncher.run` repeats it.
     private static func verifiedPreserved(_ count: Int) throws -> PreservedDescriptors {
         let preserved = try PreservedDescriptors(count: count)
         try preserved.verify()

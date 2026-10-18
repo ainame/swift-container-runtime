@@ -113,7 +113,7 @@ public struct OCIRunPlan: Sendable {
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
     public static func load(bundle: FilePath) throws -> OCIRunPlan {
-        let bundle = try BundleConfiguration.directory(bundle, role: "bundle")
+        let bundle = try BundleConfiguration.resolveDirectory(bundle, role: "bundle")
         let bytes = try BundleConfiguration.read(bundle.appending("config.json"))
         let configuration = try OCIConfiguration.decode(bytes)
         // Check before constructing a FilePath: an embedded NUL would truncate it.
@@ -122,7 +122,7 @@ public struct OCIRunPlan: Sendable {
             throw RuntimeError("config.json: root.path must be non-empty and contain no NUL")
         }
         let rootPath = FilePath(rootString)
-        let rootfs = try BundleConfiguration.directory(rootPath.isAbsolute ? rootPath : bundle.pushing(rootPath), role: "root.path")
+        let rootfs = try BundleConfiguration.resolveDirectory(rootPath.isAbsolute ? rootPath : bundle.pushing(rootPath), role: "root.path")
         return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs)
     }
 

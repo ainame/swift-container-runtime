@@ -162,7 +162,7 @@ final class StartGate {
 
 extension StartProtocol {
     /// Binds or connects `socket` to a filesystem path shorter than `sun_path`.
-    static func addressCall(_ socket: FileDescriptor, path: String, connecting: Bool) -> Int32 {
+    fileprivate static func addressCall(_ socket: FileDescriptor, path: String, connecting: Bool) -> Int32 {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let bytes = Array(path.utf8)
@@ -182,7 +182,7 @@ extension StartProtocol {
     }
 
     /// Sends one whole packet without raising SIGPIPE on a vanished peer.
-    static func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) -> Bool {
+    fileprivate static func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) -> Bool {
         (try? owner.withDescriptor { descriptor in
             packet.withUnsafeBytes { bytes in
                 var result: Int
@@ -194,7 +194,7 @@ extension StartProtocol {
     }
 
     /// Reads one packet of at most 16 bytes; nil on EOF or error.
-    static func receivePacket(_ owner: borrowing OwnedFileDescriptor) -> [UInt8]? {
+    fileprivate static func receivePacket(_ owner: borrowing OwnedFileDescriptor) -> [UInt8]? {
         var buffer = [UInt8](repeating: 0, count: 16)
         let count = (try? owner.withDescriptor { descriptor in
             try buffer.withUnsafeMutableBytes { bytes in unsafe try descriptor.read(into: bytes) }
@@ -202,7 +202,7 @@ extension StartProtocol {
         return count > 0 ? Array(buffer[..<count]) : nil
     }
 
-    static func waitReadable(_ owner: borrowing OwnedFileDescriptor, milliseconds: Int32) -> Bool {
+    fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, milliseconds: Int32) -> Bool {
         owner.poll(events: Int16(POLLIN), milliseconds: milliseconds) != 0
     }
 
@@ -237,7 +237,7 @@ extension StartProtocol {
 
         // Step 2: until the acknowledgement, any failure leaves the marker and
         // therefore the created state intact.
-        try awaitInit(connection, id: id, expecting: .accepted)
+        try waitForInit(connection, id: id, expecting: .accepted)
 
         // Step 3: consume the marker this command connected through, then commit.
         // A failed unlink closes the connection, which the init treats as a
@@ -257,12 +257,12 @@ extension StartProtocol {
         }
 
         // Step 4: EOF means execve closed the connection.
-        try awaitInit(connection, id: id, expecting: nil)
+        try waitForInit(connection, id: id, expecting: nil)
     }
 
     /// Waits a bounded time for the init's next record: `expected`, or EOF when
     /// `expected` is nil. A failure record becomes its launch error.
-    static func awaitInit(_ connection: borrowing OwnedFileDescriptor, id: String, expecting expected: LaunchRecord.Kind?) throws {
+    private static func waitForInit(_ connection: borrowing OwnedFileDescriptor, id: String, expecting expected: LaunchRecord.Kind?) throws {
         guard StartProtocol.waitReadable(connection, milliseconds: StartProtocol.resultTimeoutMilliseconds) else {
             throw RuntimeError("container \(id) init did not answer the start request within 30 seconds")
         }

@@ -33,7 +33,7 @@ extension ContainerLifecycle {
             throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
         }
         let stream = try EventWatch.make(root: root, directory: directory, source: source)
-        try stream.run(id: id, identity: identity, interval: interval, emit: emit)
+        try stream.run(identity: identity, interval: interval, emit: emit)
     }
 }
 
@@ -114,7 +114,7 @@ private struct EventWatch: ~Copyable {
     /// nanoseconds, the first one interval after the start, as runc's
     /// ticker does. Ends when the cgroup empties, cannot be read, or the
     /// container's state is deleted or replaced by a new generation.
-    func run(id: ContainerID, identity: CgroupIdentity, interval: Int64, emit: (ContainerEvent) throws -> Void) throws {
+    func run(identity: CgroupIdentity, interval: Int64, emit: (ContainerEvent) throws -> Void) throws {
         // Kills counted before the watch began are not reported. runc
         // reports any memory.events change once oom_kill is nonzero; this
         // reports each increase instead, so unrelated memory.events updates
@@ -137,7 +137,7 @@ private struct EventWatch: ~Copyable {
                 oomKills = count
                 try emit(.oom)
             }
-            if try ended(id: id, identity: identity) { return }
+            if try ended(identity: identity) { return }
             if EventSchedule.nanoseconds(start.duration(to: clock.now)) >= tick {
                 // As in runc, a failed sample is reported and the stream goes
                 // on; a failed write of an event ends the command.
@@ -163,7 +163,7 @@ private struct EventWatch: ~Copyable {
         }
     }
 
-    private func ended(id: ContainerID, identity: CgroupIdentity) throws -> Bool {
+    private func ended(identity: CgroupIdentity) throws -> Bool {
         guard source.isPopulated() else { return true }
         guard try root.contains(directory) else { return true }
         // state.json is replaced atomically by updates, which keep the
