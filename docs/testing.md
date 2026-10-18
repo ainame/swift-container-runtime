@@ -310,7 +310,12 @@ both exit status and TAP plans/assertions, and cleans up only its own containers
 `tap-go` embeds JSON in TAP diagnostic blocks, which Perl's YAMLish reader rejects;
 the parser receives a copy with only those blocks removed, while raw output is
 retained. Generated rootfs/probe fixtures live in `.srunc-fixture/` inside the
-upstream checkout, so tracked upstream tarballs and source remain unchanged. Two upstream negative executables have no TAP: their exit status and
+upstream checkout, so tracked upstream tarballs and source remain unchanged.
+Upstream bundles are created under the runner's private temporary directory.
+The masked and read-only path suites create a character device 0:0 there, which
+overlayfs rejects as a whiteout, so the runner refuses to start unless `TMPDIR`
+is on a filesystem that permits it; CI uses the workspace bind mount instead of
+the job container's overlay `/tmp`. Two upstream negative executables have no TAP: their exit status and
 specific invalid-capability/rlimit rejection diagnostics are required instead.
 The rootfs tarball includes the static probe and has mode 0755 so mapped and
 non-root users can execute it.
