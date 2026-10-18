@@ -112,6 +112,8 @@ public struct OCIRunPlan: Sendable {
     public let rootfs: FilePath
     /// `root.readonly`: after setup, the container's root mount (not its
     /// child mounts, and not the host's mount of the rootfs) is read-only.
+    /// Explicit device nodes created after standard /dev entries.
+    let devices: [DeviceNode]
     public let readonlyRoot: Bool
     /// Propagation of the isolated root mount, finalized after pivot_root.
     public let rootPropagation: BindPropagation
@@ -363,6 +365,7 @@ public struct OCIRunPlan: Sendable {
         self.ociVersion = version
         self.bundle = bundle
         self.rootfs = rootfs
+        self.devices = try (configuration.linux.devices ?? []).map(DeviceNode.init)
         self.readonlyRoot = configuration.root.readonly ?? false
         self.rootPropagation = rootPropagation
         self.annotations = configuration.annotations
