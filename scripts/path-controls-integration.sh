@@ -557,7 +557,7 @@ for mode in foreground created; do
     # A mask on "/" either stays hidden beneath the container root (the
     # verification fails) or covers the workload (the program is missing).
     expect_failure swift "$ours" mask-root "$mode" ""
-    grep -qF -e "verify linux.maskedPaths entry shows its mask" -e "exec workload: No such file or directory" \
+    grep -qF -e "verify linux.maskedPaths entry shows its mask" -e "exec workload: no such file or directory" \
         "$results/mask-root-$mode-swift.stderr" || { dump "mask-root-$mode-swift"; fail "mask-root-$mode-swift: unexpected error"; }
     if [ "$compare" = 1 ] && [ "$mode" = foreground ]; then
         reset_rootfs

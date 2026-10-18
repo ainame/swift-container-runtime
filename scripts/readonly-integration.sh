@@ -300,8 +300,8 @@ for mode in foreground created; do
     # A missing program fails after the remount, before readiness.
     expect_failure swift "$ours" readonly-missing "$mode" "exec workload"
     [ "$compare" = 1 ] && expect_failure runc "$theirs" readonly-missing "$mode" ""
-    # linux.sysctl remains unimplemented and is rejected before any setup.
-    expect_failure swift "$ours" readonly-sysctl "$mode" "unsupported field(s): linux.sysctl"
+    # A sysctl of a namespace the container does not own is rejected before any setup.
+    expect_failure swift "$ours" readonly-sysctl "$mode" "linux.sysctl kernel.domainname is not allowed in the host's uts namespace"
 done
 
 test -z "$(ls -A "$state_root")" || { ls -A "$state_root" >&2; fail "state left behind"; }

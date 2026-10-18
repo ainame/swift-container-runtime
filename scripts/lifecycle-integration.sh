@@ -587,14 +587,14 @@ $ours delete relative
 
 # A missing executable fails create (as runc does) and leaves nothing.
 write_config "$bundles/missing" '["/does/not/exist"]'
-expect_failure "exec workload: No such file or directory" $ours create --bundle "$bundles/missing" missing
+expect_failure "exec workload: no such file or directory" $ours create --bundle "$bundles/missing" missing
 expect_failure "container missing does not exist" $ours state missing
 set +e
 $ours run --detach --bundle "$bundles/missing" missing-detached < /dev/null > /dev/null 2> "$scratch/stderr"
 status=$?
 set -e
 test "$status" = 125
-grep -qF "exec workload: No such file or directory" "$scratch/stderr"
+grep -qF "exec workload: no such file or directory" "$scratch/stderr"
 test -z "$(ls -A "$state_root")"
 no_runtime_processes
 
@@ -607,7 +607,7 @@ write_config "$bundles/vanish" '["/scripts/vanish"]'
 $ours create --bundle "$bundles/vanish" vanish < /dev/null > /dev/null 2>&1
 pid=$(pid_of "$ours" vanish)
 rm "$rootfs/scripts/vanish"
-expect_failure "exec workload: No such file or directory" $ours start vanish
+expect_failure "exec workload: no such file or directory" $ours start vanish
 wait_status "$ours" vanish stopped
 dead "$pid"
 test ! -e "$out/vanish.ran"

@@ -417,9 +417,9 @@ else
 fi
 
 # Exact diagnostics for denied or missing executables.
-grep -qF "exec workload: Permission denied" "$results/rootonly-swift.err" \
+grep -qF "exec workload: permission denied" "$results/rootonly-swift.err" \
     || { cat "$results/rootonly-swift.err" >&2; fail "missing actionable permission error"; }
-test "$(grep -c "exec workload: Permission denied" "$results/rootonly-swift.err")" = 2
+test "$(grep -c "exec workload: permission denied" "$results/rootonly-swift.err")" = 2
 
 # A non-root foreground run still dies with the runtime: the parent-death
 # signal that setuid cleared was armed again.

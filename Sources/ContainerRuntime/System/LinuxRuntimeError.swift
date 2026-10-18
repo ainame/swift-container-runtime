@@ -9,6 +9,10 @@ extension RuntimeError {
     /// A nil error marks a failure without an errno, such as a refused lookup.
     static func launch(_ stage: LaunchStage, _ error: Errno? = .current, context: String? = nil) -> RuntimeError {
         guard let error else { return RuntimeError(context ?? stage.description) }
-        return RuntimeError("\(context ?? stage.description): \(error) (errno \(error.rawValue))")
+        // Docker classifies a failed create by Go's lowercase errno text:
+        // "no such file or directory" exits 127, "permission denied" 126.
+        // Keep that wording for the workload's execve, as runc reports it.
+        let text = stage == .execute ? "\(error)".lowercased() : "\(error)"
+        return RuntimeError("\(context ?? stage.description): \(text) (errno \(error.rawValue))")
     }
 }
