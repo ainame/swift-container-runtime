@@ -102,6 +102,13 @@ host is not automatically covered by a cgroupfs-only result. Either document and
 verify a suitable cgroupfs test configuration or implement systemd support as a
 separate extension beyond kontainer's pinned functionality.
 
+During implementation use the [focused debug validation tiers](testing.md#validation-tiers).
+At review, run the full debug/release runtime matrix once on the candidate and
+run the engine scenarios needed for the claimed profile. A second architecture,
+rootless setup or another engine version is a later profile, not a multiplier on
+every implementation iteration. Hooks are required when supplied; completing all
+six phases is not necessary for a hook-free first engine scenario.
+
 ## Future registration example
 
 This is the intended configuration shape **after the gates pass**, not a working

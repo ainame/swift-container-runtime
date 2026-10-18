@@ -2,12 +2,12 @@
 # Apple container 0.9+; each invocation creates a disposable Linux VM.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-configuration=all
+configuration=debug
 case "${1:-}" in
     --help|-h)
         echo "Usage: $0 [--configuration debug|release|all] [SUITE ...]"
-        echo "Default: unit tests and all integration suites in debug and release."
-        echo "Use --list to list integration suites."
+        echo "Default: debug unit tests and integration suites; select suites for focused work."
+        echo "Use --configuration all for review, or --list to list suites."
         exit 0 ;;
     --list) exec sh "$root/scripts/run-integration.sh" --list ;;
 esac
@@ -47,7 +47,7 @@ container run --rm --cpus 4 --memory 4G \
             *) configurations=$configuration ;;
         esac
         # A unit-test invocation also builds the executable. Each selected suite
-        # then uses that configuration; the full debug/release gate stays default.
+        # then uses that configuration; debug is the development default.
         for configuration in $configurations; do
             swift test -c "$configuration" --disable-automatic-resolution --scratch-path .build/linux-6.4.1
             sh scripts/run-integration.sh \

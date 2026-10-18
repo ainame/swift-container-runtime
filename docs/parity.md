@@ -25,7 +25,7 @@ The table below separates the target's actual command options from Swift extensi
 
 Evidence in the target: `src/nativeMain/kotlin/Main.kt` (`CreateCommand`, `RunCommand`, `ExecCommand`), `process/InitProcess.kt` (`LISTEN_FDS` handling), `command/Exec.kt`, `command/Foreground.kt`, and `console/Console.kt`. The target's activation code reads a positive `LISTEN_FDS` and supplies `LISTEN_PID=1`; it does not validate the caller's `LISTEN_PID`. Any future Swift activation implementation should document its runc-based semantics separately.
 
-Namespaces, rootfs setup, lifecycle, credentials and basic resource controls provide the foundation. The next work is engine invocation/logging, practical mounts and supplied namespace joins, then a constrained containerd slice. Security, hooks and terminal support gate ordinary Docker use. Socket activation is part of broader kontainer functionality, not a prerequisite for that first engine experiment.
+Namespaces, rootfs setup, lifecycle, credentials and basic resource controls provide the foundation. The next work is engine invocation/logging, practical mounts and supplied namespace joins, then a constrained containerd slice. Security and terminal support gate ordinary Docker use; hooks gate scenarios that request them. Socket activation is part of broader kontainer functionality, not a prerequisite for that first engine experiment.
 
 ## Commands
 

@@ -121,9 +121,14 @@ The CLI and pre-fork path remain synchronous and single-threaded. Cross-process
 continues to use inotify and polling; Swift Observation is appropriate only if a
 future consumer keeps an in-process model of the resulting snapshots.
 
-Run the affected Linux integrations for incremental refactors. Launch changes
-need the full debug and release gate with Swift 6.4.1:
+During implementation, run affected unit tests and focused Linux debug integrations.
+A launch or Kernel change needs the relevant lifecycle/setup suites, but does not
+require a release build on each edit or commit. At review or milestone completion,
+use the full debug/release gate once for the candidate, locally or in CI:
 
 ```sh
 sh scripts/test-linux.sh --configuration all
 ```
+
+See [validation tiers](testing.md#validation-tiers) for broad-change coverage and
+when to rerun checks.

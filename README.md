@@ -56,16 +56,17 @@ It prints `swiftbox` and `1`: the command runs in new UTS, PID, and mount namesp
 swift test
 ```
 
-On macOS with Apple's `container` installed, run the complete Linux gate:
+On macOS with Apple's `container` installed, run affected Linux debug suites:
 
 ```sh
 container system start
-sh scripts/test-linux.sh --configuration all
+sh scripts/test-linux.sh lifecycle oci
 ```
 
-This runs unit tests and integration suites in debug and release with Swift 6.4.1,
-comparing runtime behavior against runc. Strict memory safety and warnings as
-errors are enabled in the package.
+This runs debug unit tests and the selected integrations with Swift 6.4.1.
+Choose suites for the change; reserve `--configuration all` for the full
+debug/release review gate. See [validation tiers](docs/testing.md#validation-tiers).
+Strict memory safety and warnings-as-errors remain enabled.
 
 - [Runtime reference](docs/runtime-reference.md): command behavior, supported OCI fields, and launch design.
 - [Development and testing](docs/testing.md): Linux setup, focused checks, and integration coverage.

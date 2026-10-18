@@ -13,6 +13,47 @@ swift test
 
 Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace, OCI, lifecycle, credential, and capability checks in the pinned Swift 6.4.1 Linux image.
 
+## Validation tiers
+
+Use the smallest check that exercises the change, then broaden at review. Release
+checks belong to review or milestone completion, not every edit or meaningful
+commit. Strict memory safety and warnings-as-errors stay enabled in both modes.
+
+| Stage/change | Default checks | Broaden when |
+| --- | --- | --- |
+| Documentation only | Links/examples and `git diff --check`. | A runnable example or script changes: check that interface too. |
+| Parsing, planning, CLI, portable helpers | Relevant debug unit tests, e.g. `swift test --filter RuntimeCommandTests`. | Shared decoding or public API changes: run the unit suite. Linux-only behavior also needs a focused Linux check. |
+| Runtime feature implementation | Debug unit tests plus the affected Linux integration suites. | Shared launch, descriptor lifetime, credentials, mount ordering or state ownership changes: include lifecycle/OCI and the suites that exercise the affected invariant. Broad refactors warrant the full debug suite. |
+| Review / milestone candidate | Complete debug and release unit/integration matrix once on the candidate, locally **or** in CI. | Relevant code changes after the pass: rerun affected checks; optimization-sensitive changes invalidate the relevant release evidence. A broad rebase or shared launch rewrite may justify the full gate again. |
+| Engine support claim | Actual containerd/Docker scenario on its declared profile, in addition to relevant runtime checks. | Engine version/profile or contract changes. A docs change does not establish support. |
+
+Do not run `swift build` immediately before an equivalent `swift test`; tests
+build their dependencies. Do not repeat a successful local full gate just to
+obtain the same result in another environment; use the existing CI review gate
+where suitable and distinguish passed, pending and unrun checks. Commits made
+during implementation can explicitly say release validation is deferred to review.
+The current CI runs the full matrix for PRs and main; there is no requirement to
+reproduce it locally before every commit.
+
+For targeted Linux runs, select suites by behavior rather than running every
+suite because a shared file was touched:
+
+| Change | Starting integration selection |
+| --- | --- |
+| Launch/start/exit, process identity or cleanup | `oci lifecycle`; add suites for changed setup or descriptor invariants. |
+| Mount/rootfs/path controls | `oci readonly path-controls`; add `lifecycle` for readiness/cleanup changes. |
+| Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
+| Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
+| Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`), plus `update`; add `freezer ps events` if membership/reporting changes. |
+| Metadata/CLI output | `metadata` and affected unit tests. |
+
+These are starting selections, not mandatory bundles for every edit. Add one
+regression case for the new behavior and relevant failure/cleanup paths. Expand
+root/non-root, lifecycle-mode and platform combinations at feature review where
+they exercise different mechanisms. Avoid a Cartesian product for every new flag,
+exact diagnostic/formatting assertions unless a consumer relies on them, or new
+runc comparisons merely to reproduce an already documented incidental difference.
+
 `features` prints the OCI feature report for the current build. `--version` and `-v` print its development version and target OCI version; a commit is omitted when it is unknown. `spec --bundle PATH` writes a runc-style starter `config.json`, and `--rootless` generates the user mappings for the calling user. The generated starter includes terminal, mount, device, and namespace features this runtime still needs to implement, so it requires editing before use here. Existing configuration entries are never overwritten, including dangling symlinks; runc can write through a dangling symlink. `scripts/metadata-integration.sh` checks command output and compares generated specifications with runc as root and uid 1000.
 
 ## Development on macOS
@@ -21,23 +62,23 @@ See [code organization](code-organization.md) for responsibility boundaries, nam
 
 The commands perform Linux kernel operations; macOS builds (macOS 27 or later) compile all of the runtime, so the compiler checks the Linux code, but cannot run containers or the namespace lab. Unit tests for configuration decoding, validation and the portable Kernel operations run on macOS. Use a Linux VM or Apple's [`container`](https://github.com/apple/container) command to build and test the Linux executable.
 
-Run the complete Linux build, unit tests, and privileged integration checks from macOS:
+Start with focused Linux debug checks from macOS:
 
 ```sh
 container system start
-scripts/test-linux.sh
+scripts/test-linux.sh lifecycle oci
 ```
 
-The script uses a disposable VM-backed `swift:6.4.1` container and stores Linux build products separately in `.build/linux-6.4.1`. It runs debug and optimized integration checks for namespaces, procfs, surrounding hostname/mount preservation, exit and signal status, argument handling, permission failures, and parent-death cleanup.
+The script uses a disposable VM-backed `swift:6.4.1` container and stores Linux build products separately in `.build/linux-6.4.1`. Debug is the default; `--configuration release` selects optimized checks and `--configuration all` runs both. Integration suites cover namespaces, procfs, surrounding hostname/mount preservation, exit and signal status, argument handling, permission failures, and parent-death cleanup.
 
-For a shorter development cycle, select the build configuration and the suites affected by a change. Unit tests still run, and selected integration suites still compare with runc:
+Select the suites affected by a change; an explicit debug configuration is optional. Unit tests still run, and selected integration suites still compare with runc:
 
 ```sh
 scripts/test-linux.sh --list
 scripts/test-linux.sh --configuration debug lifecycle update
 ```
 
-The complete debug/release run remains the default and the CI gate. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/swift-container-runtime update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
+With no suite arguments the script runs every integration in debug. Use `scripts/test-linux.sh --configuration all` for the complete review gate; CI also runs both configurations. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/swift-container-runtime update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
 
 Inside the VM it also installs `busybox-static` and `runc` and runs `scripts/oci-integration.sh`. That script builds a static BusyBox rootfs and runs the same bundles through this runtime and runc. Both must satisfy the shared checks: PID 1, rootfs contents and isolation from host files, hostname, cwd, environment replacement, device nodes, separate stdout/stderr, exit 42, and missing executables. Runtime-specific checks cover exit 125 diagnostics, rejected configurations, symlink escapes from mount destinations (absolute and relative), and setup failures after partial mounting. Those failures must not run the workload or change host mounts and hostname. Set `RUNC_COMPARE=0` to skip runc, or `RUNC_COMPARE=1` to require it.
 

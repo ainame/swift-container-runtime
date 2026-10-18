@@ -109,10 +109,13 @@ Tests keep `#if os(Linux)` where they exercise real kernel behavior.
 
 ## Validation
 
-- macOS: `swift build` and `swift test` after every step; from step 6 on,
-  macOS type-checks all runtime code.
-- Linux: the affected suites per step, and the full gate
-  (`sh scripts/test-linux.sh --configuration all`) for steps 4 to 6.
+The completed migration used the following checks; for new work follow the
+[current validation tiers](testing.md#validation-tiers).
+
+- macOS: unit tests also build the code; from step 6 on, macOS type-checks
+  all runtime code. A separate build before the same test run is unnecessary.
+- Linux: affected debug suites during implementation, then the complete
+  debug/release gate at review of the migration candidate.
 
 ## Cost and risk
 
