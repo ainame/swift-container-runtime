@@ -81,6 +81,32 @@ proc namespace links and bind-mounted nsfs paths work. Exec joins the live init'
 namespace, so removing the original path does not break exec. The runtime does
 not provision interfaces, addresses, routes or DNS in the supplied namespace.
 
+## Session keyrings
+
+`create` and `run` create/join `_ses.<container-id>` in the init, after namespace
+entry and before rootfs, credentials, capability, limit and seccomp setup. Init
+reads the ring's permissions and adds owner-search permission while preserving
+the other bits, as runc does without user namespaces. Exec joins that named
+session before entering the root or changing credentials; it does not reset the
+ring's permissions. Session keys added by init or exec are available to other
+processes in that same session; caller-session keys are not inherited by default.
+The supervisor and invoking process keep their own sessions.
+
+`--no-new-keyring` on `create`/`run` explicitly disables this setup for both init
+and later exec. Each process then inherits its own invoking process's session;
+exec need not share init's session. The policy is stored in runtime state, so
+bundle edits/removal cannot change it. Legacy records with no keyring policy keep
+the previous inherited-session behavior on exec.
+
+All join/description/permission errors, including ENOSYS, fail setup. Unlike
+runc's best-effort ENOSYS fallback, an unavailable kernel facility requires the
+explicit opt-out here. Failed exec setup leaves the live init alone. No libkeyutils
+is needed: Kernel wraps keyctl(2) directly, with an ENOSYS stub off Linux.
+The `_ses.` names follow runc's UID/user-namespace naming scope, not a runtime
+state-root scope: identical IDs can join the same ring across state roots.
+Requested SELinux key-creation labels remain unsupported and are rejected with
+the process label, rather than being ignored.
+
 ## Seccomp policy
 
 Linux builds link libseccomp dynamically; install its development headers when

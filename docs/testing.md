@@ -43,6 +43,7 @@ suite because a shared file was touched:
 | Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
 | Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and `bind` for bind sources/targets/flags; add `lifecycle` for readiness/cleanup changes. |
 | Supplied network namespace | `network-namespace oci lifecycle preserve-fds`. |
+| Session keyrings / default launch security | `keyring oci lifecycle credentials capabilities preserve-fds`, plus the opt-in keyring and seccomp image gates. |
 | OOM adjustment | `oom network-namespace seccomp oci lifecycle preserve-fds`. |
 | Seccomp policy/setup ordering | `seccomp oci lifecycle credentials capabilities preserve-fds`. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
@@ -251,3 +252,24 @@ OOM overrides with runc. Dropping only CAP_SYS_RESOURCE verifies negative-write
 failure before namespace setup. Range failures, state/cgroup cleanup and unchanged
 caller/init scores are required. This changes OOM selection preference; it does
 not deliberately trigger an OOM kill or alter the memory-event tests.
+
+`scripts/keyring-integration.sh` compares named session identity, caller-key
+exclusion, root/non-root init/exec, shared session keys, distinct live container
+IDs, foreground/detached/create/start, persistent `--no-new-keyring`, bundle
+removal and cleanup with runc. Its direct keyctl helper needs only Linux headers
+and the existing static clang fixture, with no libkeyutils dependency. Swift-only
+checks inject EPERM/ENOSYS for joins and permission changes, keep init alive after
+a failed exec, preserve legacy records' inherited sessions, and verify the explicit
+opt-out skips unavailable setup. Keyring-unavailable hosts fail rather than skip.
+
+The opt-in image identity gate binds the same diagnostic probe into Alpine:
+
+```sh
+sh scripts/containerd-keyring-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+Init writes its session ID through the volume, then two engine execs add/read a
+key in that same session. This explicit diagnostic profile permits keyctl and has
+no seccomp profile. Separately, the existing default/custom seccomp image gate
+verifies keyring setup occurs before workload filtering; it does not weaken the
+engine's default seccomp rules to allow the diagnostic syscalls.

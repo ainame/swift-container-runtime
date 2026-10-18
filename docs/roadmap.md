@@ -163,6 +163,8 @@ through the same image/shim path. This is still a constrained profile, not ordin
 Docker support or closure of the broader milestone gates. The latest
 security increment is now seccomp-backed default/custom containerd profiles with
 active syscall-denial evidence. OOM adjustment now also has direct Linux init/exec
-comparisons, including permission failures and persisted container policy. Next:
-session keyring setup, requested LSM handling and console gates.
+comparisons, including permission failures and persisted container policy. Named
+session keyrings now pass direct and image-backed init/exec identity/shared-key
+checks, with a persistent explicit opt-out. Next: requested LSM handling, including
+key-creation labeling, followed by console gates.
 Never discard requested security fields to advance it.

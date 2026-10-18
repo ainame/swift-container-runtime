@@ -8,7 +8,9 @@ native snapshotter. The network follow-up at `1226be9` also joins a supplied
 network namespace and reaches its private TCP listener through image exec.
 The seccomp follow-up at `1e1673b` passes containerd default/custom syscall
 profiles on the pinned image. See the final sections for evidence and exclusions.
-Docker was not run; broader namespace/security/console gates remain open.
+The keyring follow-up at `761c9f6` also verifies image init/exec session identity
+and shared keys. Docker was not run; broader namespace/security/console gates
+remain open.
 
 ## Profile and provenance
 
@@ -131,7 +133,7 @@ below now verifies its constrained nonterminal exit/reaping/stdio behavior.
 | Captured exec JSON | Plans and executes through the real shim, including stdout, exit 42, detached PID publication and missing-program error extraction. |
 | `kill --all` | Implemented with runc 1.4 compatibility semantics; see the focused kill validation below. |
 | Version/features | Focused metadata integration passes. go-runc v1.1.0's version parser only populates values for the literal `runc version ` prefix; Swift retains its own identity, so this helper returns empty metadata. The captured shim create path did not query version. Features emit valid OCI JSON; broader engine feature negotiation is unverified. |
-| Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. Swift still rejects them explicitly. Keyring setup and no-pivot remain deferred. `--systemd-cgroup` and explicit global `--rootless` remain rejected; no systemd support is implied. |
+| Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. The later keyring follow-up implements no-new-keyring; no-pivot remains deferred. `--systemd-cgroup` and explicit global `--rootless` remain rejected; no systemd support is implied. |
 | Next runnable scenario | Supplied namespace joins, followed by remaining security/console gates. Directory-rootfs and pinned-image nonterminal scenarios now have live evidence below. |
 
 ## Focused validation
@@ -527,3 +529,69 @@ memory-event semantics. Session keyrings, requested LSMs and console support
 remain separate security/integration work. The current guest successfully creates
 an anonymous session keyring, so subsequent keyring checks can use the real kernel
 rather than relying on unavailable-kernel fallback alone.
+
+## Session keyring follow-up
+
+Implementation `761c9f6`, checked in the same rootful arm64 Linux debug guest,
+Swift 6.4.1/kernel 6.12.28, containerd 2.2.2 and installed runc 1.4.0-0ubuntu1.
+No runtime library dependency was added; Kernel wraps keyctl(2) directly.
+
+New containers create/join `_ses.<id>` before rootfs/security setup, preserve
+permissions while adding UID-owner search, and join the same session for later
+exec without resetting permissions. The process performing the keyctl operations
+is the init/exec child, not the supervisor. `--no-new-keyring` explicitly opts
+init and exec into inheriting their own callers' sessions. That policy is recorded
+before launch, survives bundle removal, and is independent of process-file JSON.
+Records from before this feature keep inherited sessions on exec.
+
+The names and permission ordering follow runc and the pinned kontainer source.
+Names share runc's UID/user-namespace scope rather than runtime state-root scope;
+identical IDs in different state roots can therefore join the same named session.
+This is caller-session separation, not an unforgeable container identity or a
+standalone security boundary. Requested LSM/key-creation labeling remains open.
+
+Verification:
+
+- All Linux unit targets passed, including **203 runtime tests**. Focused macOS
+  tests cover preparation, opt-out, persistence and legacy record decoding.
+- `keyring` passes direct Linux comparisons with runc as UID 0/1000: named init
+  and exec IDs, exclusion of a real caller-session key, shared container keys,
+  distinct sessions for another live container ID, foreground/detached/create/
+  start, standalone exec after bundle removal, persistent opt-out and cleanup.
+  A fixture-owned parent holds its session and verifies it stays unchanged.
+- Swift-only probes deny JOIN_SESSION_KEYRING or SETPERM with EPERM/ENOSYS:
+  create/run fail without a workload, state or cgroup. A failed exec join leaves
+  init and its cgroup membership/session intact; legacy state and explicit opt-out
+  retain inheritance. Unlike runc's best-effort join ENOSYS fallback, Swift fails
+  unless opted out, so unavailable isolation is not silently treated as success.
+- Focused debug OCI, lifecycle, credentials, capabilities, preserve-fds and metadata
+  regressions pass. No release/full-matrix check was repeated for this increment.
+
+The pinned Alpine image also passes the native-snapshotter/keyring gate through
+the real shim. Init writes its session ID to the writable volume; an exec joins
+that ID and adds a key, and a second exec joins it and reads the key. The gate
+retains readonly file/probe binds, volume writes, PID files, detached exec, exit
+42, kill/delete, shim reaping and snapshot/state/cgroup cleanup:
+
+```sh
+ENGINE_CAPTURE_DIRECTORY=/workspace/docs/engine-baseline/image-keyring \
+  sh scripts/containerd-keyring-integration.sh \
+  .build/linux-6.4.1/debug/swift-container-runtime \
+  /tmp/sct-engine/containerd.sock sct-image-baseline \
+  docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+[Image result](engine-baseline/image-keyring/result.txt) and
+[original create JSON](engine-baseline/image-keyring/create.config.json) are real
+engine evidence. JSON is pretty-printed with values unchanged; the image supplied
+PATH only, with no environment secrets found. This explicit diagnostic profile
+permits keyctl and requests no seccomp profile. Separately, the existing
+containerd default/custom seccomp image gate
+[passes with keyring setup enabled](engine-baseline/image-keyring/seccomp-result.txt),
+proving setup works before the default workload policy blocks keyctl. That gate
+keeps the original default profile and active custom syscall-denial checks.
+
+The broader Docker, requested LSM/key-label, console, rootless and architecture
+acceptance gates remain open. Keyring garbage collection is managed by the kernel;
+tests establish that owned processes/state/cgroups are removed, not an immediate
+GC deadline for unreferenced keys.
