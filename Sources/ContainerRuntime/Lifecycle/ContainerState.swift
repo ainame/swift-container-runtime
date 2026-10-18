@@ -134,6 +134,8 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     var ociVersion: String
     var bundle: String
     var rootfs: String
+    /// Only containers sharing the caller's mount namespace need explicit unmount.
+    var sharedRootfsMount: SharedRootfsMount?
     var created: String
     var annotations: [String: String]
     /// Whether the init has its own PID namespace; the init must then not
@@ -217,6 +219,12 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         }
         if let score = record.oomScoreAdjustment, !(-1000...1000).contains(score) {
             throw corrupt("invalid OOM score adjustment")
+        }
+        if let mount = record.sharedRootfsMount {
+            guard record.rootfs != "/", mount.originalMountID > 0, mount.root.inode > 0,
+                  mount.namespace.inode > 0, InitIdentity.isValidBootID(mount.bootID) else {
+                throw corrupt("invalid inherited rootfs mount identity")
+            }
         }
         // A cgroup record must never name the mount root or leave it.
         if let cgroup = record.cgroup, !cgroup.isValid { throw corrupt("invalid cgroup \(cgroup.path)") }

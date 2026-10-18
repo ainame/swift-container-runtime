@@ -23,6 +23,8 @@ struct RootFilesystemSetup {
     let deviceGroupBase: Int
     /// User namespaces cannot mknod host device nodes; bind the defaults instead.
     let bindsStandardDevices: Bool
+    /// In an inherited mount namespace, chroot preserves namespace identity.
+    let usesPivotRoot: Bool
     let populatesDev: Bool
     let readonlyRoot: Bool
     /// Final propagation for the root bind, isolated from the host before setup.
@@ -81,7 +83,7 @@ struct RootFilesystemSetup {
             }
             if let failure = unsafe createContainerHooks.run() { return failure }
         }
-        if let failure = unsafe Self.switchRoot(to: root) { return failure }
+        if let failure = unsafe Self.switchRoot(to: root, pivot: usesPivotRoot) { return failure }
         // pivot_root refuses a shared new root. Set its final propagation only
         // after pivot, then restore explicit child modes that a recursive root
         // mode may have reset. All targets are now resolved inside the new root.
@@ -217,9 +219,15 @@ struct RootFilesystemSetup {
     /// pivot_root(".", ".") as in runc: the old root is stacked on the new one
     /// and detached through a descriptor, without a put_old directory. Both
     /// descriptors are closed afterwards.
-    private static func switchRoot(to root: consuming OwnedFileDescriptor) -> LaunchFailure? {
+    private static func switchRoot(to root: consuming OwnedFileDescriptor, pivot: Bool) -> LaunchFailure? {
         do {
-            try unsafe pivot(into: root)
+            if pivot {
+                try unsafe Self.pivot(into: root)
+            } else {
+                try root.borrowDescriptor { root throws(Errno) in try Kernel.Process.changeDirectory(to: root) }
+                try unsafe Kernel.Process.changeRoot(".")
+                try unsafe Kernel.Process.changeDirectory("/")
+            }
         } catch {
             return LaunchFailure(stage: .pivotRoot, error: error)
         }

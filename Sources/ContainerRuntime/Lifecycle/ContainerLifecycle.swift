@@ -436,6 +436,7 @@ public struct ContainerLifecycle: Sendable {
         // A failed cleanup keeps the state so that delete can be retried.
         if let record {
             try Self.removeCgroup(record, killRemaining: action != .destroy || !record.pidNamespace)
+            try record.sharedRootfsMount?.remove(rootfs: record.rootfs)
         }
         try container.destroy()
         if let record { Self.runPoststop(record) }
@@ -546,6 +547,7 @@ extension ContainerLifecycle {
         _ = try? killInit(record)
         do {
             try removeCgroup(record, killRemaining: true)
+            try record.sharedRootfsMount?.remove(rootfs: record.rootfs)
         } catch {
             RuntimeDiagnostics.writeError(
                 "srunc: warning: container \(record.id) kept for delete: \(error)"
@@ -629,6 +631,7 @@ extension ContainerLifecycle {
         var record = ContainerRecord(id: id, plan: plan, noNewKeyring: noNewKeyring)
         var leaf: CgroupLeaf? = nil
         do {
+            if !plan.usesPivotRoot { record.sharedRootfsMount = try SharedRootfsMount(rootfs: plan.rootfs.string) }
             try container.writeRecord(record)
             let cgroup = try Self.prepareCgroup(plan, id: id, record: &record, container: container)
             leaf = cgroup
@@ -690,6 +693,7 @@ extension ContainerLifecycle {
         var leaf: CgroupLeaf? = nil
         let status: Int32
         do {
+            if !plan.usesPivotRoot { record.sharedRootfsMount = try SharedRootfsMount(rootfs: plan.rootfs.string) }
             try container.writeRecord(record)
             let cgroup = try Self.prepareCgroup(plan, id: id, record: &record, container: container)
             leaf = cgroup
@@ -728,6 +732,7 @@ extension ContainerLifecycle {
             // without a PID namespace) is the container's; runc kills them too.
             try container.lock()
             try Self.removeCgroup(record, killRemaining: true)
+            try record.sharedRootfsMount?.remove(rootfs: record.rootfs)
             try container.destroy()
             Self.runPoststop(record)
         } catch LifecycleError.notFound(_) {

@@ -75,11 +75,22 @@ extension OCIRunPlan {
         let lastCapability = try capabilities?.validatedKernelLimit() ?? -1
         // Pin and validate in the supervisor. Only its forked launcher calls
         // setns, before unsharing the remaining namespaces or mounting sysfs.
-        let network = try InitNetworkNamespace(path: networkNamespacePath)
+        let namespaceHandles = try NamespaceHandle.joinOrder.compactMap { namespace in
+            try namespacePaths[namespace].map { try NamespaceHandle(path: $0, namespace: namespace) }
+        }
         let sysctls = self.sysctls
-        // A joined namespace may be the host's; its net.* sysctls would leak.
-        if let path = networkNamespacePath, sysctls.contains(where: \.isNetwork), try network.isCallerNamespace() {
-            throw RuntimeError("config.json: linux.sysctl net.* is not allowed in the host's network namespace \(path)")
+        // Host-owned namespaces may be explicitly joined, but their mutable
+        // properties must never be changed as a side effect of this container.
+        for handle in namespaceHandles where handle.matchesCaller {
+            if handle.namespace == .network, sysctls.contains(where: \.isNetwork) {
+                throw RuntimeError("config.json: linux.sysctl net.* is not allowed in the host's network namespace")
+            }
+            if handle.namespace == .ipc, sysctls.contains(where: { !$0.isNetwork && $0.key != "kernel.domainname" }) {
+                throw RuntimeError("config.json: linux.sysctl is not allowed in the host's ipc namespace")
+            }
+            if handle.namespace == .uts, hostname != nil || sysctls.contains(where: { $0.key == "kernel.domainname" }) {
+                throw RuntimeError("config.json: hostname is not allowed in the host's uts namespace")
+            }
         }
         let context: (LaunchStage, Int32) -> String? = { stage, detail in
             switch stage {
@@ -87,7 +98,7 @@ extension OCIRunPlan {
                 guard sysctls.indices.contains(Int(detail)) else { return nil }
                 return "\(stage.description) \(sysctls[Int(detail)].key)"
             case .joinNamespaces:
-                return networkNamespacePath.map { "join supplied network namespace \($0)" }
+                return networkNamespacePath.map { "join supplied network namespace \($0)" } ?? "join supplied namespace"
             case .openMountSource:
                 guard mounts.indices.contains(Int(detail)) else { return nil }
                 return "open bind mount source \(mounts[Int(detail)].source) for \(mounts[Int(detail)].destinationPath)"
@@ -119,7 +130,7 @@ extension OCIRunPlan {
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 var root = unsafe RootFilesystemSetup(
-                    strings: pointers, starts: starts, mounts: mounts, devices: devices, deviceGroupBase: deviceGroupBase, bindsStandardDevices: userNamespace != nil, populatesDev: populatesDev,
+                    strings: pointers, starts: starts, mounts: mounts, devices: devices, deviceGroupBase: deviceGroupBase, bindsStandardDevices: userNamespace != nil || namespacePaths[.user] != nil, usesPivotRoot: usesPivotRoot, populatesDev: populatesDev,
                     readonlyRoot: readonlyRoot, rootPropagation: rootPropagation, pathControls: pathControls, terminal: terminal)
                 // Hook buffers point into the launch strings, which outlive the launch.
                 func prepared(_ hooks: [ContainerHooks.Hook], from first: Int, defaultEnvironment: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [PreparedHook] {
@@ -151,7 +162,10 @@ extension OCIRunPlan {
                 // The cgroup namespace is unshared by the init itself, below.
                 return unsafe try NamespaceLauncher.run(unsharing: namespaces.filter { $0 != .cgroup }, hooks: launchHooks, context: context, prepareLauncher: {
                     if let failure = oom.apply() { return failure }
-                    return network.join().map { LaunchFailure(stage: .joinNamespaces, error: $0) }
+                    for handle in namespaceHandles {
+                        if let error = handle.join() { return LaunchFailure(stage: .joinNamespaces, error: error) }
+                    }
+                    return nil
                 }) { report, commit, launcher in
                     // Preserve caller descriptors before any rootfs setup opens temporary handles.
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {

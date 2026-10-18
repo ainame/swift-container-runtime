@@ -41,7 +41,12 @@ final class NamespaceHandle {
     func join() -> Errno? {
         guard !matchesCaller else { return nil }
         return descriptor.failure(in: { descriptor in
-            Errno.failure { () throws(Errno) in try Kernel.Namespace.enter(descriptor, namespace) }
+            Errno.failure { () throws(Errno) in try Kernel.Namespace.enter(descriptor, namespace)
+                if namespace == .user {
+                    try Kernel.Credentials.setGroupID(0)
+                    try Kernel.Credentials.setUserID(0)
+                }
+            }
         })
     }
 
