@@ -61,6 +61,14 @@ private func validatePIDFile(_ path: String?) throws {
     guard !path.utf8.contains(0) else { throw ValidationError("--pid-file must not contain NUL") }
 }
 
+/// Rejects values runc's dial could not use as a Unix socket address.
+func validatePidfdSocket(_ path: String?) throws {
+    guard let path else { return }
+    do { _ = try PidfdSocketAddress(path) } catch { throw ValidationError("\(error)") }
+}
+
+let pidfdSocketHelp: ArgumentHelp = "Send a pidfd for the new process, with a runc-compatible label, to the AF_UNIX stream listener at this path (or @abstract name)."
+
 let preserveFDsHelp: ArgumentHelp = "Pass caller descriptors 3 through 2+N to the workload at the same numbers. They must be open and not close-on-exec; their type is not checked."
 
 /// Rejects negative counts and counts whose first internal descriptor, 3+N, leaves Int32.
@@ -95,12 +103,16 @@ struct Create: ParsableCommand {
     @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp)
     var preserveFDs = 0
 
+    @Option(name: .customLong("pidfd-socket"), help: pidfdSocketHelp)
+    var pidfdSocket: String?
+
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
         try validateBundle(bundle)
         try validatePIDFile(pidFile)
+        try validatePidfdSocket(pidfdSocket)
         _ = try validatedPreservedFDs(preserveFDs)
         _ = try validatedID(id)
     }
@@ -111,7 +123,7 @@ struct Create: ParsableCommand {
             try PreservedDescriptors(count: preserveFDs).verify()
             try globals.lifecycle().create(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
-                preserveDescriptors: preserveFDs)
+                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket)
         } catch {
             throw failure(error)
         }
@@ -378,12 +390,16 @@ struct Run: ParsableCommand {
     @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp)
     var preserveFDs = 0
 
+    @Option(name: .customLong("pidfd-socket"), help: pidfdSocketHelp)
+    var pidfdSocket: String?
+
     @Argument(help: "Container ID.")
     var id: String
 
     mutating func validate() throws {
         try validateBundle(bundle)
         try validatePIDFile(pidFile)
+        try validatePidfdSocket(pidfdSocket)
         _ = try validatedPreservedFDs(preserveFDs)
         _ = try validatedID(id)
     }
@@ -394,7 +410,7 @@ struct Run: ParsableCommand {
             try PreservedDescriptors(count: preserveFDs).verify()
             status = try globals.lifecycle().run(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
-                preserveDescriptors: preserveFDs
+                preserveDescriptors: preserveFDs, pidfdSocket: pidfdSocket
             )
         } catch {
             throw failure(error, status: 125)

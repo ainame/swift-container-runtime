@@ -330,6 +330,42 @@ func rejectsInvalidExecGroupsAndPrivilegeValues(_ arguments: [String]) {
     #expect(largest.preserveFDs == 2_147_483_644)
 }
 
+@Test func parsesPidfdSocketBeforeTheContainerID() throws {
+    #expect(try #require(RuntimeCommand.parseAsRoot(["run", "box"]) as? Run).pidfdSocket == nil)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create).pidfdSocket == nil)
+    #expect(try #require(RuntimeCommand.parseAsRoot(["exec", "box", "true"]) as? Exec).pidfdSocket == nil)
+    let run = try #require(RuntimeCommand.parseAsRoot(["run", "--pidfd-socket", "/run/p.sock", "-d", "box"]) as? Run)
+    #expect(run.pidfdSocket == "/run/p.sock")
+    #expect(run.detach)
+    let create = try #require(RuntimeCommand.parseAsRoot(["create", "--pidfd-socket=@abstract", "box"]) as? Create)
+    #expect(create.pidfdSocket == "@abstract")
+    // Kept with a process file: the socket is not part of the process JSON.
+    let exec = try #require(
+        RuntimeCommand.parseAsRoot(["exec", "--pidfd-socket", "rel.sock", "-p", "p.json", "box"]) as? Exec)
+    #expect(exec.pidfdSocket == "rel.sock")
+    #expect(exec.processFile == "p.json")
+    // After the ID it belongs to the workload.
+    let workload = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "echo", "--pidfd-socket", "x"]) as? Exec)
+    #expect(workload.pidfdSocket == nil)
+    #expect(workload.arguments == ["echo", "--pidfd-socket", "x"])
+}
+
+@Test(arguments: [
+    ["run", "--pidfd-socket", "", "box"],
+    ["create", "--pidfd-socket", "/" + String(repeating: "a", count: 107), "box"],
+    ["exec", "--pidfd-socket", "@" + String(repeating: "a", count: 108), "box", "true"],
+    ["exec", "--pidfd-socket", "", "box", "true"],
+    ["run", "box", "--pidfd-socket"],
+])
+func rejectsInvalidPidfdSockets(_ arguments: [String]) {
+    do {
+        _ = try RuntimeCommand.parseAsRoot(arguments)
+        Issue.record("Expected parsing to reject \(arguments)")
+    } catch {
+        #expect(RuntimeCommand.exitCode(for: error) == .validationFailure)
+    }
+}
+
 @Test(arguments: [
     ["run", "--preserve-fds", "-1", "box"],
     ["run", "--preserve-fds", "2147483645", "box"],

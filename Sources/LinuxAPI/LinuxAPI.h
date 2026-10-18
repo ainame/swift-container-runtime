@@ -249,6 +249,21 @@ static inline int linux_unix_stream_socketpair(int descriptors[2]) {
     return socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, descriptors);
 }
 
+static inline int linux_unix_stream_socket(void) {
+    return socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+}
+
+/* The CMSG_* function-like macros are not imported into Swift. These expose
+ * the two sizes unchanged, so each libc's own cmsghdr layout and alignment
+ * apply; the message itself is assembled and sent in Swift. */
+static inline size_t linux_cmsg_space(size_t length) {
+    return CMSG_SPACE(length);
+}
+
+static inline size_t linux_cmsg_len(size_t length) {
+    return CMSG_LEN(length);
+}
+
 static inline int linux_accept_cloexec(int fd) {
     return (int)syscall(SYS_accept4, fd, NULL, NULL, SOCK_CLOEXEC);
 }

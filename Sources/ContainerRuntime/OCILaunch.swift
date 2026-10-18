@@ -51,8 +51,9 @@ extension OCIRunPlan {
     /// Launches the container. Without a gate the init executes the workload
     /// after setup and this returns its status. With a gate (and detached
     /// hooks) the init waits for `start` instead, and this returns 0 once it
-    /// has been committed.
-    func runOnLinux(hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil) throws -> Int32 {
+    /// has been committed. With `pidfdSocket`, the init sends its own pidfd,
+    /// labelled `standard`, before it drops privileges or reports readiness.
+    func runOnLinux(hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil) throws -> Int32 {
         var groups: [[String]] = [
             arguments,
             environment,
@@ -122,7 +123,7 @@ extension OCIRunPlan {
                         security: security, supplementaryGids: gidBuffer,
                         capabilities: capabilities, lastCapability: lastCapability, resourceLimits: resourceLimits,
                         pathControls: pathControls, foreground: !hooks.detached, firstInternal: firstInternal,
-                        report: report, commit: commit, launcher: launcher, gate: gate
+                        report: report, commit: commit, launcher: launcher, gate: gate, pidfdSocket: pidfdSocket
                     )
                 }
             }
@@ -151,7 +152,8 @@ private func initializeContainer(
     report: borrowing OwnedFileDescriptor,
     commit: borrowing OwnedFileDescriptor,
     launcher: borrowing OwnedFileDescriptor,
-    gate: StartGate?
+    gate: StartGate?,
+    pidfdSocket: PidfdSocket?
 ) -> Int32 {
     func group(_ index: Int) -> UnsafePointer<UnsafeMutablePointer<CChar>?> {
         unsafe strings + starts[index]
@@ -249,6 +251,12 @@ private func initializeContainer(
     // performs the mounts.
     if let failure = pathControls.apply() {
         return failureStatus(report, failure.stage, code: failure.code, detail: failure.index)
+    }
+    // runc's standard init sends its pidfd here: in the container's PID
+    // namespace and root, before no_new_privs, credentials, and readiness. A
+    // failure fails create or run.
+    if let failure = pidfdSocket?.handOff(label: .standard) {
+        return failureStatus(report, failure.stage, code: failure.code)
     }
     return unsafe finishContainerProcess(
         argv: group(Group.arguments), environment: group(Group.environment),

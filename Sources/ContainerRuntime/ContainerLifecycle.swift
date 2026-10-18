@@ -33,10 +33,13 @@ public struct ContainerLifecycle: Sendable {
     /// Prepares the container and leaves its init waiting for `start`. The
     /// workload inherits this process's stdin, stdout, and stderr, as in runc.
     @available(*, noasync, message: "create containers before starting async work")
-    public func create(id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0) throws {
+    public func create(
+        id: ContainerID, plan: OCIRunPlan, pidFile: String? = nil, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
+    ) throws {
         #if os(Linux)
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
-        try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved)
+        let address = try pidfdSocket.map(PidfdSocketAddress.init)
+        try createOnLinux(id: id, plan: plan, start: false, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
         #else
         throw Self.unsupported
         #endif
@@ -48,15 +51,17 @@ public struct ContainerLifecycle: Sendable {
     @available(*, noasync, message: "launch containers before starting async work")
     public func run(
         id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil,
-        preserveDescriptors: Int = 0
+        preserveDescriptors: Int = 0, pidfdSocket: String? = nil
     ) throws -> Int32 {
         #if os(Linux)
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
+        let address = try pidfdSocket.map(PidfdSocketAddress.init)
         if detach {
-            try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile, preserved: preserved)
+            try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
             return 0
         }
-        return try runForegroundOnLinux(id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved)
+        return try runForegroundOnLinux(
+            id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
         #else
         throw Self.unsupported
         #endif
@@ -69,10 +74,11 @@ public struct ContainerLifecycle: Sendable {
         id: ContainerID, arguments: [String], environment: [String] = [],
         cwd: String? = nil, user: String? = nil, additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil,
         capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil,
-        ignorePaused: Bool = false, preserveDescriptors: Int = 0
+        ignorePaused: Bool = false, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
     ) throws -> Int32 {
         #if os(Linux)
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
+        let address = try pidfdSocket.map(PidfdSocketAddress.init)
         // Serialize acquisition with delete/start, then pin the recorded init
         // and all kernel handles before releasing any new child.
         let container = try lock(id)
@@ -124,7 +130,14 @@ public struct ContainerLifecycle: Sendable {
                 // Foreground wait must not block state, kill or deletion.
                 container.unlock()
             }
-            return try plan.execOnLinux(namespaces: namespaces, hooks: hooks)
+            // Dialled only for an accepted target and plan, just before the
+            // fork. As in runc, a relative path resolves in the bundle for
+            // command exec and in the caller's directory for --process.
+            let pidfd = try address.map {
+                try PidfdSocket(connectingTo: $0, relativeTo: processFile == nil ? record.bundle : nil)
+            }
+            defer { pidfd?.close() }
+            return try plan.execOnLinux(namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd)
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
         return result
@@ -442,7 +455,8 @@ extension ContainerLifecycle {
     /// whole command means no other command observes a half-made container;
     /// any failure kills the init and removes the state.
     private func createOnLinux(
-        id: ContainerID, plan: OCIRunPlan, start: Bool, pidFile: String?, preserved: PreservedDescriptors
+        id: ContainerID, plan: OCIRunPlan, start: Bool, pidFile: String?, preserved: PreservedDescriptors,
+        pidfdSocket: PidfdSocketAddress?
     ) throws {
         // Reserve and pin the generation before recording or launching an init.
         guard let root = try StateRoot.open(root, create: true) else { throw LifecycleError.notFound(id) }
@@ -466,7 +480,12 @@ extension ContainerLifecycle {
             // is always findable by later commands.
             hooks.ready = { try container.writeRecord(record) }
             // Commit readiness before asking the waiting init to execute.
-            _ = try plan.runOnLinux(hooks: hooks, gate: gate)
+            // Dialled after the ID is reserved, just before the fork, so an
+            // invalid or duplicate ID never consumes a connection. A relative
+            // path resolves in the bundle, as runc resolves it after chdir.
+            let pidfd = try pidfdSocket.map { try PidfdSocket(connectingTo: $0, relativeTo: plan.bundle.string) }
+            defer { pidfd?.close() }
+            _ = try plan.runOnLinux(hooks: hooks, gate: gate, pidfdSocket: pidfd)
             if start { try requestStart(container) }
             if let pidFile, let process = record.initProcess {
                 try PIDFile.write(process.pid, to: pidFile)
@@ -484,7 +503,8 @@ extension ContainerLifecycle {
     /// `kill`, and `delete --force` work from other processes, and it is
     /// removed when the workload exits or setup fails, as runc does.
     private func runForegroundOnLinux(
-        id: ContainerID, plan: OCIRunPlan, keep: Bool, pidFile: String?, preserved: PreservedDescriptors
+        id: ContainerID, plan: OCIRunPlan, keep: Bool, pidFile: String?, preserved: PreservedDescriptors,
+        pidfdSocket: PidfdSocketAddress?
     ) throws -> Int32 {
         // Keep the directory locked throughout setup, then publish the init
         // and unlock only after execution has been confirmed.
@@ -509,7 +529,10 @@ extension ContainerLifecycle {
                 try container.writeRecord(record)
                 container.unlock()
             }
-            status = try plan.runOnLinux(hooks: hooks)
+            // As in createOnLinux: after the ID is reserved, before the fork.
+            let pidfd = try pidfdSocket.map { try PidfdSocket(connectingTo: $0, relativeTo: plan.bundle.string) }
+            defer { pidfd?.close() }
+            status = try plan.runOnLinux(hooks: hooks, pidfdSocket: pidfd)
         } catch {
             // Recover setup failures only if this generation still owns its ID.
             let reported = Self.explainingOOM(error, leaf)

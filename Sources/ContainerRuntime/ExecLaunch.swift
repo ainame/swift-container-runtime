@@ -80,7 +80,8 @@ struct ExecNamespaceSet: ~Copyable {
 extension OCIProcessPlan {
     /// The existing launch handshake pins and places the exec child before
     /// releasing it, and confirms exec by EOF on its close-on-exec pipe.
-    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks) throws -> Int32 {
+    /// With `pidfdSocket`, the process sends its own pidfd, labelled `setns`.
+    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil) throws -> Int32 {
         var strings = try CStringVector(
             groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
         )
@@ -112,6 +113,11 @@ extension OCIProcessPlan {
                     }
                     let rootCode = namespaces.enterRoot()
                     guard rootCode == 0 else { return failureStatus(report, .enterRoot, code: rootCode) }
+                    // As runc's setns init: inside the container, before
+                    // no_new_privs and the credential switch.
+                    if let failure = pidfdSocket?.handOff(label: .setns) {
+                        return failureStatus(report, failure.stage, code: failure.code)
+                    }
                     return unsafe finishContainerProcess(
                         argv: pointers + starts[0], environment: pointers + starts[1],
                         executables: pointers + starts[3], searchesPath: searchesPath,

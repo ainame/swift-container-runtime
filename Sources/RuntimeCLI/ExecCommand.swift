@@ -7,7 +7,8 @@ struct Exec: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "exec", abstract: "Run another nonterminal process in a container.",
         discussion: "Inherits process settings from the source bundle. Options must precede the container ID. "
-            + "--preserve-fds passes caller descriptors; terminal, socket activation, and console socket options are not implemented."
+            + "--preserve-fds passes caller descriptors and --pidfd-socket receives a pidfd labelled setns; "
+            + "terminal, socket activation, and console socket options are not implemented."
     )
     @ParentCommand var parent: RuntimeCommand
     @Option(name: .customLong("root"), help: "Directory holding container state.") var stateRoot: String?
@@ -24,6 +25,7 @@ struct Exec: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host exec PID atomically to this path.") var pidFile: String?
     @Option(name: [.customShort("p"), .customLong("process")], help: "OCI process JSON file; overrides the bundle and process CLI settings.") var processFile: String?
     @Option(name: .customLong("preserve-fds"), help: preserveFDsHelp) var preserveFDs = 0
+    @Option(name: .customLong("pidfd-socket"), help: pidfdSocketHelp) var pidfdSocket: String?
     @Flag(name: [.customShort("d"), .long], help: "Return once exec succeeds.") var detach = false
     @Flag(name: .customLong("ignore-paused"), help: "Wait for a paused container to resume instead of failing.")
     var ignorePaused = false
@@ -50,6 +52,7 @@ struct Exec: ParsableCommand {
             }
         }
         _ = try validatedPreservedFDs(preserveFDs)
+        try validatePidfdSocket(pidfdSocket)
         guard processFile != "" else { throw ValidationError("--process must not be empty") }
         guard (arguments + env + cap + [cwd, user, pidFile, processFile].compactMap { $0 }).allSatisfy({ !$0.utf8.contains(0) }) else {
             throw ValidationError("exec options and arguments must not contain NUL")
@@ -63,7 +66,8 @@ struct Exec: ParsableCommand {
                 id: ContainerID(id), arguments: arguments, environment: env, cwd: cwd, user: user,
                 additionalGids: additionalGids, noNewPrivileges: noNewPrivs ? true : nil,
                 capabilities: cap, detach: detach, pidFile: pidFile, processFile: processFile,
-                ignorePaused: ignorePaused, preserveDescriptors: preserveFDs)
+                ignorePaused: ignorePaused, preserveDescriptors: preserveFDs,
+                pidfdSocket: pidfdSocket)
         } catch { throw failure(error) }
         throw ExitCode(status)
     }

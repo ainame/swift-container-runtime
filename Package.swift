@@ -40,6 +40,7 @@ let package = Package(
             name: "ContainerRuntimeTests",
             dependencies: [
                 "ContainerRuntime",
+                .target(name: "LinuxAPI", condition: .when(platforms: [.linux])),
                 .product(name: "SystemPackage", package: "swift-system"),
             ],
             swiftSettings: checkedSwiftSettings
