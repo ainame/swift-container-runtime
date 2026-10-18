@@ -309,7 +309,8 @@ The runner uses a separate state root, applies a per-executable timeout, checks
 both exit status and TAP plans/assertions, and cleans up only its own containers.
 `tap-go` embeds JSON in TAP diagnostic blocks, which Perl's YAMLish reader rejects;
 the parser receives a copy with only those blocks removed, while raw output is
-retained. Two upstream negative executables have no TAP: their exit status and
+retained. Generated rootfs/probe fixtures live in `.srunc-fixture/` inside the
+upstream checkout, so tracked upstream tarballs and source remain unchanged. Two upstream negative executables have no TAP: their exit status and
 specific invalid-capability/rlimit rejection diagnostics are required instead.
 The rootfs tarball includes the static probe and has mode 0755 so mapped and
 non-root users can execute it.

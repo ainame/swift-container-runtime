@@ -82,6 +82,10 @@ def main():
         parser.error(f"runtime-tools revision {actual} differs from pinned {revision}")
     subprocess.run(["git", "diff", "--exit-code", "HEAD"], cwd=checkout, check=True)
     inventory = {p.stem: p.with_suffix(".t") for p in checkout.glob("validation/*/*.go") if p.parent.name != "util"}
+    fixture = checkout / ".srunc-fixture"
+    arch = subprocess.check_output(["go", "env", "GOARCH"], text=True).strip()
+    if not (fixture / "runtimetest").is_file() or not (fixture / f"rootfs-{arch}.tar.gz").is_file():
+        parser.error("native fixtures are missing; run scripts/prepare-runtime-tools.sh CHECKOUT first")
     names = args.tests or sorted(inventory)
     for name in names:
         if name not in inventory or not inventory[name].is_file():
@@ -112,7 +116,7 @@ def main():
             raw = output / f"{name}.tap"
             with raw.open("w") as stream:
                 run = subprocess.run(["timeout", "--kill-after=5", str(args.timeout), str(inventory[name])],
-                                     cwd=checkout, env=env, stdout=stream, stderr=subprocess.STDOUT)
+                                     cwd=fixture, env=env, stdout=stream, stderr=subprocess.STDOUT)
             text = raw.read_text(errors="replace")
             normalized = output / f"{name}.normalized.tap"
             harness = output / f"{name}.harness.log"
