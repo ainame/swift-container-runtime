@@ -6,8 +6,9 @@ passes a constrained Swift containerd directory-rootfs scenario through the same
 shim. The bind follow-up at `62f04f2` also passes a pinned Alpine image with the
 native snapshotter. The network follow-up at `1226be9` also joins a supplied
 network namespace and reaches its private TCP listener through image exec.
-See the final sections for evidence and exclusions. Docker was not run; broader
-namespace/security/console gates remain open.
+The seccomp follow-up at `1e1673b` passes containerd default/custom syscall
+profiles on the pinned image. See the final sections for evidence and exclusions.
+Docker was not run; broader namespace/security/console gates remain open.
 
 ## Profile and provenance
 
@@ -394,3 +395,88 @@ The public image supplied PATH only; no environment secrets were found.
 This proves supplied namespace consumption with private loopback I/O. It does not
 verify Docker, bridge/NAT/DNS provisioning, cgroup/other supplied namespace types,
 rootless operation, requested seccomp/LSM/hooks, TTYs or another architecture.
+
+## Seccomp follow-up
+
+Implementation `1e1673b` adds a Linux-only dynamic libseccomp binding, strict OCI
+policy decoding, parent-side BPF export and child-side loading for init and every
+exec. Linux builds now need `libseccomp-dev`; this guest has **2.6.0-2ubuntu5**
+(headers and runtime library). `ldd` confirms the Swift executable resolves
+`libseccomp.so.2` from `/usr/lib/aarch64-linux-gnu`. macOS still builds without it.
+Static/musl packaging is not established by this dynamic build.
+
+Source ordering was checked against local runc `b1281089d47f53cd019804c1d9dfb1d5164d9aa7`
+(`standard_init_linux.go`, `setns_init_linux.go`, `seccomp/seccomp_linux.go`) and
+kontainer `357b8f295a7fad450c822c61e79cf22f75546640` (seccomp implementation and
+build configuration). The **executed reference** remains installed runc
+1.4.0-0ubuntu1, not a rebuild of that checkout. Kontainer's default dynamic system
+library approach is used here; its optional pinned-source/static build is not.
+Native architecture retention and duplicate-argument OR behavior follow runc.
+
+Fresh checks in the same arm64/kernel/rootful cgroupfs guest:
+
+- All Linux unit targets passed, including **197 runtime tests**. Final focused
+  policy/metadata/fixture tests passed after the load-result guard change.
+  Focused macOS checks passed with Swift 6.4, including the Kernel import boundary.
+- `seccomp` passes against runc: UID 0/1000 with no_new_privs true/false;
+  foreground run and create/start; created-init filter mode; direct getpgid/EACCES
+  in init and exec; exec after an edited bundle and standalone process exec after
+  bundle removal; no state/cgroup leaks. Seccomp is stored in runtime state and
+  cannot be replaced by rereading a modified bundle.
+- All seven comparisons pass allowed and denied direct-syscall probes, including
+  a value above 32 bits, distinct-index AND and repeated-index OR. LOG allows,
+  TRACE without a tracer returns ENOSYS, and TRAP/KILL/KILL_THREAD/KILL_PROCESS
+  terminate with SIGSYS under both runtimes. Explicit []/TSYNC/LOG/SPEC_ALLOW
+  flags load successfully in Swift.
+- An inherited filter refusing SECCOMP_SET_MODE_FILTER causes the child to
+  report a load failure, without a workload, state or cgroup. Unsupported
+  notification policies/flags and unknown syscall names also fail cleanly.
+- Debug OCI, lifecycle, credentials, capabilities and preserve-fds regressions
+  passed against runc after the setup changes. The metadata integration also
+  passes after updating its old disabled-seccomp assertion; it still requires
+  AppArmor/SELinux/idmapped mounts to report disabled. No release/full-matrix
+  validation was repeated for this increment.
+
+The direct no_new_privs-false cases use getpgid rather than getcwd: installed
+runc itself needs getcwd during its post-load setup and rejects an early getcwd
+deny policy. The engine getcwd profile below uses no_new_privs true and tests
+actual exec denial, rather than claiming runtime bootstrap overhead parity.
+
+The [reference default bundle](engine-baseline/seccomp-reference/default.config.json)
+and [custom getcwd bundle](engine-baseline/seccomp-reference/deny-getcwd.config.json)
+were captured from actual containerd/runc runs using
+`scripts/containerd-seccomp-capture.sh`. The default profile supplies ARM and
+AArch64 architecture tokens and 12 rules with ERRNO/ALLOW actions, socket NE,
+personality EQ and clone MASKED_EQ comparisons. These are unmodified engine
+values, not a manually reduced profile. [Reference output](engine-baseline/seccomp-reference/result.txt)
+records filter mode 2 and allowed getcwd with the default profile, followed by
+getcwd/EACCES under the custom one.
+
+The same image/native-snapshotter scenario then passes through Swift with
+containerd's `--seccomp` default and custom `--seccomp-profile`:
+
+```sh
+ENGINE_CAPTURE_DIRECTORY=/workspace/docs/engine-baseline/image-seccomp \
+  sh scripts/containerd-seccomp-integration.sh \
+  .build/linux-6.4.1/debug/swift-container-runtime \
+  /tmp/sct-engine/containerd.sock sct-image-baseline \
+  docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+[Swift result](engine-baseline/image-seccomp/result.txt),
+[default create JSON](engine-baseline/image-seccomp/default/create.config.json),
+and [custom create JSON](engine-baseline/image-seccomp/deny-getcwd/create.config.json)
+record init filter mode and the direct exec syscall result. Both retain enforced
+device rules, readonly configuration and probe binds, writable volume I/O, PID
+publication, detached exec, exit 42, kill/delete, reaping and snapshot/state/cgroup
+cleanup. Captured JSON is pretty-printed with values unchanged; all captured
+process environments contain only the public image PATH, with no secrets found.
+
+This establishes containerd default-profile execution and explicit custom syscall
+enforcement on native arm64. It does not establish Docker defaults, 32-bit ABI
+execution, another architecture, seccomp notification, requested LSM/hooks,
+OOM adjustment, session-keyring isolation, TTYs or bridge/DNS. Unknown syscall
+names are rejected rather than ignored as in runc, and unknown/future syscall
+numbers get the configured default action rather than runc's ENOSYS fixup.
+See [runtime reference](runtime-reference.md#seccomp-policy) for the supported
+policy and setup/bootstrap constraints. The broader roadmap remains active.

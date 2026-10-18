@@ -55,7 +55,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
 | Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device-rule updates, update support for the other remaining controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
 | Security | Complete init/exec policy verification; AppArmor/SELinux execution-context staging and availability behavior; session keyrings; sealed executable handoff |
-| Seccomp | Actions, architectures, argument comparisons, conditional rules, flags, notification listener handoff |
+| Seccomp | Notification listener handoff and its flags; broader architecture execution evidence. Non-notification actions, compat-ABI filter generation, all argument operators, runc-style AND/OR rules and TSYNC/LOG/SPEC_ALLOW flags are implemented. |
 | Hooks | All six phases, environment, state on stdin, timeout and failure semantics |
 | Foreground and descriptors | Signal forwarding, terminal I/O/resizing, console handoff, socket activation (`LISTEN_FDS`). Inherited descriptors from 3+N up are marked close-on-exec; `--preserve-fds N` is implemented |
 | Portability and integration | arm64 and x86_64 Linux; real musl/static build and execution; applicable runc compatibility tests; containerd/go-runc interactions and the separate Docker acceptance matrix |
@@ -124,3 +124,12 @@ Linux comparisons cover private TCP, create-time namespace identity, exec after
 source-path removal, caller isolation, descriptor closure and failed-join cleanup.
 The pinned Alpine image also passes containerd-provided network joining and TCP
 through exec. Other namespace joins, cgroup namespaces and bridge/DNS remain open.
+
+Seccomp now uses the host libseccomp system library. Focused Linux debug tests
+compare root/non-root init and exec, both no_new_privs modes, argument comparisons
+(including 64-bit values and AND/OR), errno/trace/log/termination actions, retained
+policy after bundle edits/removal and rejected loads against runc. Containerd's
+default profile and a custom getcwd-denial profile pass the pinned Alpine image
+scenario. Notification, runc's future-syscall ENOSYS fixups, cross-ABI execution,
+other architectures and static/musl packaging remain outside this evidence.
+See [engine baseline](engine-baseline.md) for the exact profile and checks.

@@ -81,6 +81,47 @@ proc namespace links and bind-mounted nsfs paths work. Exec joins the live init'
 namespace, so removing the original path does not break exec. The runtime does
 not provision interfaces, addresses, routes or DNS in the supplied namespace.
 
+## Seccomp policy
+
+Linux builds link libseccomp dynamically; install its development headers when
+building (`libseccomp-dev` on Debian/Ubuntu) and its shared library on the daemon
+host. Filters are compiled and exported to an anonymous close-on-exec memfd in
+the single-threaded supervisor before fork. Only the workload child loads the
+prepared classic BPF; the supervisor's policy is unchanged. macOS builds have an
+unsupported-platform stub and do not require libseccomp.
+
+`linux.seccomp` supports `defaultAction`, `defaultErrnoRet`, `architectures`,
+`flags`, and `syscalls`. Actions are ALLOW, ERRNO, TRACE, TRAP, LOG, KILL (alias
+KILL_THREAD), KILL_THREAD and KILL_PROCESS, using their `SCMP_ACT_` names.
+ERRNO/TRACE default to data 1; ERRNO data must be 0...4095 and TRACE data
+0...65535. Data on another action is rejected. Syscall rules have nonempty
+`names`, an `action`, optional `errnoRet` and optional `args`.
+
+Argument indices are 0...5 with unsigned 64-bit `value`/`valueTwo`; missing
+`valueTwo` means zero. All seven `SCMP_CMP_` operations are supported: NE, LT, LE,
+EQ, GE, GT and MASKED_EQ (value is the mask, valueTwo the expected masked value).
+Distinct indices are ANDed. Like runc's historical behavior, if any index repeats,
+each condition becomes a separate OR rule. Rules equal to the default action are
+redundant. Unknown syscall names in nonredundant rules fail compilation rather
+than being silently skipped as in runc. Native ABI is retained and requested
+known compat architectures are added through libseccomp; execution evidence so
+far is native arm64 only. The library/kernel must support the requested policy.
+
+Supported flags are `SECCOMP_FILTER_FLAG_TSYNC`, `SECCOMP_FILTER_FLAG_LOG`, and
+`SECCOMP_FILTER_FLAG_SPEC_ALLOW`. An absent/null flags array defaults to SPEC_ALLOW
+as in runc; `[]` keeps the kernel defaults. NOTIFY, listener fields and other
+flags are rejected. Unknown/future syscall numbers receive the configured default
+action; there is no runc-specific ENOSYS bytecode fixup.
+
+With `noNewPrivileges: false`, loading occurs before dropping capabilities and
+switching users, while CAP_SYS_ADMIN is available. With `true`, it occurs after
+the credential switch and executable lookup. Create's remaining readiness/start
+handshake runs under the policy; profiles that deny required bootstrap syscalls
+can fail setup. A load failure never falls back to an unfiltered workload or
+silently enables no_new_privs. The original policy is stored in runtime state
+and applied to command and standalone-process exec, even after bundle edits or
+removal. Each exec compiles it again with the daemon host's installed library.
+
 ## Example bundle
 
 A minimal `config.json` for a static BusyBox rootfs:
@@ -124,6 +165,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `process.rlimits` | `type`, `soft`, `hard` for the sixteen Linux names runc accepts (`RLIMIT_CPU` … `RLIMIT_RTTIME`). Values are 64-bit, and `18446744073709551615` means unlimited. An absent, `null`, or empty list keeps the caller's limits. As in runc, every entry is applied in input order with one `prlimit64` per entry, repeats included, so an earlier entry the kernel refuses fails setup even if a later one of the same type would be grantable. Unknown names and soft above hard are rejected before launch (runc fails at its `prlimit`). A missing `soft` or `hard` is rejected; Go's decoding in runc treats it as 0. Kernel refusals fail `create` or `run` with the entry's index, for example a raised hard limit without `CAP_SYS_RESOURCE`, or `RLIMIT_NOFILE` above `fs.nr_open`. |
 | `process.terminal` | Absent or `false`; stdio is inherited directly. |
 | `hostname` | Requires a `uts` namespace. |
+| `linux.seccomp` | libseccomp-backed syscall filters for init and every exec; see the policy details below. |
 | `linux.namespaces` | New `mount` (required), `pid`, `uts`, `ipc`, `network` namespaces. A nonempty absolute `network.path` joins an existing network namespace; other namespace paths and relative paths are rejected. Absent, null or empty paths create the listed namespace; omitted types inherit the caller's namespace. Newly created networks are left unconfigured, including loopback. |
 | `linux.rootfsPropagation` | Absent, `private`, or `rprivate`; propagation is always made `rprivate`. |
 | `linux.readonlyPaths`, `linux.maskedPaths` | Absolute paths without `.`/`..` or NUL; `/` is accepted. Read-only repeats are applied again, as in runc; a masked repeat is applied once. No `/proc` mount is needed. Missing paths are skipped; symlinks are followed only within the container root, and magic links are refused. Read-only paths need Linux 5.12+. See setup step 7. |
@@ -133,7 +175,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `/dev` | With a tmpfs at `/dev`, creates `null`, `zero`, `full`, `random`, `urandom`, `tty` (via `mknod`) and the `fd`, `stdin`, `stdout`, `stderr` links, plus `ptmx` when devpts is mounted. Without a `/dev` tmpfs, `/dev` is left as the rootfs provides it. |
 | `annotations` | Accepted and ignored. They do not affect behavior. |
 
-Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.oomScoreAdj`. This includes hooks, `oomScoreAdj`, `apparmorProfile`, seccomp, resources outside the memory/pids/CPU/device subset above, custom device entries, sysctl, user/cgroup/time namespaces, ID mappings, other filesystem types and broader propagation options.
+Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.oomScoreAdj`. This includes hooks, `oomScoreAdj`, `apparmorProfile`, seccomp notification/listener fields, resources outside the memory/pids/CPU/device subset above, custom device entries, sysctl, user/cgroup/time namespaces, ID mappings, other filesystem types and broader propagation options.
 
 ### Setup sequence
 

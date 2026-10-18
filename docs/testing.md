@@ -43,6 +43,7 @@ suite because a shared file was touched:
 | Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
 | Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and `bind` for bind sources/targets/flags; add `lifecycle` for readiness/cleanup changes. |
 | Supplied network namespace | `network-namespace oci lifecycle preserve-fds`. |
+| Seccomp policy/setup ordering | `seccomp oci lifecycle credentials capabilities preserve-fds`. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
 | Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`, `devices`), plus `update`; add `freezer ps events` if membership/reporting changes. |
@@ -215,3 +216,29 @@ sh scripts/containerd-network-integration.sh .build/linux-6.4.1/debug/swift-cont
 
 The wrapper owns and removes the listener; the image gate owns task/snapshot
 cleanup. This tests supplied namespace consumption, not bridge/NAT/DNS provisioning.
+
+Linux builds require `libseccomp-dev` in addition to the existing Swift toolchain
+and fixture packages; CI and `test-linux.sh` install it. The checked guest uses
+libseccomp 2.6.0. Static or musl distribution remains a separate validation gate.
+
+`scripts/seccomp-integration.sh` compares init/create/start/exec as root and uid
+1000 with no_new_privs true/false, persisted policy after bundle edits/removal,
+all argument operators, 64-bit arguments, distinct-index AND and repeated-index
+OR, errno/trace/log/termination actions, explicit flags and cleanup against runc.
+An inherited filter refusing new seccomp loads proves fail-closed handling.
+Malformed/unsupported policies and unknown nonredundant syscall names must fail
+without state, cgroups or a workload. The direct syscall helper is
+`scripts/fixtures/seccomp-probe.c`.
+
+The opt-in image/security gate runs containerd's own default profile and an
+explicit getcwd/EACCES profile, verifies init filter mode and exec enforcement,
+and retains the existing image/lifecycle/cleanup checks:
+
+```sh
+sh scripts/containerd-seccomp-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+`containerd-seccomp-capture.sh SOCKET NAMESPACE IMAGE@sha256:DIGEST NEW_OUTPUT_DIR`
+records the matching reference runc profiles and direct syscall results. It never
+uses Swift as the reference. Captured JSON can include image environment values;
+inspect them before sharing. Both scripts use the existing daemon and cached image.

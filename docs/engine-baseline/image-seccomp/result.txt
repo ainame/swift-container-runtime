@@ -1,0 +1,31 @@
+Client:
+  Version:  2.2.2
+  Revision:
+  Go version: go1.24.13
+
+Server:
+  Version:  2.2.2
+  Revision:
+  UUID: 5f44dc5b-f9d5-45f2-bf23-87a753be1815
+image: docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+getcwd: allowed
+seccomp: init filter mode and exec syscall result verified
+3.23.6
+time="2026-10-18T16:26:12Z" level=warning msg="task sct-image-4736 exit with non-zero exit code 137"
+containerd-image: PASS (native snapshot, readonly config, writable volume, init/exec, PID files, exit status and cleanup)
+Client:
+  Version:  2.2.2
+  Revision:
+  Go version: go1.24.13
+
+Server:
+  Version:  2.2.2
+  Revision:
+  UUID: 5f44dc5b-f9d5-45f2-bf23-87a753be1815
+image: docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+getcwd: EACCES
+seccomp: init filter mode and exec syscall result verified
+3.23.6
+time="2026-10-18T16:26:13Z" level=warning msg="task sct-image-4928 exit with non-zero exit code 137"
+containerd-image: PASS (native snapshot, readonly config, writable volume, init/exec, PID files, exit status and cleanup)
+containerd-seccomp: PASS (default and custom policy, init mode, exec syscall enforcement and image cleanup)

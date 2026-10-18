@@ -4,7 +4,7 @@ An educational Linux container runtime written in Swift. Explore how namespaces,
 root filesystems, process isolation, and cgroups fit together in a small OCI runtime.
 
 **For learning and experimentation.** This is not a production runtime or a security
-boundary. Seccomp, custom device entries, user namespaces, rootless operation,
+boundary. Custom device entries, user namespaces, rootless operation,
 and terminals are not implemented. The [roadmap](docs/roadmap.md) targets
 kontainer-runtime-level functionality and eventual Docker integration.
 
@@ -12,6 +12,8 @@ kontainer-runtime-level functionality and eventual Docker integration.
 
 Requires Swift 6.4 (6.4.1 on Linux), root, and Linux 5.11+ with cgroup v2 and
 permission to create namespaces and mounts. Use a disposable Linux VM for experiments.
+Linux builds also require libseccomp development headers (`libseccomp-dev` on
+Debian/Ubuntu); the executable links the host libseccomp shared library.
 macOS 27+ supports building and unit tests; running containers requires Linux.
 
 ```sh

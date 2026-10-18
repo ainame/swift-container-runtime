@@ -1,0 +1,8 @@
+getcwd: allowed
+Seccomp:	2
+getcwd: allowed
+time="2026-10-18T16:13:47Z" level=warning msg="task sct-seccomp-30397 exit with non-zero exit code 137"
+Seccomp:	2
+getcwd: EACCES
+time="2026-10-18T16:13:47Z" level=warning msg="task sct-seccomp-30397 exit with non-zero exit code 137"
+containerd-seccomp-capture: PASS (reference default profile, custom denied getcwd, exec and cleanup)

@@ -132,3 +132,9 @@ sh scripts/test-linux.sh --configuration all
 
 See [validation tiers](testing.md#validation-tiers) for broad-change coverage and
 when to rerun checks.
+
+`CSeccomp` is a Linux-only system-library binding to the host libseccomp. Only
+`Kernel/Seccomp.swift` imports it. `Specification/SeccompProfile` owns strict OCI
+validation and the persisted policy; `WorkloadSetup` owns load ordering shared by
+init and exec. Library filter construction and memfd export happen before fork;
+the child uses the prepared bytes with seccomp(2), without library construction.

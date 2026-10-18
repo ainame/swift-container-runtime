@@ -160,6 +160,8 @@ passes native-snapshotter run/exec with readonly configuration and writable
 volume binds, PID files, exit status and snapshot/state/cgroup cleanup. A supplied
 network namespace now also passes namespace identity and private loopback TCP
 through the same image/shim path. This is still a constrained profile, not ordinary
-Docker support or closure of the broader milestone gates. Next: a supported
-seccomp profile, followed by the remaining requested security and console gates.
+Docker support or closure of the broader milestone gates. The latest
+security increment is now seccomp-backed default/custom containerd profiles with
+active syscall-denial evidence. Next: OOM adjustment and session keyring setup,
+then requested LSM handling and console gates.
 Never discard requested security fields to advance it.
