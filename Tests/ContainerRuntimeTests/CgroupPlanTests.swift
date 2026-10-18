@@ -160,7 +160,7 @@ func memoryFollowsRunc(_ limit: Int64, _ reservation: Int64, _ swap: Int64, _ ma
     (#"{"cpu": {"realtimeRuntime": 950000}}"#, "unsupported field(s): linux.resources.cpu.realtimeRuntime"),
     (#"{"cpu": {"realtimePeriod": 1000000}}"#, "unsupported field(s): linux.resources.cpu.realtimePeriod"),
     (#"{"cpu": {"weight": 100}}"#, "unsupported field(s): linux.resources.cpu.weight"),
-    (#"{"devices": [{"allow": false, "access": "rwm"}]}"#, "linux.resources.devices"),
+    (#"{"devices": [{"allow": false, "access": "invalid"}]}"#, "devices[0].access"),
     (#"{"blockIO": {}}"#, "linux.resources.blockIO"),
     (#"{"hugepageLimits": []}"#, "linux.resources.hugepageLimits"),
     (#"{"unified": {}}"#, "linux.resources.unified"),

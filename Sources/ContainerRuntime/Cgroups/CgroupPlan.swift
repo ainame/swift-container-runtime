@@ -115,10 +115,11 @@ public struct CgroupResources: Sendable, Equatable {
     public let cpu: CgroupCPU
     public let cpuset: CgroupCpuset
     let memoryCheck: MemoryUsageCheck?
+    let devicePolicy: DevicePolicy?
 
     public static let none = CgroupResources(memoryMax: nil, memoryLow: nil, swapMax: nil, pidsMax: nil)
 
-    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none, cpuset: CgroupCpuset = .none, memoryCheck: MemoryUsageCheck? = nil) {
+    init(memoryMax: CgroupValue?, memoryLow: CgroupValue?, swapMax: CgroupValue?, pidsMax: CgroupValue?, cpu: CgroupCPU = .none, cpuset: CgroupCpuset = .none, memoryCheck: MemoryUsageCheck? = nil, devicePolicy: DevicePolicy? = nil) {
         self.memoryMax = memoryMax
         self.memoryLow = memoryLow
         self.swapMax = swapMax
@@ -126,6 +127,7 @@ public struct CgroupResources: Sendable, Equatable {
         self.cpu = cpu
         self.cpuset = cpuset
         self.memoryCheck = memoryCheck
+        self.devicePolicy = devicePolicy
     }
 
     /// Writes in runc's Set order: pids, then memory.swap.max, memory.max,
@@ -322,7 +324,8 @@ public struct CgroupPlan: Sendable, Equatable {
             mems: cpu?.mems.flatMap { $0.isEmpty ? nil : $0 }
         )
         return CgroupResources(memoryMax: memoryMax, memoryLow: memoryLow, swapMax: swapMax, pidsMax: pidsMax, cpu: cpuValues, cpuset: cpuset,
-            memoryCheck: memory?.checkBeforeUpdate == true && (limit > 0 || swap > 0) ? MemoryUsageCheck(limit: limit, swap: swap) : nil
+            memoryCheck: memory?.checkBeforeUpdate == true && (limit > 0 || swap > 0) ? MemoryUsageCheck(limit: limit, swap: swap) : nil,
+            devicePolicy: try resources?.devices.flatMap { $0.isEmpty ? nil : try DevicePolicy($0) }
         )
     }
 
@@ -378,6 +381,8 @@ struct CgroupIdentity: Codable, Sendable, Equatable {
     /// True when this container created the directory and removes it on
     /// cleanup; a supplied pre-existing cgroup is emptied and left in place.
     var created: Bool
+    /// Only this program is detached when an adopted cgroup is cleaned up.
+    var deviceProgramID: UInt32? = nil
 
     var components: [String] { path.split(separator: "/").map(String.init) }
 
@@ -389,5 +394,6 @@ struct CgroupIdentity: Codable, Sendable, Equatable {
             && !path.utf8.contains(0) && !path.utf8.contains(UInt8(ascii: "\n"))
             && !parts.contains { $0 == "." || $0 == ".." }
             && InitIdentity.isValidBootID(bootID)
+            && (deviceProgramID.map { $0 > 0 } ?? true)
     }
 }

@@ -10,14 +10,12 @@ private func engineFixture(_ name: String) throws -> Data {
     return try Data(contentsOf: path)
 }
 
-@Test func capturedEngineCreateKeepsUnsupportedSecurityExplicit() throws {
-    let data = try engineFixture("create.config.json")
-    do {
-        _ = try JSONDecoder().decode(OCIConfiguration.self, from: data)
-        Issue.record("Device restrictions must be applied or rejected")
-    } catch {
-        #expect(String(describing: error).contains("linux.resources.devices"))
-    }
+@Test func capturedEngineCreatePlansEnforcedDevicePolicy() throws {
+    let config = try JSONDecoder().decode(OCIConfiguration.self, from: engineFixture("create.config.json"))
+    let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/rootfs"))
+    let policy = try #require(plan.cgroup.resources.devicePolicy)
+    #expect(!policy.defaultAllow)
+    #expect(!DeviceFilter.bytecode(policy).isEmpty)
 }
 
 @Test func capturedEngineExecProcessIsSupported() throws {
@@ -28,16 +26,8 @@ private func engineFixture(_ name: String) throws -> Data {
     #expect(plan.security.noNewPrivileges)
 }
 
-@Test func capturedEngineMountsPlanWithoutUnsupportedDevicePolicy() throws {
-    // A planning projection only: the original live bundle must keep failing
-    // until device restrictions are enforced. Never replay this as live evidence.
-    var object = try #require(JSONSerialization.jsonObject(with: engineFixture("create.config.json")) as? [String: Any])
-    var linux = try #require(object["linux"] as? [String: Any])
-    var resources = try #require(linux["resources"] as? [String: Any])
-    resources["devices"] = nil
-    linux["resources"] = resources
-    object["linux"] = linux
-    let config = try JSONDecoder().decode(OCIConfiguration.self, from: JSONSerialization.data(withJSONObject: object))
+@Test func capturedEngineMountsPlanWithDevicePolicy() throws {
+    let config = try JSONDecoder().decode(OCIConfiguration.self, from: engineFixture("create.config.json"))
     let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/rootfs"))
     #expect(plan.mounts.contains { $0.type == .sysfs && $0.flags.contains(.readonly) })
     #expect(plan.mounts.contains { $0.type == .mqueue && $0.destinationPath == "/dev/mqueue" })

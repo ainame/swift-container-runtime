@@ -16,6 +16,7 @@ public struct ResourceUpdate: Sendable {
     public init(json: [UInt8]) throws {
         do { configuration = try JSONDecoder().decode(OCIConfiguration.Resources.self, from: Data(json)) }
         catch { throw RuntimeError("resources JSON: \(error)") }
+        guard configuration.devices == nil else { throw RuntimeError("device rule updates are not implemented") }
     }
 
     /// An update from individual values, as `update`'s flags give them.

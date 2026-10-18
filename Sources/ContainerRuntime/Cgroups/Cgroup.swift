@@ -325,7 +325,10 @@ final class CgroupLeaf {
             guard let inode = leaf.inode, inode > 0 else {
                 throw RuntimeError("inspect cgroup \(leaf.displayPath): \(Errno.current)")
             }
-            let identity = CgroupIdentity(path: leaf.path, inode: inode, bootID: bootID, created: created)
+            let programID = try resources.devicePolicy.map { policy in
+                try leaf.descriptor.withDescriptor { try DeviceFilter.install(policy, in: $0) }
+            }
+            let identity = CgroupIdentity(path: leaf.path, inode: inode, bootID: bootID, created: created, deviceProgramID: programID)
             return CgroupLeaf(identity: identity, directory: leaf, setupLock: setupLock)
         } catch {
             // Remove only what this call created, innermost first.
@@ -470,6 +473,9 @@ final class CgroupLeaf {
 
         // Remove child cgroups depth-first, then the cgroup if it is ours.
         try removeDescendants(of: current)
+        if let programID = identity.deviceProgramID {
+            try current.descriptor.withDescriptor { try DeviceFilter.remove(programID, from: $0) }
+        }
         if identity.created {
             if let error = parent.removeChild(components[components.count - 1]) { throw RuntimeError("remove cgroup \(current.displayPath): \(error)") }
         }

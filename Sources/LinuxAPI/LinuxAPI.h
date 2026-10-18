@@ -3,6 +3,8 @@
 
 #if defined(__linux__)
 #include <fcntl.h>
+#include <linux/bpf.h>
+#include <stdint.h>
 #include <linux/sched.h>
 #include <poll.h>
 #include <signal.h>
@@ -272,6 +274,49 @@ static inline int linux_accept_cloexec(int fd) {
 #ifndef POLLRDHUP
 #define POLLRDHUP 0x2000
 #endif
+/* bpf(2): keep the union ABI and pointer-to-u64 conversions out of Swift. */
+static inline int linux_bpf_device_load(const uint8_t *instructions, size_t length,
+                                       uint8_t *log, size_t log_length) {
+    union bpf_attr attr = {0};
+    attr.prog_type = BPF_PROG_TYPE_CGROUP_DEVICE;
+    attr.expected_attach_type = BPF_CGROUP_DEVICE;
+    attr.insn_cnt = (__u32)(length / sizeof(struct bpf_insn));
+    attr.insns = (__u64)(uintptr_t)instructions;
+    attr.license = (__u64)(uintptr_t)"Apache";
+    attr.log_buf = (__u64)(uintptr_t)log;
+    attr.log_size = (__u32)log_length;
+    attr.log_level = 1;
+    return (int)syscall(SYS_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
+}
+static inline int linux_bpf_device_attach(int program, int cgroup) {
+    union bpf_attr attr = {0};
+    attr.target_fd = (__u32)cgroup;
+    attr.attach_bpf_fd = (__u32)program;
+    attr.attach_type = BPF_CGROUP_DEVICE;
+    attr.attach_flags = BPF_F_ALLOW_MULTI;
+    return (int)syscall(SYS_bpf, BPF_PROG_ATTACH, &attr, sizeof(attr));
+}
+static inline int linux_bpf_device_detach(int program, int cgroup) {
+    union bpf_attr attr = {0};
+    attr.target_fd = (__u32)cgroup;
+    attr.attach_bpf_fd = (__u32)program;
+    attr.attach_type = BPF_CGROUP_DEVICE;
+    return (int)syscall(SYS_bpf, BPF_PROG_DETACH, &attr, sizeof(attr));
+}
+static inline uint32_t linux_bpf_program_id(int program) {
+    struct bpf_prog_info info = {0};
+    union bpf_attr attr = {0};
+    attr.info.bpf_fd = (__u32)program;
+    attr.info.info_len = sizeof(info);
+    attr.info.info = (__u64)(uintptr_t)&info;
+    if (syscall(SYS_bpf, BPF_OBJ_GET_INFO_BY_FD, &attr, sizeof(attr)) < 0) return 0;
+    return info.id;
+}
+static inline int linux_bpf_program_open(uint32_t id) {
+    union bpf_attr attr = {0};
+    attr.prog_id = id;
+    return (int)syscall(SYS_bpf, BPF_PROG_GET_FD_BY_ID, &attr, sizeof(attr));
+}
 #endif
 
 #endif

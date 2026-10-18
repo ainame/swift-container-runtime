@@ -184,20 +184,43 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
-    /// `linux.resources`. Only the memory, pids, and CPU controls are
-    /// implemented; block I/O, hugepages, devices, network, RDMA, and unified
+    struct DeviceRule: Codable, Sendable, Equatable {
+        var allow: Bool
+        var type: String?
+        var major: Int64?
+        var minor: Int64?
+        var access: String
+
+        init(allow: Bool, type: String? = nil, major: Int64? = nil, minor: Int64? = nil, access: String) {
+            self.allow = allow; self.type = type; self.major = major; self.minor = minor; self.access = access
+        }
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["allow", "type", "major", "minor", "access"])
+            allow = try object.required("allow")
+            type = try object.optional("type")
+            major = try object.optionalInt64("major")
+            minor = try object.optionalInt64("minor")
+            access = try object.required("access")
+        }
+    }
+
+    /// `linux.resources`. Memory, pids, CPU and device rules are implemented;
+    /// block I/O, hugepages, network, RDMA, and unified
     /// keys are rejected rather than ignored.
     struct Resources: Codable, Sendable, Equatable {
         init() {}
         var memory: Memory?
         var pids: Pids?
         var cpu: CPU?
+        var devices: [DeviceRule]?
 
         init(from decoder: any Decoder) throws {
-            let object = try StrictObject(decoder, allowed: ["memory", "pids", "cpu"])
+            let object = try StrictObject(decoder, allowed: ["memory", "pids", "cpu", "devices"])
             memory = try object.optional("memory")
             pids = try object.optional("pids")
             cpu = try object.optional("cpu")
+            devices = try object.optional("devices")
         }
     }
 
