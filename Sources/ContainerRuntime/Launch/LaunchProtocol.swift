@@ -12,7 +12,7 @@ enum LaunchStage: Int32 {
     case findExecutable, relativeExecutable, pidfdOpen, pidfdSend
     case openMountSource, seccomp, oomScoreAdjustment, sessionKeyring, keyringPermissions
     case keyCreationLabel, appArmorProfile, selinuxLabel
-    case openTerminal, bindConsole, sendTerminal, terminalStdio
+    case openTerminal, bindConsole, sendTerminal, terminalStdio, sysctl
 
     var description: String {
         switch self {
@@ -83,6 +83,7 @@ enum LaunchStage: Int32 {
         case .bindConsole: "bind the terminal onto /dev/console"
         case .sendTerminal: "send the terminal to --console-socket"
         case .terminalStdio: "make the terminal stdio and the controlling terminal"
+        case .sysctl: "write linux.sysctl"
         }
     }
 }

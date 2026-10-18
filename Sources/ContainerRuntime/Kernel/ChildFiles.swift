@@ -28,6 +28,27 @@ extension Kernel.File {
         _ = close(raw)
     }
 
+    /// Writes `value` (NUL-terminated, without the NUL) to the procfs file
+    /// at `path` in one write(2). The file must be on procfs, so an image's
+    /// ordinary file at that path is never written instead.
+    static func writeProcFile(_ path: UnsafePointer<CChar>, _ value: UnsafePointer<CChar>) throws(Errno) {
+        #if os(Linux)
+        let raw = unsafe openat(AT_FDCWD, path, O_WRONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard raw >= 0 else { throw .current }
+        defer { _ = close(raw) }
+        var filesystem = statfs()
+        guard unsafe fstatfs(raw, &filesystem) == 0 else { throw .current }
+        // PROC_SUPER_MAGIC from <linux/magic.h>.
+        guard UInt64(truncatingIfNeeded: filesystem.f_type) == 0x9fa0 else { throw .notSupported }
+        let bytes = unsafe UnsafeRawBufferPointer(start: value, count: strlen(value))
+        let written: Int
+        do { written = try unsafe FileDescriptor(rawValue: raw).write(bytes) } catch { throw (error as? Errno) ?? .ioError }
+        guard written == bytes.count else { throw .ioError }
+        #else
+        throw .noFunction
+        #endif
+    }
+
     /// mknodat(2) of a character device.
     static func makeCharacterDevice(_ name: UnsafePointer<CChar>, in directory: FileDescriptor, permissions: FilePermissions, device: UInt64) throws(Errno) {
         let mode = mode_t(fileTypeCharacterDevice) | mode_t(permissions.rawValue)

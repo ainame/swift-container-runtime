@@ -260,15 +260,17 @@ struct OCIConfiguration: Decodable, Sendable {
         var seccomp: SeccompProfile?
         /// Decoded only so that a requested label is refused, not ignored.
         var mountLabel: String?
+        var sysctl: [String: String]?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
                 decoder,
                 allowed: [
                     "namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources", "seccomp",
-                    "mountLabel",
+                    "mountLabel", "sysctl",
                 ]
             )
+            sysctl = try object.optional("sysctl")
             mountLabel = try object.optional("mountLabel")
             namespaces = try object.required("namespaces")
             rootfsPropagation = try object.optional("rootfsPropagation")

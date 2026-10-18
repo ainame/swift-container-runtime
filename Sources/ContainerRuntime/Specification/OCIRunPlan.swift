@@ -113,6 +113,9 @@ public struct OCIRunPlan: Sendable {
     public let networkNamespacePath: String?
     /// The UTS hostname; nil keeps the inherited one.
     public let hostname: String?
+    /// `linux.sysctl`, validated against the container's namespaces and
+    /// applied in key order after `pivot_root`.
+    public let sysctls: [Sysctl]
     /// The configured mounts, in order.
     public let mounts: [Mount]
     /// True when a tmpfs is mounted at /dev; the runtime then creates the
@@ -335,6 +338,12 @@ public struct OCIRunPlan: Sendable {
         let mounts = try configuration.mounts.enumerated().map { index, mount in
             try Self.mount(mount, index: index, namespaces: namespaces, bundle: bundle)
         }
+        let sysctls = try Sysctl.validated(
+            configuration.linux.sysctl ?? [:], creating: namespaces, joinsNetwork: networkNamespacePath != nil)
+        // Written through the container's own procfs, which must be mounted.
+        if !sysctls.isEmpty, !mounts.contains(where: { $0.type == .proc && $0.destination == ["proc"] }) {
+            throw RuntimeError("config.json: linux.sysctl needs a proc mount at /proc")
+        }
         let pathControls = try PathControls(
             readonly: configuration.linux.readonlyPaths ?? [], masked: configuration.linux.maskedPaths ?? []
         )
@@ -353,6 +362,7 @@ public struct OCIRunPlan: Sendable {
         self.consoleSize = process.consoleSize
         self.oomScoreAdjustment = process.oomScoreAdjustment
         self.hostname = configuration.hostname
+        self.sysctls = sysctls
         self.mounts = mounts
         self.populatesDev = mounts.last(where: { $0.destination == ["dev"] })?.type == .tmpfs
         self.arguments = process.arguments

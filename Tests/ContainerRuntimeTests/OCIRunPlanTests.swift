@@ -148,7 +148,6 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "selinuxLabel": "a\u0000b"}"#), "process.selinuxLabel"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "mountLabel": "system_u:object_r:container_file_t:s0"}"#), "linux.mountLabel"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}], "sysctl": {"net.ipv4.ip_forward": "1"}}"#), "linux.sysctl"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "resources": {"cpu": {"realtimeRuntime": 950000}}}"#), "linux.resources.cpu.realtimeRuntime"),
     (config(linux: #"{"namespaces": [{"type": "mount"}], "seccomp": {"defaultAction":"SCMP_ACT_NOTIFY"}}"#), "linux.seccomp.defaultAction"),
     (config(linux: #"{"namespaces": [{"type": "mount", "path": "/proc/1/ns/mnt"}]}"#), "path"),

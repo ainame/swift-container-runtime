@@ -33,6 +33,7 @@ extension OCIRunPlan {
             cwd.indices.map { "/" + cwd[...$0].joined(separator: "/") },
             ["dev"],
             executable.candidates,
+            sysctls.flatMap { [$0.path, $0.value] },
         ]
         for mount in mounts {
             groups.append(mount.destination)
@@ -63,8 +64,16 @@ extension OCIRunPlan {
         // Pin and validate in the supervisor. Only its forked launcher calls
         // setns, before unsharing the remaining namespaces or mounting sysfs.
         let network = try InitNetworkNamespace(path: networkNamespacePath)
+        let sysctls = self.sysctls
+        // A joined namespace may be the host's; its net.* sysctls would leak.
+        if let path = networkNamespacePath, sysctls.contains(where: \.isNetwork), try network.isCallerNamespace() {
+            throw RuntimeError("config.json: linux.sysctl net.* is not allowed in the host's network namespace \(path)")
+        }
         let context: (LaunchStage, Int32) -> String? = { stage, detail in
             switch stage {
+            case .sysctl:
+                guard sysctls.indices.contains(Int(detail)) else { return nil }
+                return "\(stage.description) \(sysctls[Int(detail)].key)"
             case .joinNamespaces:
                 return networkNamespacePath.map { "join supplied network namespace \($0)" }
             case .openMountSource:

@@ -1,13 +1,15 @@
 import SystemPackage
 
-/// Group indices in the launch string vector. Each mount adds three groups:
-/// its destination components, `[source, type, data]`, and the absolute
-/// destination prefixes a bind resolves in-root (empty for other mounts).
+/// Group indices in the launch string vector. `sysctls` alternates procfs
+/// paths and values. Each mount adds three groups: its destination
+/// components, `[source, type, data]`, and the absolute destination prefixes
+/// a bind resolves in-root (empty for other mounts).
 enum InitStringGroup {
     static let arguments = 0, environment = 1, rootfs = 2, hostname = 3, cwdPrefixes = 4, dev = 5, executable = 6
-    static func destination(_ mount: Int) -> Int { 7 + 3 * mount }
-    static func filesystem(_ mount: Int) -> Int { 8 + 3 * mount }
-    static func destinationPrefixes(_ mount: Int) -> Int { 9 + 3 * mount }
+    static let sysctls = 7
+    static func destination(_ mount: Int) -> Int { 8 + 3 * mount }
+    static func filesystem(_ mount: Int) -> Int { 9 + 3 * mount }
+    static func destinationPrefixes(_ mount: Int) -> Int { 10 + 3 * mount }
 }
 
 /// Prepared init inputs; every borrowed string remains within the enclosing launch scope.
@@ -49,6 +51,7 @@ struct RootFilesystemSetup {
            let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Process.setHostname(hostname) }) {
             return LaunchFailure(stage: .hostname, error: error)
         }
+        if let failure = unsafe writeSysctls() { return failure }
         if let failure = unsafe makeWorkingDirectory() { return failure }
         // runc's finalizeRootfs: with every mount, /dev entry and the cwd in
         // place, make the root mount read-only. This runs in the container's
@@ -178,6 +181,24 @@ struct RootFilesystemSetup {
         try oldRoot.borrowDescriptor { oldRoot throws(Errno) in try Kernel.Process.changeDirectory(to: oldRoot) }
         try unsafe Kernel.Mount.unmountDetached(".")
         try unsafe Kernel.Process.changeDirectory("/")
+    }
+
+    /// runc's sysctl step: each entry through the container's /proc/sys,
+    /// which must be procfs, in key order. Returns nil or the failure.
+    @unsafe
+    private func writeSysctls() -> LaunchFailure? {
+        var entry = unsafe group(InitStringGroup.sysctls)
+        var index: Int32 = 0
+        while let path = unsafe entry[0], let value = unsafe entry[1] {
+            do {
+                try unsafe Kernel.File.writeProcFile(path, value)
+            } catch {
+                return LaunchFailure(stage: .sysctl, error: error, detail: index)
+            }
+            unsafe entry += 2
+            index += 1
+        }
+        return nil
     }
 
     /// Like runc, create a missing cwd. Paths now resolve inside the new root.

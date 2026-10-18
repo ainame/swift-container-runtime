@@ -33,6 +33,13 @@ struct InitNetworkNamespace: ~Copyable {
         return descriptor
     }
 
+    /// Whether the pinned namespace is the caller's own (host) network namespace.
+    func isCallerNamespace() throws -> Bool {
+        guard required else { return false }
+        let own = try Kernel.File.status(atPath: "/proc/self/ns/net").identity
+        return try descriptor.withDescriptor { try Kernel.File.status(of: $0).identity } == own
+    }
+
     /// setns(2) into the pinned namespace; nil when none was supplied.
     /// Called only in the single-threaded launcher.
     func join() -> Errno? {
