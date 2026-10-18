@@ -126,22 +126,23 @@ struct RootFilesystemSetup {
     /// and detached through a descriptor, without a put_old directory. Both
     /// descriptors are closed afterwards.
     private static func switchRoot(to root: consuming OwnedFileDescriptor) -> LaunchFailure? {
-        var oldRoot = OwnedFileDescriptor()
-        let error = Errno.failure { () throws(Errno) in
-            oldRoot = try Kernel.File.openPath("/", options: .directory)
-        } ?? root.failure(in: { root in
-            Errno.failure { () throws(Errno) in try Kernel.Process.changeDirectory(to: root) }
-        }) ?? Errno.failure { () throws(Errno) in
-            try unsafe Kernel.Mount.pivotRoot(".", ".")
-        } ?? oldRoot.failure(in: { oldRoot in
-            Errno.failure { () throws(Errno) in try Kernel.Process.changeDirectory(to: oldRoot) }
-        }) ?? Errno.failure { () throws(Errno) in
-            try unsafe Kernel.Mount.unmountDetached(".")
-            try unsafe Kernel.Process.changeDirectory("/")
+        do {
+            try unsafe pivot(into: root)
+        } catch {
+            return LaunchFailure(stage: .pivotRoot, error: error)
         }
-        try? oldRoot.close()
         try? root.close()
-        return error.map { LaunchFailure(stage: .pivotRoot, error: $0) }
+        return nil
+    }
+
+    private static func pivot(into root: borrowing OwnedFileDescriptor) throws(Errno) {
+        var oldRoot = try Kernel.File.openPath("/", options: .directory)
+        defer { try? oldRoot.close() }
+        try root.borrowDescriptor { root throws(Errno) in try Kernel.Process.changeDirectory(to: root) }
+        try unsafe Kernel.Mount.pivotRoot(".", ".")
+        try oldRoot.borrowDescriptor { oldRoot throws(Errno) in try Kernel.Process.changeDirectory(to: oldRoot) }
+        try unsafe Kernel.Mount.unmountDetached(".")
+        try unsafe Kernel.Process.changeDirectory("/")
     }
 
     /// Like runc, create a missing cwd. Paths now resolve inside the new root.

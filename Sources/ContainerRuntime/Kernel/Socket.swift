@@ -12,14 +12,15 @@ import SystemPackage
 
 extension Kernel {
     /// Unix-domain sockets. Descriptors are close-on-exec, and sends never
-    /// raise SIGPIPE on Linux (MSG_NOSIGNAL), so a vanished peer is an error.
+    /// raise SIGPIPE (MSG_NOSIGNAL), so a vanished peer is an error. Creating
+    /// and accepting sockets is Linux-only, so that promise always holds.
     enum Socket {
         /// A close-on-exec SOCK_SEQPACKET socket.
         static func unixSequencedPacket() throws(Errno) -> OwnedFileDescriptor {
             #if os(Linux)
             try owned(linux_unix_seqpacket_socket())
             #else
-            try owned(socket(AF_UNIX, SOCK_SEQPACKET, 0))
+            throw .noFunction
             #endif
         }
 
@@ -28,20 +29,20 @@ extension Kernel {
             #if os(Linux)
             try owned(linux_unix_stream_socket())
             #else
-            try owned(socket(AF_UNIX, SOCK_STREAM, 0))
+            throw .noFunction
             #endif
         }
 
         /// socketpair(2) of close-on-exec SOCK_STREAM sockets; the caller takes
         /// ownership of both ends at once.
         static func unixStreamPair() throws(Errno) -> (FileDescriptor, FileDescriptor) {
-            var pair: [Int32] = [-1, -1]
             #if os(Linux)
+            var pair: [Int32] = [-1, -1]
             guard unsafe linux_unix_stream_socketpair(&pair) == 0 else { throw .current }
-            #else
-            guard unsafe socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { throw .current }
-            #endif
             return (FileDescriptor(rawValue: pair[0]), FileDescriptor(rawValue: pair[1]))
+            #else
+            throw .noFunction
+            #endif
         }
 
         /// bind(2) to `sunPath`, the exact `sun_path` bytes: a filesystem
@@ -61,19 +62,17 @@ extension Kernel {
 
         /// accept(2) of a close-on-exec connection on an owned listener.
         static func accept(_ listener: borrowing OwnedFileDescriptor) throws(Errno) -> OwnedFileDescriptor {
+            #if os(Linux)
             let raw: Int32
             do {
-                raw = try listener.withDescriptor { socket in
-                    #if os(Linux)
-                    linux_accept_cloexec(socket.rawValue)
-                    #else
-                    libcAccept(socket.rawValue, nil, nil)
-                    #endif
-                }
+                raw = try listener.withDescriptor { linux_accept_cloexec($0.rawValue) }
             } catch {
                 throw (error as? Errno) ?? .badFileDescriptor
             }
             return try owned(raw)
+            #else
+            throw .noFunction
+            #endif
         }
 
         /// One send(2), retried on EINTR; returns the bytes sent.
@@ -178,9 +177,6 @@ private func libcConnect(_ socket: Int32, _ address: UnsafePointer<sockaddr>, _ 
     unsafe connect(socket, address, length)
 }
 private func libcListen(_ socket: Int32, _ backlog: Int32) -> Int32 { listen(socket, backlog) }
-private func libcAccept(_ socket: Int32, _ address: UnsafeMutablePointer<sockaddr>?, _ length: UnsafeMutablePointer<socklen_t>?) -> Int32 {
-    unsafe accept(socket, address, length)
-}
 private func libcSend(_ socket: Int32, _ bytes: UnsafeRawPointer?, _ count: Int, _ flags: Int32) -> Int {
     unsafe send(socket, bytes, count, flags)
 }

@@ -56,13 +56,7 @@ extension OwnedFileDescriptor {
     /// or `EBADF` when this owner holds nothing. (`try? withDescriptor` would
     /// flatten the body's nil, meaning success, into its fallback.)
     borrowing func failure(in body: (FileDescriptor) -> Errno?) -> Errno? {
-        failure(in: body, whenClosed: .badFileDescriptor)
-    }
-
-    /// `failure(in:)` for any failure type: the body's failure, or `closed`
-    /// when this owner holds nothing.
-    borrowing func failure<Failure>(in body: (FileDescriptor) -> Failure?, whenClosed closed: Failure) -> Failure? {
-        do { return try withDescriptor(body) } catch { return closed }
+        do { return try withDescriptor(body) } catch { return .badFileDescriptor }
     }
 
     /// Reads to EOF, failing once more than `limit` bytes arrive.

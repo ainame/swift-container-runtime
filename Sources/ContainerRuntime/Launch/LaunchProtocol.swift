@@ -105,25 +105,24 @@ struct LaunchRecord {
     /// The reported errno, or nil for a failure without one.
     var error: Errno? { code == 0 ? nil : Errno(rawValue: code) }
 
-    /// The encoded size: four 32-bit fields and one 64-bit field.
-    static let byteCount = 24
+    /// The encoding: four 32-bit fields and one 64-bit field, each
+    /// little-endian, in stack storage so writing one never allocates.
+    typealias Encoded = InlineArray<24, UInt8>
 
-    /// The fields in order, each little-endian.
-    var bytes: [UInt8] {
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(Self.byteCount)
-        func append<Field: FixedWidthInteger>(_ field: Field) {
-            for shift in stride(from: 0, to: Field.bitWidth, by: 8) {
-                bytes.append(UInt8(truncatingIfNeeded: field >> shift))
+    var encoded: Encoded {
+        var bytes = Encoded(repeating: 0)
+        var offset = 0
+        func put<Field: FixedWidthInteger>(_ field: Field) {
+            for index in 0..<(Field.bitWidth / 8) {
+                bytes[offset + index] = UInt8(truncatingIfNeeded: field >> (8 * index))
             }
+            offset += Field.bitWidth / 8
         }
-        append(kind); append(stage); append(code); append(detail); append(value)
+        put(kind); put(stage); put(code); put(detail); put(value)
         return bytes
     }
 
-    /// Decodes `byteCount` bytes written by `bytes`.
-    init(bytes: [UInt8]) {
-        precondition(bytes.count == Self.byteCount)
+    init(encoded bytes: Encoded) {
         var offset = 0
         func next<Field: FixedWidthInteger>(_: Field.Type) -> Field {
             var field: Field = 0
@@ -142,7 +141,7 @@ struct LaunchRecord {
 }
 
 /// A child-side setup failure, reported through a `LaunchRecord` before exit.
-struct LaunchFailure {
+struct LaunchFailure: Error {
     let stage: LaunchStage
     /// Nil for a failure without an errno, such as a refused executable lookup.
     let error: Errno?
@@ -174,29 +173,31 @@ extension LaunchRecord {
     /// MSG_NOSIGNAL so a vanished peer cannot kill the writer with SIGPIPE.
     @discardableResult
     func write(to owner: borrowing OwnedFileDescriptor, socket: Bool = false) -> Bool {
-        let bytes = self.bytes
+        let encoded = self.encoded
         // Keep ownership through the write. A cached raw number alone could
         // outlive its owner on a child path that never returns to Swift.
         return (try? owner.withDescriptor { descriptor in
             // One write either way; a record is smaller than PIPE_BUF.
             let written = socket
-                ? try Kernel.Socket.send(descriptor, bytes.span.bytes)
-                : try Kernel.File.write(descriptor, bytes.span.bytes)
-            return written == bytes.count
+                ? try Kernel.Socket.send(descriptor, encoded.span.bytes)
+                : try Kernel.File.write(descriptor, encoded.span.bytes)
+            return written == encoded.count
         }) ?? false
     }
 
     /// Reads one whole record, or reports EOF before its first byte.
     static func read(from owner: borrowing OwnedFileDescriptor) -> RecordRead {
+        var encoded = Encoded(repeating: 0)
         do {
             return try owner.withDescriptor { readEnd in
-                var bytes: [UInt8] = []
-                while bytes.count < byteCount {
-                    let chunk = try Kernel.File.read(readEnd, upTo: byteCount - bytes.count)
-                    if chunk.isEmpty { return bytes.isEmpty ? .end : .failed(.ioError) }
-                    bytes += chunk
+                var received = 0
+                while received < encoded.count {
+                    var span = encoded.mutableSpan
+                    let count = try Kernel.File.read(readEnd, into: &span, from: received)
+                    if count == 0 { return received == 0 ? .end : .failed(.ioError) }
+                    received += count
                 }
-                return .record(LaunchRecord(bytes: bytes))
+                return .record(LaunchRecord(encoded: encoded))
             }
         } catch {
             return .failed((error as? Errno) ?? .ioError)
@@ -222,7 +223,8 @@ extension LaunchControl {
     func send(over owner: borrowing OwnedFileDescriptor) throws {
         let sent: Int
         do {
-            sent = try owner.withDescriptor { try Kernel.Socket.send($0, [rawValue].span.bytes) }
+            let byte = InlineArray<1, UInt8>(repeating: rawValue)
+            sent = try owner.withDescriptor { try Kernel.Socket.send($0, byte.span.bytes) }
         } catch {
             throw RuntimeError.launch(.commit, (error as? Errno) ?? .badFileDescriptor)
         }
@@ -231,7 +233,11 @@ extension LaunchControl {
 
     /// One control byte from the supervisor; nil on EOF or error.
     static func receive(from owner: borrowing OwnedFileDescriptor) -> LaunchControl? {
-        let bytes = try? owner.withDescriptor { try Kernel.File.read($0, upTo: 1) }
-        return bytes?.first.flatMap { LaunchControl(rawValue: $0) }
+        var byte = InlineArray<1, UInt8>(repeating: 0)
+        let count = try? owner.withDescriptor { descriptor in
+            var span = byte.mutableSpan
+            return try Kernel.File.read(descriptor, into: &span)
+        }
+        return count == 1 ? LaunchControl(rawValue: byte[0]) : nil
     }
 }

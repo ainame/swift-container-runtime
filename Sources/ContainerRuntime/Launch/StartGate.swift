@@ -171,8 +171,14 @@ extension StartProtocol {
 
     /// Reads one packet of at most 16 bytes; nil on EOF or error.
     fileprivate static func receivePacket(_ owner: borrowing OwnedFileDescriptor) -> [UInt8]? {
-        let packet = try? owner.withDescriptor { try Kernel.File.read($0, upTo: 16) }
-        return packet?.isEmpty == false ? packet : nil
+        // Stack storage: the created init reads here under its resource limits.
+        var buffer = InlineArray<16, UInt8>(repeating: 0)
+        let count = (try? owner.withDescriptor { descriptor in
+            var span = buffer.mutableSpan
+            return try Kernel.File.read(descriptor, into: &span)
+        }) ?? 0
+        guard count > 0 else { return nil }
+        return (0..<count).map { buffer[$0] }
     }
 
     fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, timeout: Duration) -> Bool {

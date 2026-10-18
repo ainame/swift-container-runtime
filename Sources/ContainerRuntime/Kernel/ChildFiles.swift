@@ -76,6 +76,19 @@ extension Kernel.File {
     }
 }
 
+extension Kernel.File {
+    /// `openPath(_:beneath:options:)`, or nil when the path does not exist.
+    static func openPathIfPresent(
+        _ path: UnsafePointer<CChar>, beneath root: FileDescriptor, options: FileDescriptor.OpenOptions = []
+    ) throws(Errno) -> OwnedFileDescriptor? {
+        do {
+            return try unsafe openPath(path, beneath: root, options: options)
+        } catch .noSuchFileOrDirectory {
+            return nil
+        }
+    }
+}
+
 extension FileStatus {
     var isDirectory: Bool { mode & fileTypeMask == fileTypeDirectory }
     var isCharacterDevice: Bool { mode & fileTypeMask == fileTypeCharacterDevice }

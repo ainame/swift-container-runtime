@@ -1,12 +1,28 @@
 import SystemPackage
 
-/// Byte I/O with safe buffer types: writes take a `RawSpan`, reads return an
-/// array, and the unsafe buffers swift-system needs stay here.
+/// Byte I/O with safe buffer types: writes take a `RawSpan`, and reads fill a
+/// `MutableSpan` or return an array. The unsafe buffers swift-system needs
+/// stay here. Code that runs after the workload's resource limits are set
+/// (the launch handshake) uses spans over stack storage, never arrays, so a
+/// tight RLIMIT_AS cannot fail an allocation there.
 extension Kernel.File {
     /// One write(2), retried on EINTR; returns the bytes written.
     static func write(_ descriptor: FileDescriptor, _ bytes: RawSpan) throws(Errno) -> Int {
         do {
             return try bytes.withUnsafeBytes { buffer in try unsafe descriptor.write(buffer) }
+        } catch {
+            throw (error as? Errno) ?? .ioError
+        }
+    }
+
+    /// One read(2) into `buffer` starting at `offset`, retried on EINTR;
+    /// returns the bytes read, 0 at end of file. Allocates nothing.
+    static func read(_ descriptor: FileDescriptor, into buffer: inout MutableSpan<UInt8>, from offset: Int = 0) throws(Errno) -> Int {
+        precondition(offset >= 0 && offset <= buffer.count)
+        do {
+            return try buffer.withUnsafeMutableBufferPointer { bytes in
+                try unsafe descriptor.read(into: UnsafeMutableRawBufferPointer(UnsafeMutableBufferPointer(rebasing: bytes[offset...])))
+            }
         } catch {
             throw (error as? Errno) ?? .ioError
         }
