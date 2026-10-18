@@ -182,7 +182,7 @@ public struct ContainerLifecycle: Sendable {
                 try PidfdSocket(connectingTo: $0, relativeTo: processFile == nil ? record.bundle : nil)
             }
             defer { pidfd?.close() }
-            return try plan.execOnLinux(namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd)
+            return try plan.execOnLinux(namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd, seccomp: record.seccomp)
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
         return detach ? .success : ExitStatus(shellStatus: result)

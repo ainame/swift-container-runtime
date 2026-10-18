@@ -93,7 +93,7 @@ public struct RuntimeFeatures: Codable, Equatable, Sendable {
                     namespaces: OCIRunPlan.Namespace.allCases.map(\.rawValue),
                     capabilities: CapabilitySet.knownNames,
                     cgroup: Linux.Cgroup(v1: false, v2: true, systemd: false, systemdUser: false, rdma: false),
-                    seccomp: disabled,
+                    seccomp: Linux.Enabled(enabled: true),
                     apparmor: disabled,
                     selinux: disabled,
                     intelRdt: Linux.IntelRdt(enabled: false, schemata: false, monitoring: false),

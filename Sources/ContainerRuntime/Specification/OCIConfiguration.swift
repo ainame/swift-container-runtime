@@ -232,11 +232,12 @@ struct OCIConfiguration: Decodable, Sendable {
         var readonlyPaths: [String]?
         var cgroupsPath: String?
         var resources: Resources?
+        var seccomp: SeccompProfile?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
                 decoder,
-                allowed: ["namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources"]
+                allowed: ["namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources", "seccomp"]
             )
             namespaces = try object.required("namespaces")
             rootfsPropagation = try object.optional("rootfsPropagation")
@@ -244,6 +245,7 @@ struct OCIConfiguration: Decodable, Sendable {
             readonlyPaths = try object.optional("readonlyPaths")
             cgroupsPath = try object.optional("cgroupsPath")
             resources = try object.optional("resources")
+            seccomp = try object.optional("seccomp")
         }
     }
 
@@ -298,7 +300,7 @@ private struct AnyKey: CodingKey {
 }
 
 /// A keyed JSON object that rejects keys outside `allowed`.
-private struct StrictObject {
+struct StrictObject {
     private let container: KeyedDecodingContainer<AnyKey>
 
     init(_ decoder: any Decoder, allowed: Set<String>) throws {

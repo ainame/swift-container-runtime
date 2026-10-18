@@ -14,6 +14,7 @@ struct WorkloadSetup {
     let capabilities: ProcessCapabilities?
     let lastCapability: Int32
     let resourceLimits: [ResourceLimit]
+    let seccomp: PreparedSeccomp?
     let foreground: Bool
 
     /// The caller has entered the root and arranged all mounts.
@@ -69,6 +70,13 @@ struct WorkloadSetup {
             unsafe file = executables[0]!
         }
 
+        // With no_new_privs, load as late as possible after credential changes
+        // and executable lookup. Like runc, create/start still has a short
+        // bootstrap handshake under the filter; refused syscalls fail closed.
+        if unsafe security.noNewPrivileges, let error = unsafe seccomp?.install() {
+            return LaunchRecord.reportFailure(to: report, at: .seccomp, error: error)
+        }
+
         // An explicit envp replaces the caller's environment entirely.
         if let gate {
             // With every limit in force, a created init that could never accept
@@ -122,6 +130,11 @@ struct WorkloadSetup {
         // A failure fails create or run before readiness.
         if let failure = unsafe Self.applyLimits(resourceLimits) {
             return LaunchRecord.reportFailure(to: report, at: .setResourceLimit, error: failure.error, detail: failure.index)
+        }
+        // Without no_new_privs, filter loading needs CAP_SYS_ADMIN: install
+        // before dropping bounding/effective capabilities or switching uid.
+        if !security.noNewPrivileges, let error = unsafe seccomp?.install() {
+            return LaunchRecord.reportFailure(to: report, at: .seccomp, error: error)
         }
         // An explicit process.capabilities follows runc's finalizeNamespace:
         // reduce the bounding set while the init still holds CAP_SETPCAP (the

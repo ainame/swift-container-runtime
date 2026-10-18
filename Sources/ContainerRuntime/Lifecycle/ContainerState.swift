@@ -145,6 +145,9 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     /// before any init exists. Absent in records written before cgroup
     /// support (which created none) and before preparation.
     var cgroup: CgroupIdentity?
+    /// Security policy for every later exec, independent of bundle mutations.
+    /// Nil also reads legacy records written before seccomp support.
+    var seccomp: SeccompProfile?
     /// Raw resource configuration, independent of the source bundle. Nil
     /// distinguishes legacy records from new containers with empty settings.
     var resourceConfiguration: OCIConfiguration.Resources?
@@ -162,6 +165,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         initProcess = nil
         cgroup = nil
         resourceConfiguration = plan.resourceConfiguration
+        seccomp = plan.seccomp
     }
 
     func encoded() throws -> [UInt8] {

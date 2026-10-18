@@ -46,6 +46,7 @@ extension OCIRunPlan {
         // whole range the init then clears from the bounding set.
         let capabilities = self.capabilities
         let resourceLimits = self.resourceLimits
+        let filter = try seccomp.map(Kernel.Seccomp.compile)
         let pathControls = self.pathControls
         let cwdCount = cwd.count
         let lastCapability = try capabilities?.validatedKernelLimit() ?? -1
@@ -91,7 +92,7 @@ extension OCIRunPlan {
                     executables: pointers + starts[InitStringGroup.executable], searchesPath: searchesPath,
                     directory: (pointers + starts[InitStringGroup.cwdPrefixes])[max(0, cwdCount - 1)],
                     security: security, supplementaryGids: gidBuffer, capabilities: capabilities,
-                    lastCapability: lastCapability, resourceLimits: resourceLimits, foreground: !hooks.detached)
+                    lastCapability: lastCapability, resourceLimits: resourceLimits, seccomp: filter, foreground: !hooks.detached)
                 return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context, prepareLauncher: { network.join() }) { report, commit, launcher in
                     // Preserve caller descriptors before any rootfs setup opens temporary handles.
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {

@@ -1,0 +1,5 @@
+module CSeccomp [system] {
+    header "CSeccomp.h"
+    link "seccomp"
+    export *
+}

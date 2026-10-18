@@ -39,7 +39,7 @@ container run --rm --cpus 4 --memory 4G \
         # OCI fixtures: static BusyBox rootfs and runc for comparison, in the VM only.
         # The rlimit, readonly, path and CPU probes are linked statically by the image clang against glibc.
         apt-get update -qq
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc > /dev/null
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc libseccomp-dev > /dev/null
         configuration=$1
         shift
         case "$configuration" in

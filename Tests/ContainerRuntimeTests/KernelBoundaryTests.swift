@@ -16,7 +16,7 @@ private let pendingMigration: Set<String> = [
     let sources = URL(filePath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appending(path: "Sources/ContainerRuntime")
-    let forbidden = ["Glibc", "Musl", "Darwin", "LinuxAPI"]
+    let forbidden = ["Glibc", "Musl", "Darwin", "LinuxAPI", "CSeccomp"]
     var importing: Set<String> = []
     for directory in try FileManager.default.contentsOfDirectory(atPath: sources.path) where directory != "Kernel" {
         let folder = sources.appending(path: directory)

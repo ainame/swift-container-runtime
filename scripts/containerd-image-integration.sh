@@ -33,7 +33,15 @@ printf 'nameserver 192.0.2.1\n' > "$scratch/resolv.conf"
 # Optional supplied network path is explicit; no namespace is provisioned here.
 set --
 if [ -n "${ENGINE_NETWORK_NAMESPACE_PATH:-}" ]; then
-    set -- --with-ns "network:$ENGINE_NETWORK_NAMESPACE_PATH"
+    set -- "$@" --with-ns "network:$ENGINE_NETWORK_NAMESPACE_PATH"
+fi
+case "${ENGINE_SECCOMP:-}" in
+    '') ;;
+    default) set -- "$@" --seccomp ;;
+    *) set -- "$@" --seccomp --seccomp-profile "$ENGINE_SECCOMP" ;;
+esac
+if [ -n "${ENGINE_SECCOMP_PROBE:-}" ]; then
+    set -- "$@" --mount "type=bind,src=$ENGINE_SECCOMP_PROBE,dst=/seccomp-probe,options=bind:ro:rprivate"
 fi
 c run --snapshotter native --runc-binary "$runtime" --runc-root "$scratch/runtime" --cgroup "$fixture/workload" -d \
     --mount "type=bind,src=$scratch/resolv.conf,dst=/etc/resolv.conf,options=rbind:ro:rprivate" \
@@ -57,6 +65,11 @@ if [ -n "${ENGINE_NETWORK_TEST_PORT:-}" ]; then
     c tasks exec --exec-id network "$id" /bin/busybox nc -w 3 127.0.0.1 "$ENGINE_NETWORK_TEST_PORT" > "$scratch/network"
     grep -qx joined-network "$scratch/network" || fail 'image exec did not reach supplied namespace listener'
     echo 'network TCP reply: joined-network'
+fi
+if [ -n "${ENGINE_SECCOMP:-}" ]; then
+    grep -Eq '^Seccomp:[[:space:]]+2$' "/proc/$init/status" || fail 'init seccomp filter missing'
+    c tasks exec --exec-id seccomp "$id" /seccomp-probe "${ENGINE_SECCOMP_EXPECTATION:-allowed}"
+    echo 'seccomp: init filter mode and exec syscall result verified'
 fi
 c tasks exec --exec-id release "$id" /bin/cat /etc/alpine-release
 c tasks exec --exec-id check "$id" /bin/sh -ec 'cat /etc/resolv.conf; cat /volume/result; if (echo forbidden > /etc/resolv.conf) 2>/dev/null; then exit 3; fi' > "$scratch/check"

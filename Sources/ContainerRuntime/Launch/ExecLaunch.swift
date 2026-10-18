@@ -76,7 +76,7 @@ extension OCIProcessPlan {
     /// The existing launch handshake pins and places the exec child before
     /// releasing it, and confirms exec by EOF on its close-on-exec pipe.
     /// With `pidfdSocket`, the process sends its own pidfd, labelled `setns`.
-    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil) throws -> Int32 {
+    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil, seccomp: SeccompProfile? = nil) throws -> Int32 {
         var strings = try CStringVector(
             groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
         )
@@ -91,6 +91,7 @@ extension OCIProcessPlan {
         }
         let gids = security.additionalGids.map { gid_t($0) }
         let last = try capabilities?.validatedKernelLimit() ?? -1
+        let filter = try seccomp.map(Kernel.Seccomp.compile)
 
         // All borrowed C storage spans the complete synchronous launch. The
         // original CLI never changes its own namespaces or root directory.
@@ -102,7 +103,7 @@ extension OCIProcessPlan {
                     executables: pointers + starts[3], searchesPath: searchesPath,
                     directory: (pointers + starts[2])[0], security: security,
                     supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
-                    resourceLimits: resourceLimits, foreground: !hooks.detached)
+                    resourceLimits: resourceLimits, seccomp: filter, foreground: !hooks.detached)
                 return unsafe try NamespaceLauncher.run(hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)

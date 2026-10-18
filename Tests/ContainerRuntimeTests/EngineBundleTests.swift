@@ -55,3 +55,16 @@ private func engineFixture(_ name: String) throws -> Data {
     #expect(plan.mounts.filter { $0.type == .bind }.count == 2)
     #expect(plan.cgroup.resources.devicePolicy != nil)
 }
+
+@Test(arguments: ["default", "deny-getcwd"])
+func capturedEngineSeccompPoliciesCompileAndPersist(_ name: String) throws {
+    let config = try JSONDecoder().decode(OCIConfiguration.self, from: engineFixture("seccomp-reference/\(name).config.json"))
+    let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/rootfs"))
+    let policy = try #require(plan.seccomp)
+    #expect(!(policy.syscalls ?? []).isEmpty)
+    let id = try ContainerID("seccomp-fixture")
+    let state = ContainerRecord(id: id, plan: plan)
+    let restored = try ContainerRecord.decode(state.encoded(), expectedID: id)
+    #expect(restored.seccomp == policy)
+    if Kernel.isLinux { #expect(!(try Kernel.Seccomp.compile(policy)).bytes.isEmpty) }
+}

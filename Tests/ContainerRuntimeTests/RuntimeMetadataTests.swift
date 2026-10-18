@@ -222,7 +222,8 @@ private func decode(_ bytes: [UInt8]) throws -> DefaultSpecification {
     #expect(section.namespaces == ["pid", "mount", "uts", "ipc", "network"])
     #expect(section.capabilities == CapabilitySet.knownNames)
     #expect(section.cgroup == .init(v1: false, v2: true, systemd: false, systemdUser: false, rdma: false))
-    for surface in [section.seccomp, section.apparmor, section.selinux, section.netDevices, section.mountExtensions?.idmap] {
+    #expect(section.seccomp?.enabled == true)
+    for surface in [ section.apparmor, section.selinux, section.netDevices, section.mountExtensions?.idmap] {
         #expect(surface?.enabled == false)
     }
     #expect(section.intelRdt?.enabled == false)

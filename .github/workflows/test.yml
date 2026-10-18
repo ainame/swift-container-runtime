@@ -28,7 +28,7 @@ jobs:
       - name: Install OCI fixtures
         run: |
           apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc libseccomp-dev
       - name: Unit tests with strict memory diagnostics
         run: swift test --disable-automatic-resolution
       - name: Debug integration suites

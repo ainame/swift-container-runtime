@@ -19,10 +19,12 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(name: "LinuxAPI"),
+        .systemLibrary(name: "CSeccomp", pkgConfig: "libseccomp", providers: [.apt(["libseccomp-dev"])]),
         .target(
             name: "ContainerRuntime",
             dependencies: [
                 .target(name: "LinuxAPI", condition: .when(platforms: [.linux])),
+                .target(name: "CSeccomp", condition: .when(platforms: [.linux])),
                 .product(name: "SystemPackage", package: "swift-system"),
             ],
             swiftSettings: checkedSwiftSettings
