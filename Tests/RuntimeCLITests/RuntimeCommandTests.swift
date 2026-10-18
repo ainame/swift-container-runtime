@@ -278,6 +278,15 @@ func execAcceptsBareAndRelativeExecutables(_ executable: String) throws {
     #expect(plain.additionalGids.isEmpty)
     #expect(!plain.noNewPrivs)
     #expect(plain.cap.isEmpty)
+    #expect(!plain.ignorePaused)
+}
+
+@Test func execParsesIgnorePausedBeforeIDOnly() throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["exec", "--ignore-paused", "box", "true"]) as? Exec)
+    #expect(command.ignorePaused)
+    let workload = try #require(RuntimeCommand.parseAsRoot(["exec", "box", "echo", "--ignore-paused"]) as? Exec)
+    #expect(!workload.ignorePaused)
+    #expect(workload.arguments == ["echo", "--ignore-paused"])
 }
 
 @Test func execParsesRepeatedCapabilities() throws {

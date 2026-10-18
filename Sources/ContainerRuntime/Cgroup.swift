@@ -501,6 +501,15 @@ final class CgroupLeaf {
         return directory.inode == identity.inode ? directory : nil
     }
 
+    /// A nonblocking snapshot of the requested freezer state of this recorded
+    /// generation, for waits without the state lock: a concurrent resume or
+    /// removal must not stall in `waitFrozen`. Missing, stale or unreadable
+    /// groups report false; callers revalidate under the lock.
+    static func isFreezeRequested(_ identity: CgroupIdentity) -> Bool {
+        guard let directory = try? recordedDirectory(identity) else { return false }
+        return (try? directory.read("cgroup.freeze")) == "1\n"
+    }
+
     /// runc checks the requested freezer state, then waits for completion
     /// when freezing. A missing/replaced cgroup cannot make an init paused.
     static func isFrozen(_ identity: CgroupIdentity) throws -> Bool {

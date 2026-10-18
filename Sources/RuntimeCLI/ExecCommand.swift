@@ -24,6 +24,8 @@ struct Exec: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host exec PID atomically to this path.") var pidFile: String?
     @Option(name: [.customShort("p"), .customLong("process")], help: "OCI process JSON file; overrides the bundle and process CLI settings.") var processFile: String?
     @Flag(name: [.customShort("d"), .long], help: "Return once exec succeeds.") var detach = false
+    @Flag(name: .customLong("ignore-paused"), help: "Wait for a paused container to resume instead of failing.")
+    var ignorePaused = false
     @Argument(parsing: .captureForPassthrough, help: "Container ID, executable (a name found through the process PATH, or a path), and its arguments.") var operands: [String] = []
     private var positionals: ArraySlice<String> { operands.first == "--" ? operands.dropFirst() : operands[...] }
     var id: String { positionals.first ?? "" }
@@ -58,7 +60,8 @@ struct Exec: ParsableCommand {
             status = try globals.lifecycle().exec(
                 id: ContainerID(id), arguments: arguments, environment: env, cwd: cwd, user: user,
                 additionalGids: additionalGids, noNewPrivileges: noNewPrivs ? true : nil,
-                capabilities: cap, detach: detach, pidFile: pidFile, processFile: processFile)
+                capabilities: cap, detach: detach, pidFile: pidFile, processFile: processFile,
+                ignorePaused: ignorePaused)
         } catch { throw failure(error) }
         throw ExitCode(status)
     }

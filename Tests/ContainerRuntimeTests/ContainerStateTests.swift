@@ -352,3 +352,13 @@ func lifecycleRejectsInvalidRoots(_ root: String) {
     #expect(!String(decoding: legacy, as: UTF8.self).contains(#""resourceConfiguration""#))
     #expect(try ContainerRecord.decode(legacy, expectedID: box) == expected)
 }
+
+@Test func execAdmissionWaitsForResumeOnlyWhenIgnoringPaused() {
+    #expect(LifecycleOperation.execAdmission(status: .running, ignorePaused: false) == .proceed)
+    #expect(LifecycleOperation.execAdmission(status: .created, ignorePaused: true) == .proceed)
+    #expect(LifecycleOperation.execAdmission(status: .paused, ignorePaused: true) == .waitForResume)
+    #expect(LifecycleOperation.execAdmission(status: .paused, ignorePaused: false)
+        == .reject("cannot exec in a paused container (use --ignore-paused to wait for resume)"))
+    #expect(LifecycleOperation.execAdmission(status: .stopped, ignorePaused: true) == .reject("cannot exec in a stopped container"))
+    #expect(LifecycleOperation.execAdmission(status: .creating, ignorePaused: true) == .reject("cannot exec in a creating container"))
+}

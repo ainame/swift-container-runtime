@@ -48,6 +48,24 @@ public enum LifecycleOperation: Sendable, Equatable {
         }
     }
 
+    /// Whether exec may fork into a container with `status`. runc permits a
+    /// paused exec only with `--ignore-paused`; the child then waits on the
+    /// frozen cgroup, while this runtime waits for resume before forking.
+    enum ExecAdmission: Equatable {
+        case proceed
+        case waitForResume
+        case reject(String)
+    }
+
+    static func execAdmission(status: ContainerStatus, ignorePaused: Bool) -> ExecAdmission {
+        switch status {
+        case .running, .created: .proceed
+        case .paused where ignorePaused: .waitForResume
+        case .paused: .reject("cannot exec in a paused container (use --ignore-paused to wait for resume)")
+        default: .reject("cannot exec in a \(status.rawValue) container")
+        }
+    }
+
     private var verb: String {
         switch self {
         case .start: "start"

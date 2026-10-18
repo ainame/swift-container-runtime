@@ -65,18 +65,41 @@ public struct ContainerLifecycle: Sendable {
     public func exec(
         id: ContainerID, arguments: [String], environment: [String] = [],
         cwd: String? = nil, user: String? = nil, additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil,
-        capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil
+        capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil,
+        ignorePaused: Bool = false
     ) throws -> Int32 {
         #if os(Linux)
         // Serialize acquisition with delete/start, then pin the recorded init
         // and all kernel handles before releasing any new child.
         let container = try lock(id)
-        guard let record = try container.readRecord(), let process = record.initProcess,
-              let cgroup = record.cgroup else { throw RuntimeError("container has no recorded init or cgroup") }
-        let status = try container.status(of: record)
-        guard status == .running || status == .created else {
-            throw RuntimeError("cannot exec in a \(status.rawValue) container")
+        var pinned: (process: InitIdentity, cgroup: CgroupIdentity)?
+        var target: (record: ContainerRecord, process: InitIdentity, cgroup: CgroupIdentity)?
+        while target == nil {
+            guard let record = try container.readRecord(), let process = record.initProcess,
+                  let cgroup = record.cgroup else { throw RuntimeError("container has no recorded init or cgroup") }
+            // After a paused wait, only the generation observed before
+            // unlocking may proceed; never follow a replacement container.
+            if let pinned, pinned.process != process || pinned.cgroup != cgroup {
+                throw RuntimeError("container was replaced while waiting for resume")
+            }
+            let status = try container.status(of: record)
+            switch LifecycleOperation.execAdmission(status: status, ignorePaused: ignorePaused) {
+            case .proceed:
+                target = (record, process, cgroup)
+            case .reject(let message):
+                throw RuntimeError(message)
+            case .waitForResume:
+                // Like kontainer-runtime, wait before forking, so no child joins
+                // the frozen cgroup and resume can take the lock meanwhile.
+                pinned = (process, cgroup)
+                container.unlock()
+                try Self.waitForThaw(process, separatePIDNamespace: record.pidNamespace, cgroup: cgroup)
+                // Relocking fails if the state directory was deleted or recreated.
+                try container.lock()
+            }
         }
+        guard let target else { throw RuntimeError("container has no recorded init or cgroup") }
+        let (record, process, cgroup) = (target.record, target.process, target.cgroup)
         guard processFile?.utf8.contains(0) != true else { throw RuntimeError("process file path contains NUL") }
         let plan = try OCIRunPlan.loadExec(
             bundle: FilePath(record.bundle), arguments: arguments, environment: environment, cwd: cwd, user: user,
@@ -104,6 +127,25 @@ public struct ContainerLifecycle: Sendable {
         throw Self.unsupported
         #endif
     }
+
+    #if os(Linux)
+    /// Waits, without the state lock, until the recorded cgroup no longer
+    /// requests freezing. Unlike the locked status check this never waits for
+    /// freeze completion, which a concurrent resume could make time out. The
+    /// caller revalidates under the lock. The pinned init's pidfd doubles as the poll interval,
+    /// so a kill or force delete ends the wait promptly with an error.
+    private static func waitForThaw(
+        _ process: InitIdentity, separatePIDNamespace: Bool, cgroup: CgroupIdentity
+    ) throws {
+        let thawed = try withVerifiedProcess(process, separatePIDNamespace: separatePIDNamespace) { handle in
+            while CgroupLeaf.isFreezeRequested(cgroup) {
+                if handle.waitForExit(milliseconds: 100) { return false }
+            }
+            return true
+        }
+        guard thawed == true else { throw RuntimeError("container init is no longer running") }
+    }
+    #endif
 
     /// Executes the workload of a created container exactly once.
     public func start(id: ContainerID) throws {
