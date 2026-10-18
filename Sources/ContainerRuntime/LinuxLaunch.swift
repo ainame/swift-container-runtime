@@ -16,6 +16,7 @@ enum LaunchStage: Int32 {
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
     case setResourceLimit, startDescriptor, readonlyRoot
     case resolveReadonlyPath, readonlyPath, openDevNull, resolveMaskedPath, maskPath, verifyMaskedPath
+    case findExecutable, relativeExecutable
 
     var description: String {
         switch self {
@@ -70,6 +71,8 @@ enum LaunchStage: Int32 {
         case .maskPath: "mask linux.maskedPaths entry"
         case .verifyMaskedPath:
             "verify linux.maskedPaths entry shows its mask (a mask on / is hidden beneath the container root)"
+        case .findExecutable: "executable file not found in the process PATH"
+        case .relativeExecutable: "refusing an executable found through PATH relative to the current directory"
         }
     }
 }
@@ -104,6 +107,8 @@ struct LaunchRecord {
 }
 
 func launchError(_ stage: LaunchStage, _ code: Int32 = errno, context: String? = nil) -> RuntimeError {
+    // Code 0 marks a failure without an errno, such as a refused lookup.
+    guard code != 0 else { return RuntimeError(context ?? stage.description) }
     let error = Errno(rawValue: code)
     return RuntimeError("\(context ?? stage.description): \(error) (errno \(code))")
 }

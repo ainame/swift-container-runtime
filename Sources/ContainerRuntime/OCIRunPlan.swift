@@ -92,6 +92,8 @@ public struct OCIRunPlan: Sendable {
     public let arguments: [String]
     /// The complete workload environment; nothing is inherited from the caller.
     public let environment: [String]
+    /// Where the init looks for arguments[0].
+    let executable: ExecutableLookup
     /// Components of process.cwd below the container root.
     public let cwd: [String]
     public let security: ProcessSecurity
@@ -249,6 +251,7 @@ public struct OCIRunPlan: Sendable {
         self.populatesDev = mounts.contains { $0.type == .tmpfs && $0.destination == ["dev"] }
         self.arguments = process.arguments
         self.environment = process.environment
+        self.executable = process.executable
         self.cwd = process.cwd
         self.security = process.security
         self.capabilities = process.capabilities

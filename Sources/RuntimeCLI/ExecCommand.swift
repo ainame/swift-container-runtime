@@ -17,7 +17,7 @@ struct Exec: ParsableCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host exec PID atomically to this path.") var pidFile: String?
     @Option(name: [.customShort("p"), .customLong("process")], help: "OCI process JSON file; overrides the bundle and process CLI settings.") var processFile: String?
     @Flag(name: [.customShort("d"), .long], help: "Return once exec succeeds.") var detach = false
-    @Argument(parsing: .captureForPassthrough, help: "Container ID, absolute executable path, and its arguments.") var operands: [String] = []
+    @Argument(parsing: .captureForPassthrough, help: "Container ID, executable (a name found through the process PATH, or a path), and its arguments.") var operands: [String] = []
     private var positionals: ArraySlice<String> { operands.first == "--" ? operands.dropFirst() : operands[...] }
     var id: String { positionals.first ?? "" }
     var arguments: [String] { Array(positionals.dropFirst()) }
@@ -35,8 +35,8 @@ struct Exec: ParsableCommand {
         try globals.validate()
         _ = try validatedID(id)
         if processFile == nil {
-            guard let executable = arguments.first, executable.hasPrefix("/") else {
-                throw ValidationError("exec requires an absolute executable path after the container ID")
+            guard let executable = arguments.first, !executable.isEmpty else {
+                throw ValidationError("exec requires an executable after the container ID")
             }
         }
         guard processFile != "" else { throw ValidationError("--process must not be empty") }

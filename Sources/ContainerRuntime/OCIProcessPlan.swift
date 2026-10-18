@@ -5,6 +5,8 @@ import SystemPackage
 struct OCIProcessPlan: Sendable {
     let arguments: [String]
     let environment: [String]
+    /// Where the init looks for arguments[0], which is passed unchanged.
+    let executable: ExecutableLookup
     let cwd: [String]
     let security: OCIRunPlan.ProcessSecurity
     let capabilities: ProcessCapabilities?
@@ -15,8 +17,8 @@ struct OCIProcessPlan: Sendable {
         guard process.terminal != true else {
             throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
         }
-        guard let executable = process.args.first, executable.hasPrefix("/") else {
-            throw RuntimeError("config.json: process.args[0] must be an absolute path; PATH lookup is not implemented")
+        guard let name = process.args.first, !name.isEmpty else {
+            throw RuntimeError("config.json: process.args[0] must be a non-empty executable name or path")
         }
         guard process.args.allSatisfy({ !$0.utf8.contains(0) }) else {
             throw RuntimeError("config.json: process.args must not contain NUL")
@@ -24,6 +26,7 @@ struct OCIProcessPlan: Sendable {
         // Use exactly the same conversions and constraints for both commands.
         arguments = process.args
         environment = try OCIRunPlan.environment(process.env ?? [])
+        executable = ExecutableLookup(name: name, environment: environment)
         cwd = try OCIRunPlan.components(process.cwd, field: "process.cwd")
         security = try OCIRunPlan.security(process)
         capabilities = try process.capabilities.map(ProcessCapabilities.init)

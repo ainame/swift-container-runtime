@@ -33,9 +33,9 @@ extension OCIRunPlan.MountFlags {
 /// Group indices in the launch string vector. Each mount adds two groups:
 /// its destination components, then `[source, type, data]`.
 private enum Group {
-    static let arguments = 0, environment = 1, rootfs = 2, hostname = 3, cwdPrefixes = 4, dev = 5
-    static func destination(_ mount: Int) -> Int { 6 + 2 * mount }
-    static func filesystem(_ mount: Int) -> Int { 7 + 2 * mount }
+    static let arguments = 0, environment = 1, rootfs = 2, hostname = 3, cwdPrefixes = 4, dev = 5, executable = 6
+    static func destination(_ mount: Int) -> Int { 7 + 2 * mount }
+    static func filesystem(_ mount: Int) -> Int { 8 + 2 * mount }
 }
 
 /// Standard character devices, matching runc's default device set.
@@ -60,6 +60,7 @@ extension OCIRunPlan {
             hostname.map { [$0] } ?? [],
             cwd.indices.map { "/" + cwd[...$0].joined(separator: "/") },
             ["dev"],
+            executable.candidates,
         ]
         for mount in mounts {
             groups.append(mount.destination)
@@ -72,6 +73,8 @@ extension OCIRunPlan {
         let populatesDev = self.populatesDev
         let readonlyRoot = self.readonlyRoot
         let security = self.security
+        let searchesPath = executable.searchesPath
+        let name = arguments[0]
         // Converted before the fork so the init only borrows the buffer.
         let supplementaryGids = security.additionalGids.map { gid_t($0) }
         // Configured capabilities must exist in the running kernel, whose
@@ -92,6 +95,7 @@ extension OCIRunPlan {
             case .resolveMount, .mount:
                 guard mounts.indices.contains(Int(detail)) else { return nil }
                 return "\(stage.description) \(mounts[Int(detail)].destinationPath)"
+            case .findExecutable, .relativeExecutable: return "process.args[0] \(name): \(stage.description)"
             case .setUserID: return "\(stage.description) \(security.uid)"
             case .setGroupID: return "\(stage.description) \(security.gid)"
             case .dropBoundingCapability:
@@ -113,7 +117,7 @@ extension OCIRunPlan {
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 unsafe try runLaunch(namespaceFlags: flags, hooks: hooks, context: context) { report, commit, launcher in
                     unsafe initializeContainer(
-                        strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev, readonlyRoot: readonlyRoot,
+                        strings: pointers, starts: starts, searchesPath: searchesPath, mounts: mounts, populatesDev: populatesDev, readonlyRoot: readonlyRoot,
                         security: security, supplementaryGids: gidBuffer,
                         capabilities: capabilities, lastCapability: lastCapability, resourceLimits: resourceLimits,
                         pathControls: pathControls, foreground: !hooks.detached,
@@ -131,6 +135,7 @@ extension OCIRunPlan {
 private func initializeContainer(
     strings: UnsafePointer<UnsafeMutablePointer<CChar>?>,
     starts: [Int],
+    searchesPath: Bool,
     mounts: [OCIRunPlan.Mount],
     populatesDev: Bool,
     readonlyRoot: Bool,
@@ -243,7 +248,8 @@ private func initializeContainer(
         return failureStatus(report, failure.stage, code: failure.code, detail: failure.index)
     }
     return unsafe finishContainerProcess(
-        argv: group(Group.arguments), environment: group(Group.environment), directory: directory,
+        argv: group(Group.arguments), environment: group(Group.environment),
+        executables: group(Group.executable), searchesPath: searchesPath, directory: directory,
         security: security, supplementaryGids: supplementaryGids, capabilities: capabilities,
         lastCapability: lastCapability, resourceLimits: resourceLimits, foreground: foreground,
         report: report, commit: commit, launcher: launcher, gate: gate
@@ -256,6 +262,7 @@ private func initializeContainer(
 func finishContainerProcess(
     argv: UnsafePointer<UnsafeMutablePointer<CChar>?>,
     environment: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+    executables: UnsafePointer<UnsafeMutablePointer<CChar>?>, searchesPath: Bool,
     directory: UnsafeMutablePointer<CChar>?,
     security: OCIRunPlan.ProcessSecurity,
     supplementaryGids: UnsafeBufferPointer<gid_t>,
@@ -351,11 +358,36 @@ func finishContainerProcess(
         }
     }
 
-    // Like runc's create-time lookup, and with the workload's credentials, a
-    // missing or non-executable program fails create (or run) rather than
-    // start. Exec can still fail later if the rootfs changes.
-    let lookup = unsafe executableError(argv[0]!)
-    guard lookup == 0 else { return failureStatus(report, .execute, code: lookup) }
+    // Like runc's create-time exec.LookPath, in the cwd and with the
+    // workload's credentials, a missing or non-executable program fails
+    // create (or run) rather than start. argv[0] itself is kept; only the
+    // execve file is the resolved candidate. Exec can still fail later if
+    // the rootfs changes.
+    let file: UnsafeMutablePointer<CChar>
+    if searchesPath {
+        var found: UnsafeMutablePointer<CChar>? = nil
+        var index = 0
+        while let candidate = unsafe executables[index] {
+            if unsafe executableError(candidate) == 0 {
+                unsafe found = candidate
+                break
+            }
+            index += 1
+        }
+        // Go reports only ErrNotFound for a search, whatever each candidate's
+        // error was, and refuses (ErrDot) a first match from a relative or
+        // empty PATH element instead of trying later elements.
+        guard let found = unsafe found else { return failureStatus(report, .findExecutable, code: 0) }
+        guard unsafe found[0] == CChar(UInt8(ascii: "/")) else {
+            return failureStatus(report, .relativeExecutable, code: 0)
+        }
+        unsafe file = found
+    } else {
+        // An explicit path, absolute or relative to the cwd, reports its own error.
+        let lookup = unsafe executableError(executables[0]!)
+        guard lookup == 0 else { return failureStatus(report, .execute, code: lookup) }
+        unsafe file = executables[0]!
+    }
 
     // An explicit envp replaces the caller's environment entirely.
     if let gate {
@@ -368,9 +400,9 @@ func finishContainerProcess(
         // EOF instead of the commit: the creator failed or died before
         // recording this init, so nothing could ever start or delete it.
         guard receiveCommit(commit) else { return 125 }
-        return unsafe gate.serve(arguments: argv, environment: environment)
+        return unsafe gate.serve(file: file, arguments: argv, environment: environment)
     }
-    _ = unsafe execve(argv[0]!, argv, environment)
+    _ = unsafe execve(file, argv, environment)
     return failureStatus(report, .execute)
 }
 
@@ -443,7 +475,7 @@ func kernelLastCapability() throws -> Int {
     return try ProcessCapabilities.parseLastCapability(bytes)
 }
 
-/// Go's exec.LookPath for an absolute path, as runc uses it: the file must
+/// Go's findExecutable for one candidate, as runc uses it: the file must
 /// exist, must not be a directory, and must be executable with the current
 /// (already switched) credentials. Returns 0 or errno.
 @unsafe

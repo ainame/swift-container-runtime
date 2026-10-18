@@ -255,11 +255,17 @@ func rejectsInvalidMemoryUnits(_ input: String) {
     #expect(command.arguments == ["/bin/echo", "--help", "--root", "workload"])
 }
 
-@Test(arguments: [["exec"], ["exec", "box"], ["exec", "box", "sh"], ["exec", "--tty", "box", "/bin/sh"]])
+@Test(arguments: [["exec"], ["exec", "box"], ["exec", "box", ""], ["exec", "--tty", "box", "/bin/sh"]])
 func rejectsUnsupportedOrIncompleteExec(_ arguments: [String]) {
     #expect(throws: (any Error).self) { _ = try RuntimeCommand.parseAsRoot(arguments) }
 }
 
+
+@Test(arguments: ["sh", "bin/sh", "./sh"])
+func execAcceptsBareAndRelativeExecutables(_ executable: String) throws {
+    let command = try #require(RuntimeCommand.parseAsRoot(["exec", "box", executable, "-c"]) as? Exec)
+    #expect(command.arguments == [executable, "-c"])
+}
 
 @Test func execProcessJSONNeedsOnlyAnID() throws {
     let command = try #require(RuntimeCommand.parseAsRoot(["exec", "-p", "process.json", "box"]) as? Exec)

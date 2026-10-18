@@ -81,8 +81,18 @@ extension OCIProcessPlan {
     /// The existing launch handshake pins and places the exec child before
     /// releasing it, and confirms exec by EOF on its close-on-exec pipe.
     func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks) throws -> Int32 {
-        var strings = try CStringVector(groups: [arguments, environment, ["/" + cwd.joined(separator: "/")]])
+        var strings = try CStringVector(
+            groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
+        )
         let starts = strings.groupStarts
+        let searchesPath = executable.searchesPath
+        let name = arguments[0]
+        let context: (LaunchStage, Int32) -> String? = { stage, _ in
+            switch stage {
+            case .findExecutable, .relativeExecutable: "process.args[0] \(name): \(stage.description)"
+            default: nil
+            }
+        }
         let gids = security.additionalGids.map { gid_t($0) }
         let last: Int32
         if let capabilities {
@@ -95,7 +105,7 @@ extension OCIProcessPlan {
         // original CLI never changes its own namespaces or root directory.
         return try gids.withUnsafeBufferPointer { groups in
             unsafe try strings.withPointers { pointers in
-                unsafe try runLaunch(namespaceFlags: 0, hooks: hooks, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
+                unsafe try runLaunch(namespaceFlags: 0, hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
                     guard linux_mark_descriptors_cloexec(3) == 0 else {
                         return failureStatus(report, .markDescriptors)
                     }
@@ -103,6 +113,7 @@ extension OCIProcessPlan {
                     guard rootCode == 0 else { return failureStatus(report, .enterRoot, code: rootCode) }
                     return unsafe finishContainerProcess(
                         argv: pointers + starts[0], environment: pointers + starts[1],
+                        executables: pointers + starts[3], searchesPath: searchesPath,
                         directory: (pointers + starts[2])[0], security: security,
                         supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
                         resourceLimits: resourceLimits, foreground: !hooks.detached,

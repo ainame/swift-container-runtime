@@ -160,8 +160,8 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(process: #"{"user": {"uid": 0}, "args": ["/bin/sh"], "cwd": "/"}"#), "process.user.gid"),
     (config(process: #"{"user": {"uid": 0, "gid": 0, "umask": 512}, "args": ["/bin/sh"], "cwd": "/"}"#), "umask 01000"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "/", "noNewPrivileges": 1}"#), "process.noNewPrivileges"),
-    (config(process: #"{"args": ["sh"], "cwd": "/"}"#), "absolute"),
-    (config(process: #"{"args": [], "cwd": "/"}"#), "absolute"),
+    (config(process: #"{"args": [""], "cwd": "/"}"#), "non-empty"),
+    (config(process: #"{"args": [], "cwd": "/"}"#), "non-empty"),
     (config(process: #"{"args": ["/bin/sh"], "env": ["NOEQUALS"], "cwd": "/"}"#), "NAME=value"),
     (config(process: #"{"args": ["/bin/sh"], "env": ["A=1", "NOEQUALS", "A=2"], "cwd": "/"}"#), "NAME=value"),
     (config(process: #"{"args": ["/bin/sh"], "env": ["=value"], "cwd": "/"}"#), "NAME=value"),
@@ -286,6 +286,23 @@ func deduplicatesEnvironmentKeepingLastOccurrence(_ input: [String], _ expected:
     #expect(try plan(config(process: process)).environment == expected)
 }
 
+@Test func processSearchesItsOwnLastPathAndKeepsArgvZero() throws {
+    let process = #"{"args": ["sh", "-c"], "cwd": "/", "env": ["PATH=/caller", "PATH=/sbin:/bin"]}"#
+    let plan = try plan(config(process: process))
+    #expect(plan.arguments == ["sh", "-c"])
+    #expect(plan.executable.candidates == ["/sbin/sh", "/bin/sh"])
+    #expect(plan.executable.searchesPath)
+}
+
+@Test func execEnvironmentOverridesPathForLookup() throws {
+    try withTemporaryBundle { bundle in
+        try write(config(), to: bundle.appending("config.json"))
+        let command = try OCIRunPlan.loadExec(
+            bundle: bundle, arguments: ["echo"], environment: ["PATH=/usr/bin"], cwd: nil, user: nil)
+        #expect(command.executable.candidates == ["/usr/bin/echo"])
+    }
+}
+
 @Test func environmentNamesCompareAsBytes() throws {
     // Canonically equivalent in Swift, but distinct byte sequences to Linux.
     let precomposed = "\u{E9}=1", decomposed = "e\u{301}=2"
@@ -369,6 +386,7 @@ private func removeFile(_ path: FilePath) throws {
             environment: ["GREETING=override"], cwd: "/tmp", user: "1000:1001")
         #expect(command.arguments == ["/bin/echo", "--help"])
         #expect(command.environment == ["PATH=/bin", "GREETING=override"])
+        #expect(command.executable.candidates == ["/bin/echo"])
         #expect(command.cwd == ["tmp"])
         #expect(command.security.uid == 1000)
         #expect(command.security.gid == 1001)

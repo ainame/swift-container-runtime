@@ -121,6 +121,7 @@ final class StartGate {
     /// or after a start that was committed but whose client then vanished.
     @unsafe
     func serve(
+        file: UnsafePointer<CChar>,
         arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>,
         environment: UnsafePointer<UnsafeMutablePointer<CChar>?>
     ) -> Int32 {
@@ -162,7 +163,7 @@ final class StartGate {
             // close-on-exec lifetime reports the outcome.
             try? marker.close()
             try? listener.close()
-            _ = unsafe execve(arguments[0]!, arguments, environment)
+            _ = unsafe execve(file, arguments, environment)
             return failureStatus(connection, .execute, socket: true)
         }
     }
