@@ -162,6 +162,7 @@ network namespace now also passes namespace identity and private loopback TCP
 through the same image/shim path. This is still a constrained profile, not ordinary
 Docker support or closure of the broader milestone gates. The latest
 security increment is now seccomp-backed default/custom containerd profiles with
-active syscall-denial evidence. Next: OOM adjustment and session keyring setup,
-then requested LSM handling and console gates.
+active syscall-denial evidence. OOM adjustment now also has direct Linux init/exec
+comparisons, including permission failures and persisted container policy. Next:
+session keyring setup, requested LSM handling and console gates.
 Never discard requested security fields to advance it.

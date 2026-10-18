@@ -480,3 +480,50 @@ names are rejected rather than ignored as in runc, and unknown/future syscall
 numbers get the configured default action rather than runc's ENOSYS fixup.
 See [runtime reference](runtime-reference.md#seccomp-policy) for the supported
 policy and setup/bootstrap constraints. The broader roadmap remains active.
+
+## OOM score adjustment follow-up
+
+Implementation `01a74f5`, checked in the same rootful arm64 Linux debug guest,
+Swift 6.4.1, kernel 6.12.28 and installed runc 1.4.0-0ubuntu1. This is direct
+runtime evidence for the new OCI process field; the preceding containerd image
+captures did not request an OOM adjustment and do not establish that engine case.
+
+`process.oomScoreAdj` accepts -1000...1000. Its decimal bytes are prepared before
+fork and written only by the launcher, before namespace entry/creation, rootfs,
+uid/capability changes, rlimits and seccomp. Descendants inherit the setting;
+the original CLI and caller are unchanged. Absent/null makes no write, whereas
+explicit 0 resets an inherited nonzero score. Failure to write is a launch error,
+with no workload, state or cgroup left behind.
+
+The original container setting is persisted for later exec, as in runc's
+`container_linux.go` OomScoreAdj bootstrap attribute. Editing/removing the source
+bundle or supplying an OOM value in a standalone exec process does not replace it.
+When the original setting is absent, each exec inherits its own invoking process's
+score, not the live init's score. Process-file values are validated even though
+they do not override container policy.
+
+Verification:
+
+- All Linux unit targets passed, including **201 runtime tests**; focused OOM
+  validation/state tests and configuration regressions also passed on macOS.
+- [OOM suite output](engine-baseline/oom-adjustment/result.txt) compares foreground
+  run, create-time procfs values, start and exec with runc, as UID 0 and UID 1000:
+  absent/null, -1000, -321, 0, 321 and 1000; bundle edits/removal; ignored
+  standalone-process overrides; unchanged init and caller; state/cgroup cleanup.
+- A fixture-owned wrapper starts with score 275. Absent configuration preserves
+  275; explicit 0 resets it. An unconfigured init remains at 275 while a new exec
+  invoked at 350 receives 350. The original test caller remains unchanged.
+- Dropping only CAP_SYS_RESOURCE refuses a negative write under both runtimes
+  before namespace setup. Out-of-range values fail before the launcher is forked.
+- Focused debug network-namespace, seccomp, OCI, lifecycle and preserve-fds
+  regressions pass against runc. No release/full-matrix validation was repeated.
+
+```sh
+sh scripts/run-integration.sh .build/linux-6.4.1/debug/swift-container-runtime oom
+```
+
+This tests OOM score configuration, not deliberate OOM killing or changes to
+memory-event semantics. Session keyrings, requested LSMs and console support
+remain separate security/integration work. The current guest successfully creates
+an anonymous session keyring, so subsequent keyring checks can use the real kernel
+rather than relying on unavailable-kernel fallback alone.

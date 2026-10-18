@@ -1,0 +1,6 @@
+=== oom: START ===
+kernel 6.12.28: cpu.max.burst present, cpu.idle present
+swift: inherited/null, -1000...1000, root/nonroot, create-time value, init/exec and original policy passed
+runc: inherited/null, -1000...1000, root/nonroot, create-time value, init/exec and original policy passed
+OOM adjustment integration passed.
+=== oom: PASS (17s) ===

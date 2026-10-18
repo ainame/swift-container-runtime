@@ -49,7 +49,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 
 | Area | Remaining target behavior |
 | --- | --- |
-| Process setup | HOME resolution; empty/omitted-process behavior; OOM score; scheduling, I/O priority, exec CPU affinity, NUMA memory policy |
+| Process setup | HOME resolution; empty/omitted-process behavior; scheduling, I/O priority, exec CPU affinity, NUMA memory policy |
 | Namespaces | Join supplied paths for types other than network; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
 | Rootfs and mounts | No-pivot; cgroup mounts; explicit remount and broader propagation; dangling target symlinks and protected-proc bind handling; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
@@ -133,3 +133,10 @@ default profile and a custom getcwd-denial profile pass the pinned Alpine image
 scenario. Notification, runc's future-syscall ENOSYS fixups, cross-ABI execution,
 other architectures and static/musl packaging remain outside this evidence.
 See [engine baseline](engine-baseline.md) for the exact profile and checks.
+
+`process.oomScoreAdj` now has focused Linux debug comparisons with runc for
+root/non-root init and exec, both range bounds, explicit zero, absent/null and
+nonzero inherited scores. The launcher writes procfs before namespace and
+credential changes; original container policy survives bundle edits/removal and
+ignores standalone-process overrides, as in runc. Negative writes without
+CAP_SYS_RESOURCE and out-of-range values fail without workloads, state or cgroups.

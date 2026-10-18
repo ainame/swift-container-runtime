@@ -43,6 +43,7 @@ suite because a shared file was touched:
 | Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
 | Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and `bind` for bind sources/targets/flags; add `lifecycle` for readiness/cleanup changes. |
 | Supplied network namespace | `network-namespace oci lifecycle preserve-fds`. |
+| OOM adjustment | `oom network-namespace seccomp oci lifecycle preserve-fds`. |
 | Seccomp policy/setup ordering | `seccomp oci lifecycle credentials capabilities preserve-fds`. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
@@ -242,3 +243,11 @@ sh scripts/containerd-seccomp-integration.sh .build/linux-6.4.1/debug/swift-cont
 records the matching reference runc profiles and direct syscall results. It never
 uses Swift as the reference. Captured JSON can include image environment values;
 inspect them before sharing. Both scripts use the existing daemon and cached image.
+
+`scripts/oom-integration.sh` compares -1000...1000 values (including endpoints),
+absent/null and explicit zero, nonzero inherited scores, root/non-root init and
+exec, create-time procfs values, bundle edits/removal and ignored process-file
+OOM overrides with runc. Dropping only CAP_SYS_RESOURCE verifies negative-write
+failure before namespace setup. Range failures, state/cgroup cleanup and unchanged
+caller/init scores are required. This changes OOM selection preference; it does
+not deliberately trigger an OOM kill or alter the memory-event tests.
