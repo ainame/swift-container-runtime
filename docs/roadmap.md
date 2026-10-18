@@ -1,111 +1,114 @@
-# Implementation roadmap
+# Feature parity roadmap
 
-The target is an understandable Linux runtime with roughly the features of kontainer-runtime, built in small working iterations. runc is the behavioral authority when implementations differ. Each phase needs Linux integration evidence; portable unit tests and successful compilation alone cannot establish namespace or container behavior.
+The goal is the **same level of functionality as kontainer-runtime**, expressed
+through readable, native Swift code. Matching every runc behavior is not a goal.
+runc remains a useful source for OCI semantics, security ordering, and differential
+tests; differences in diagnostics, formatting, validation timing, or bootstrap
+overhead do not require work unless a supported consumer depends on them.
 
-Full parity work is **paused**. The phases below retain the implementation history and remaining inventory, rather than prescribing the next tasks. Choose future work by learning value or a concrete usage need; see the [option comparison and usage scenarios](parity.md#current-scope-and-option-comparison). Descriptor handoff and socket activation are optional supervisor integration. The socket-activation draft is unvalidated and has not landed.
+This plan resumes feature work after the Swift refactor. It is based on source
+inspection on 2026-10-18 at Swift commit `8d21065` and kontainer-runtime
+[`357b8f2`](https://github.com/ternbusty/kontainer-runtime/tree/357b8f295a7fad450c822c61e79cf22f75546640).
+The [parity inventory](parity.md) records coverage and deliberate differences;
+the [Docker assessment](docker-integration.md) defines a separate integration gate.
+No new Linux or Docker execution results are implied by this planning review.
 
-## Progress
+## Baseline after the refactor
 
-| Phase | Status |
+The lifecycle and observability foundation is substantial: create/start/run,
+nonterminal exec, persistent state and process identity checks, kill/delete,
+pause/resume, ps, events, update, spec/features/version, descriptor preservation,
+and pidfd handoff are implemented. Rootfs isolation, basic mounts/devices,
+credentials, five capability sets, rlimits, read-only roots and path controls,
+and cgroup v2 memory/pids/CPU/cpuset controls have existing Linux integration suites.
+Those suites are regression assets; their existence is not proof of a fresh pass.
+
+The remaining gap is mainly **breadth of OCI setup and supervisor integration**.
+A normal engine-generated bundle still requests unsupported mounts, namespace
+paths, device rules, security settings, and CLI options. Command-name coverage
+therefore overstates readiness; a percentage based on command names would mislead.
+
+Build on the current boundaries rather than introduce another architecture:
+
+| Existing boundary | Future work belongs here |
 | --- | --- |
-| 1. Namespace lab | Implemented as `namespace-run`; Linux integration in `scripts/integration.sh`. |
-| 2. OCI foreground run | Implemented as `run --bundle PATH ID` for a narrow subset; everything outside it is rejected (see README). Linux integration with a static BusyBox rootfs and runc comparison in `scripts/oci-integration.sh`. |
-| 3. Persistent OCI lifecycle | Implemented for the phase 2 subset: `create`, `start`, `state`, `kill`, `delete`, `list`, and foreground/detached `run` with a `--root` state directory (see README). Linux integration with runc comparison in `scripts/lifecycle-integration.sh`. macOS unit tests and Linux debug/release unit and integration gates pass; the gaps listed below remain. |
-| 4. Security and resource setup | In progress. Process credentials implemented: `process.user` uid/gid/additionalGids/umask and `noNewPrivileges`, for foreground `run`, detached `run`, and `create`/`start`, with the start gate moved to a host-side marker commit. Linux integration with runc comparison in `scripts/credentials-integration.sh`. Capabilities implemented: all five `process.capabilities` sets in runc's order around the credential switch, with `scripts/capabilities-integration.sh`. Rlimits implemented: all sixteen `process.rlimits` names, every entry applied exactly and in order at runc's procReady point (before capabilities and credentials change, and before create reports readiness), with `scripts/rlimits-integration.sh`. Readonly rootfs implemented: `root.readonly` remounts the container's root mount read-only after mounts, `/dev`, and cwd creation, before rlimits, capabilities, credentials, and readiness, keeping its `nosuid`/`nodev`/`noexec` flags and leaving child mounts writable, with `scripts/readonly-integration.sh`. `linux.readonlyPaths` and `linux.maskedPaths` implemented after the read-only root and before privilege changes, resolved in the container root without magic links and mounted through descriptors without `/proc`, with a verified `/dev/null`, a shared read-only directory mask, and visibility checks, in `scripts/path-controls-integration.sh`. A cgroup v2 memory/pids/CPU subset is implemented (see below), with `scripts/cgroup-integration.sh`, `scripts/cpu-integration.sh`, and `scripts/cpuset-integration.sh`; this is not full resource parity. CPU realtime, the other resources, seccomp, and hooks remain; update covers the supported resource subset. |
-| 5. Exec, rootless, terminal | Basic nonterminal exec command and standalone process JSON implemented (see README), sharing process setup with init, including `--user`, `--additional-gids` and bare `--no-new-privs` overrides, plus `--ignore-paused`. Rootless and terminals remain. |
-| 6. Broader parity | Pause/resume, ps, events, spec generation, features, and version reporting implemented; remaining inventory below. |
+| `Specification/` (`OCIConfiguration`, `OCIRunPlan`, `OCIProcessPlan`) | Typed decoding, validation, and prepared plans for each new surface. |
+| `Launch/RootFilesystemSetup` | Mounts, devices, root transition, sysctl and setup ordering. |
+| `Launch/WorkloadSetup` | Settings shared by init and exec; avoid implementing each twice. |
+| `Launch/NamespaceLauncher`, `ExecNamespaceSet`, launch/start protocols | Namespace joins/maps, console and hook handshakes; preserve process ownership and readiness. |
+| `Cgroups/`, `Lifecycle/`, `Events/` | Additional controls, stored configuration, updates, cleanup and reporting. |
+| `Kernel/` | System calls and platform stubs; libc imports stay here. |
+| `RuntimeCLI/` | Human options and the specific runc CLI contract consumed by containerd. |
 
-The phase 4 cgroup v2 subset covers:
+Keep CLI launch and pre-fork setup synchronous and single-threaded. Async APIs,
+actors and structured tasks are appropriate for later supervision only where they
+preserve that constraint. Preserve noncopyable descriptor ownership, scoped unsafe
+buffers, strict memory safety, warnings-as-errors, and Swift 6.4
+(6.4.1 on Linux). Discuss external dependencies, including a possible
+libseccomp binding, before adopting them. See [code organization](code-organization.md).
 
-- `linux.cgroupsPath`.
-- `linux.resources.memory` `limit`, `reservation` and `swap`, `pids.limit`, and `cpu` `shares`, `quota`, `period`, `burst`, `idle`, `cpus` and `mems`, with runc's conversions, write order, and burst retry.
-- Controller enablement.
-- Membership before readiness, under a cross-process `flock` on the leaf, so concurrent containers given one path cannot both adopt it.
-- Cgroup identity in the state, with boot ID and inode.
-- Cleanup and `cgroup.kill` on foreground exit, failed setup, `delete` and `delete --force`.
+## Ordered milestones
 
-Linux integration with runc comparison is in `scripts/cgroup-integration.sh`, `scripts/cpu-integration.sh`, and `scripts/cpuset-integration.sh`; CPU quota enforcement is proved through `cpu.stat` throttling, while weight values are checked by readback; fairness is not measured. This is not full resource parity: CPU realtime and the other resources are rejected. Update covers the supported subset with saved merge semantics and memory usage checks.
+Each milestone is a series of small implementation commits, not one large rewrite.
+Update the inventory and feature report with each supported increment. Keep
+unsupported behavior explicit; do not make engine bundles work by discarding
+security fields.
 
-Current priority: finish useful basic command functionality before extending advanced OCI behavior. Preserve the unfinished hooks draft for later; basic exec precedes it.
+| Order | Deliverable and scope | Completion evidence on Linux |
+| --- | --- | --- |
+| 1. Engine contract baseline | Capture containerd/go-runc invocation arguments and real OCI bundles from pinned engine versions. Add global `--log`, `--log-format`, `--debug` support with useful errors; check version/features output and detached PID publication. Cover `kill --all`, especially shared PID namespaces. Record handling of optional no-pivot/keyring flags without pretending systemd cgroups exist. | Replay captured argv and JSON through the CLI; exercise failed create/start/exec and PID-file publication under a real subreaper, with no leaked tasks, FDs, state or cgroups. A captured failure is a baseline, not Docker support. |
+| 2. Practical rootfs and namespace support | Bind/rbind mounts for files and directories, remount flags, common propagation, sysfs, mqueue, shm and cgroup2 mounts; custom devices and mount destinations that resolve symlinks safely inside the root. Join supplied namespace paths, support cgroup namespaces and common host/shared combinations. Keep user/time namespaces for milestone 7. | Ordinary image-derived bundles work through direct create/start and exec. Check mount flags, namespace inode identities, volume/resolv.conf/hosts mounts, host isolation, invalid joins, readonly combinations and cleanup against real workloads. |
+| 3. Rootful containerd vertical slice | Use the existing runc v2 shim with the Swift binary. Implement only additional contract gaps discovered from the captured bundle and trace. Start with a declared cgroupfs profile, nonterminal workloads and explicit security limitations. | `ctr` runs an image, attaches pipes, creates/starts, performs detached exec with PID files, reports nonzero exits, kills and deletes; shim reaping and failure cleanup work. Pin image digests and engine/tool versions. This is a constrained engine milestone, not normal Docker defaults. |
+| 4. Default security and hooks | Seccomp actions/architectures/argument rules needed by engine profiles, device-cgroup BPF rules, OOM score adjustment, session keyring setup, and AppArmor/SELinux execution-context availability. Add all six hook phases with namespace placement, state JSON stdin, environment, timeout and failure handling. | Allowed and denied syscalls/devices prove enforcement; init and exec receive the intended policy. Hooks prove ordering, timeout, reaping and cleanup. Supported host LSM profiles apply; unavailable requested security fails clearly. Re-run the containerd slice with its normal security configuration. |
+| 5. Terminal and attached use | PTY setup, controlling terminal, initial size, console-socket FD handoff for create/run/exec, local foreground I/O, signal forwarding and terminal restoration. | Interactive shell plus noninteractive TTY workloads, EOF, resize through the shim, signal/exit propagation, non-root PTY access, failed handoff cleanup. Distinguish local foreground forwarding from shim-managed detached I/O. |
+| 6. Docker experimental support | Register the binary through Docker's existing runc shim; run the [Docker acceptance matrix](docker-integration.md#acceptance-gates). Fill Docker-generated bundle gaps found by evidence. | Rootful Docker run/exec with pipes and TTY, default bridge networking, volumes, limits, stats, pause/resume, stop/kill/rm, default security, and error cleanup on the declared cgroup driver. Publish the exact tested configuration and remaining exclusions. |
+| 7. Broader kontainer functionality | User namespace mapping handshake, mapping-helper fallback and rootless operation/delegation; time namespaces/offsets; no-pivot; recursive attributes and idmapped mounts; domainname, sysctls, loopback and interface movement/rename; remaining process settings and resource controls listed below. | Feature-specific kernel probes plus init/exec/lifecycle cases; rootless tests run as an unprivileged host user. Test missing kernel/controller support explicitly. |
+| 8. Distribution and scope closure | arm64 and x86_64 Linux execution, real musl/static build and execution, documented install and upgrade procedure. Close every implemented-target row with evidence or a named, agreed exclusion. | Debug/release Linux gates, engine matrix and architecture/libc matrix. A static claim needs an executable inspected and run without its build environment. |
 
-## 1. Namespace lab
+Milestones 4 and 5 are independent feature tracks after the core launch contracts
+are stable; both gate the ordinary Docker milestone. Rootless and advanced mounts
+can proceed earlier if a concrete workload needs them. Full kontainer breadth is
+not a prerequisite for the first constrained containerd experiment.
 
-First command:
+## Scope remaining after the first Docker milestone
 
-```sh
-swift-container-runtime namespace-run --hostname swiftbox -- /bin/sh -c 'hostname; echo $$'
-```
+The following still belongs to the kontainer-level goal even when a simple Docker
+container works:
 
-Create UTS, PID, and mount namespaces; make propagation private; mount procfs for the new PID namespace; execute an absolute command path and report its exit status. Keep setup in synchronous Swift using conditional Glibc/Musl imports and minimal header-only Linux API adapters. Reject multithreaded callers before fork. No OCI bundle or isolated root filesystem yet.
+- Namespace maps and rootless operation; cgroup/time namespace combinations and
+  time offsets; idmapped and recursive mount semantics; no-pivot setup.
+- Process HOME lookup, omitted/empty process handling, scheduler, I/O priority,
+  exec CPU affinity and NUMA memory policy; complete init/exec policy coverage.
+- Hugepage limits, unified cgroup v2 settings, block I/O weight/throttling, device
+  rules and corresponding update support; `exec --cgroup` and owned hierarchy cleanup.
+- Seccomp notification listener handoff, socket activation (`LISTEN_FDS`), and
+  sealed executable handoff. Existing unlanded drafts are reference material,
+  not completed features or prescribed implementations.
+- Remaining target options and availability/error paths in [the inventory](parity.md).
 
-Check hostname, PID 1 visibility, procfs namespace identity, surrounding hostname remaining unchanged, nonzero exit propagation, and actionable errors when namespace privileges are absent. Exercise this in Linux through the available Apple `container` installation where its guest permissions permit it.
+Cgroup v1, checkpoint/restore and systemd-managed cgroups are outside the pinned
+target's implemented functionality. Legacy memory fields, CPU realtime controls,
+network/RDMA resource classes and `blockIO.leafWeight` are also not target gaps:
+the pinned target does not apply them. Do not import the entire runc backlog.
+If Docker's chosen cgroup driver requires systemd integration, treat that as a
+separate Docker-driven extension and make the scope decision explicitly.
 
-## 2. OCI foreground run
+## How to decide an increment is done
 
-Add typed bundle decoding and a validated immutable setup plan, supplied rootfs, private mount propagation, pivot_root, basic mounts and devices, cwd, environment, hostname, and nonterminal foreground execution. Reject requested features that are not implemented instead of silently discarding them.
+1. Define an observable workload and check the target's applying code, not just
+   its schema, help text or selected upstream test names.
+2. Add typed Swift plans and small resource-owning operations within the current
+   boundaries. Preserve launch ordering and failure cleanup.
+3. Use unit tests for parsing/planning and focused Linux integrations for actual
+   kernel effects. Compare security and consumer contracts; accept documented
+   formatting/diagnostic differences that do not affect supported callers.
+4. Launch changes need the full Linux debug/release gate:
+   `sh scripts/test-linux.sh --configuration all`. Engine integration additionally
+   needs real containerd/Docker evidence; the current suite does not supply it.
+5. Record toolchain, kernel, architecture, cgroup driver, security availability,
+   reference versions and skipped cases. Keep implementation, old evidence and
+   newly passing execution results distinguishable. Commit each meaningful change.
 
-Check a BusyBox bundle through both runc and this runtime: PID 1, root filesystem contents, hostname, cwd/environment, stdout/stderr, workload exit status, missing executable, and setup failure cleanup. Do not infer a security boundary from namespace creation alone.
-
-References: kontainer `spec/Spec.kt`, `process/InitProcess.kt`, and `rootfs/Rootfs.kt`; runc `libcontainer/standard_init_linux.go` and `libcontainer/rootfs_linux.go`.
-
-Implemented subset: new mount (required), pid, uts, ipc, and network namespaces. Mounts are `proc` at `/proc`, `tmpfs`, and `devpts` at `/dev/pts`, with nosuid/nodev/noexec/strictatime and validated data options. runc's default character devices and `/dev` links are created in a `/dev` tmpfs. The process takes an `args[0]` (absolute at first; runc-style lookup in the process `PATH` was added later), an explicit `env`, a created `cwd`, with configured uid/gid and supplementary groups (added in phase 4). Mount destinations are resolved per component from a rootfs descriptor with `O_NOFOLLOW`, and symlink components are rejected rather than resolved in-root as runc does. Setup then calls `pivot_root(".", ".")` and detaches the old root. Deliberate differences from runc: no `HOME` default, symlinked mount destinations fail, and `/dev` is populated only when it is a tmpfs. Every unknown or unimplemented `config.json` field is rejected. Phase 3 uses the validated ID as the state directory name. The bundle and rootfs are trusted and must stay unchanged during setup; launch pins the rootfs with `O_NOFOLLOW` and checks its identity after the self-bind, which detects but does not prevent host-side races.
-
-## 3. Persistent OCI lifecycle
-
-Implement `create`, `start`, `state`, `kill`, `delete`, detached `run`, and `list`. Store absolute bundle paths, validate container IDs, write state atomically, coordinate competing mutating commands across processes, and keep cleanup metadata independent of the source bundle. Track process identity with PID and `/proc/<pid>/stat` start time, with pidfds where useful.
-
-Check that create leaves the workload waiting, start runs it exactly once, state reflects real exit, signals reach the intended process, invalid transitions fail, stopped containers delete, force deletion cleans up, duplicate IDs fail, PID reuse cannot target an unrelated process, and failed create/run clean up their processes and state. A failed start retains stopped state until deletion.
-
-References: kontainer `command/{Create,Start,Run,State,Kill,Delete,List}.kt`, `state/State.kt`, and `channel/NotifySocket.kt`; runc `create.go`, `start.go`, `state.go`, `kill.go`, and `delete.go`.
-
-Implemented design: no monitor process, as in runc. The launcher reports the init PID while it is an unreaped child; the CLI pins it with a pidfd and records PID, start time, and boot ID before releasing the launcher, which stays the init's parent until the verdict: on success it exits and leaves the detached process to the caller's subreaper, as runc does; on a failure within the launch handshake (including exec's PID-file publication) it reaps the child the CLI killed. Follow-up: `create`/`run --detach` PID-file publication happens after the launcher exits, so its failure cleanup does not yet reap the init. A created init finishes setup, waits for a commit byte that follows the `state.json` write (EOF makes it exit), then serves `start.sock`. The init accepts a connected client's request; the locked host `start` command unlinks the socket (the created-to-running marker) and sends the commit before init execs; the close-on-exec connection gives `start` EOF on success or the exec error. Status is derived on each query (record, verified init, socket). Signals use `pidfd_send_signal` after verifying start time, boot ID, and PID namespace. Mutating commands hold a bounded per-container `flock`; `mkdirat` rejects duplicate IDs; `state.json` is replaced by fsync and rename. Foreground `run` keeps its parent-death signal chain and removes state on exit; a detached init has no parent-death signal and starts a new session.
-
-Deliberate differences from runc: `start` reports exec failures; a dead `start` client before the request check does not consume the start; the state root must be private to its owner. Missing compared with runc and kontainer: hooks (including poststart/poststop), `NOTIFY_SOCKET`, `--console-socket`, `--no-subreaper`, signal forwarding for foreground `run` (phase 5), and `kill` reaching processes other than the init in containers without a PID namespace. `delete` does kill those processes, through `cgroup.kill`. Rootless state roots (`$XDG_RUNTIME_DIR`) are not handled. `run --keep` retains stopped state and its cgroup for explicit deletion. `create` and `run` atomically publish host init PIDs with `--pid-file`; publication failures clean up the launch.
-
-`pause`/`resume` use the cgroup v2 freezer, including paused state/list output, freezing a created init, confirmed completion, and killing/deleting while frozen. `scripts/freezer-integration.sh` checks actual suspension and resumed progress against runc, with boot/inode protection and bystander isolation.
-
-## 4. Security and resource setup
-
-Add UID/GID and supplementary groups, capability sets, no_new_privs, rlimits, umask, masked and readonly paths, readonly rootfs, and cgroup v2 memory/CPU/pids limits. Apply controls before allowing the workload to execute. Add seccomp filtering with its dependency or implementation choice discussed before adoption.
-
-Check actual identities and capability masks, denied operations, readonly/masked paths, limit files and enforcement, cgroup cleanup, invalid settings, and setup ordering. Add lifecycle hooks and their timeout, environment, state-input, and failure semantics.
-
-Implemented increment (credentials): after the cwd and before the executable lookup, the init follows runc's order: umask (default 0022, not inherited), `PR_SET_NO_NEW_PRIVS` when requested, chown of inherited stdio to the uid (runc's fixStdioPermissions), `setgroups` (always, so an empty or absent list clears the caller's groups), `setgid`, `setuid`. The foreground init then rearms its parent-death signal, which the credential change cleared, and rechecks the launcher pidfd, as runc restores pdeath after finalizeNamespace. The executable lookup runs with the workload credentials, so a root-only program fails `create`. Because a created init no longer runs as root, it cannot unlink the marker in the private state directory: `start` (root, holding the lock) unlinks `start.sock` after the init accepts the request, then sends a commit; the init decides from the marker inode's link count, read through an inherited O_PATH handle, whether to exec, keep serving, or exit. Without `PR_SET_KEEPCAPS`, a non-root uid loses its permitted set at `setuid` rather than at `execve` as in runc; the workload sees the same empty sets. User namespaces (so rootless mappings and `/proc/self/setgroups` handling) are still missing.
-
-Implemented increment (capabilities): `process.capabilities` follows runc's finalizeNamespace. An absent object changes nothing (runc's `capabilities.New(nil)` is a no-op), so the credentials behavior above still holds. A present object is authoritative and absent members are empty. After `no_new_privs`, every capability in `0...cap_last_cap` outside `bounding` and still in the bounding set is dropped while the init holds `CAP_SETPCAP`; `PR_SET_KEEPCAPS` is set; the user switch and cwd retry run; keepcaps is cleared; `capset` (version 3) installs effective, permitted, and inheritable; the ambient set is cleared and each configured ambient capability raised. Then the foreground parent-death signal is rearmed as before. Deliberate differences from runc, which warns and continues: unknown names, names above `cap_last_cap`, ambient ⊄ permitted ∩ inheritable, and failed ambient raises are errors. Effective ⊄ permitted is rejected before launch rather than at `capset`. Inheritable is not checked against bounding: `capset` keeps bits the init already inherited, which the integration script shows with a caller's inheritable `CAP_NET_RAW` kept outside a reduced bounding set; a bit neither bounded nor inherited fails at `capset` under both runtimes. runc's second bounding pass in ApplyCaps (skipped without `CAP_SETPCAP` in effective) is omitted, since the bounding set cannot grow. The kernel decides permitted ⊆ the runtime's own permitted set at `capset`, reported as a setup error. Names are fixed through `CAP_CHECKPOINT_RESTORE` (40); newer kernel capabilities can be dropped but not requested. Securebits are not configured.
-
-References: kontainer `process/ProcessSecurity.kt`, `capability/Capability.kt`, `cgroup/CgroupV2.kt`, `seccomp/Seccomp.kt`, and `hook/Hook.kt`; runc `libcontainer/standard_init_linux.go`, `libcontainer/seccomp`, and `vendor/github.com/opencontainers/cgroups`.
-
-## 5. Exec, rootless operation, and terminal support
-
-Implement joining existing namespaces, `exec` with cwd/env/user and exit-status handling, user namespace mapping handshake, rootless create/run, PTY console handoff and foreground I/O, signal forwarding, and terminal resizing. Revisit process creation only with measured runtime thread behavior and kernel constraints in hand.
-
-Check exec sees the existing rootfs/namespaces and requested credentials; failed joins cannot affect the caller; rootless UID/GID mappings match the bundle; terminal ownership and dimensions are correct; cancellation and signals do not leak processes or descriptors.
-
-References: kontainer `command/Exec.kt`, `console/Console.kt`, `command/Foreground.kt`, `process/MainProcess.kt`, and `src/nativeInterop/cinterop/bootstrap/bootstrap.c`; runc `libcontainer/nsenter/nsexec.c`, `libcontainer/setns_init_linux.go`, and `libcontainer/process_linux.go`.
-
-## 6. Broader kontainer-runtime parity
-
-The remaining inventory is deliberately explicit so that a working minimal runtime is not mistaken for feature parity:
-
-| Area | Features to add and verify |
-| --- | --- |
-| Lifecycle and observability | updates for unimplemented resources |
-| Mounts | bind/rbind option semantics, propagation, recursive attributes, idmapped mounts, safe path resolution, no-pivot mode |
-| Namespaces | joining supplied namespace paths, cgroup and time namespaces, time offsets, shared/host namespace combinations |
-| Resources | CPU realtime runtime/period, the remaining memory fields, unified cgroup v2 controls, hugepages, block I/O, network/RDMA, device BPF rules, updates for those controls, cleanup of created ancestor cgroups (memory limit/reservation/swap, pids limit, and CPU shares/quota/period/burst/idle and cpusets are implemented) |
-| Security | seccomp argument rules and notification FD handoff, AppArmor/SELinux labels, session keyring, sealed executable handoff |
-| Process setup | HOME resolution, socket activation (`LISTEN_FDS`), scheduling, I/O priority, CPU affinity, NUMA memory policy |
-| Networking | loopback setup and moving/configuring interfaces in a target namespace |
-| Integration | selected runc bats compatibility tests, rootless cases, containerd compatibility |
-| Portability | arm64 and x86_64 Linux; explicit musl/static build verification |
-
-References: kontainer `scripts/runc_test_pattern` inventories selected upstream compatibility cases; `scripts/runc-compat-test.sh` drives runc bats tests. Its inclusion of a test name is not proof that a particular checkout passes it. kontainer `test-scripts/verify-from-container.sh` is useful for exploration; Swift tests should assert expected results rather than only print observations.
-
-Checkpoint/restore, cgroup v1, and systemd cgroup management are outside the initial parity target. Their omission should remain visible in documentation and feature reporting.
-
-## Dependency and portability policy
-
-Use Swift 6.4 (6.4.1 for Linux validation), swift-argument-parser for the CLI, swift-system for file descriptors and errors, and a minimal header-only Linux API target. Enable strict memory-safety diagnostics and warnings-as-errors in all project-owned Swift targets. Prefer safe initialization and borrowed memory APIs such as OutputSpan and Span; keep unavoidable raw-pointer operations scoped and documented. SystemPackage is the descriptor/error foundation; wrap copyable descriptor values in explicit noncopyable owners, and use FilePath when bundle and state-directory paths are introduced. Discuss other package dependencies before introducing them. Conditionally import Musl or Glibc; keep only missing declarations and fixed-signature variadic adapters in the Linux header. Launch runs synchronously before background work begins; future async supervision must preserve that boundary or introduce a fresh bootstrap process. Linux-specific kernel calls are expected. Portability to musl is an implementation goal requiring a real build and execution test, not a current compatibility claim.
-
-All kontainer Kotlin paths above are relative to `src/nativeMain/kotlin/` in [ternbusty/kontainer-runtime](https://github.com/ternbusty/kontainer-runtime), except paths explicitly starting with `scripts/`, `test-scripts/`, or `src/nativeInterop/`. runc paths are relative to [opencontainers/runc](https://github.com/opencontainers/runc). The namespace and lifecycle behavior should be checked against those sources and Linux itself as each phase is implemented.
+Next implementation slice: milestone 1's invocation/bundle capture and logging
+contract, followed by milestone 2's bind mounts and supplied network-namespace
+join. These remove concrete engine blockers while keeping changes reviewable.

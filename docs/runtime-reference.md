@@ -183,4 +183,17 @@ The command runs as PID 1, so normal Linux PID 1 signal behavior applies. The ru
 
 ## Not yet implemented
 
-The lifecycle lacks runc's `--console-socket`, `--no-pivot`, `NOTIFY_SOCKET`, and hooks (`--pid-file` and `run --keep` are implemented). Seccomp, hooks, and the cgroup controls beyond the memory, pids, and CPU subset (CPU realtime, hugepages, block I/O, devices, `unified`) are planned for phase 4. cgroup v1 is not supported. Terminals, signal forwarding, advanced `exec` options (terminal, console sockets, explicit `--no-new-privs=false`, sub-cgroups), user namespaces, and rootless operation are planned for phase 5. Bind mounts, other filesystem types, `HOME` defaulting, network setup, and the rest of the phase 6 inventory are also missing. musl builds have not been verified. Full parity work is paused; see the [option comparison and usage scenarios](parity.md#current-scope-and-option-comparison) and the [implementation roadmap](roadmap.md) for current scope and remaining differences.
+The lifecycle lacks console sockets, no-pivot, foreground signal forwarding,
+kill-all outside a private PID namespace, and hooks. Seccomp, device-cgroup BPF,
+custom devices, broader mounts and supplied namespace joins are also missing.
+Terminals, user namespace mappings/rootless operation, additional process settings,
+hugepages, block I/O, unified controls and exec sub-cgroups remain feature gaps.
+Musl/static builds have not been verified.
+
+The [roadmap](roadmap.md) resumes the kontainer-level feature journey after the
+Swift refactor, beginning with engine contracts, mounts and namespace joins.
+The [parity inventory](parity.md) distinguishes implemented-target gaps from runc
+extensions; CPU realtime, cgroup v1 and systemd management are outside the pinned
+target's implemented functionality. The [Docker assessment](docker-integration.md)
+records the additional integration work and Linux acceptance gates. Docker support
+has not been established.

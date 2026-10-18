@@ -5,7 +5,8 @@ root filesystems, process isolation, and cgroups fit together in a small OCI run
 
 **For learning and experimentation.** This is not a production runtime or a security
 boundary. Seccomp, device-cgroup controls, user namespaces, rootless operation,
-and terminals are not implemented. Full parity work is paused.
+and terminals are not implemented. The [roadmap](docs/roadmap.md) targets
+kontainer-runtime-level functionality and eventual Docker integration.
 
 ## Try it
 
@@ -70,11 +71,12 @@ errors are enabled in the package.
 - [Development and testing](docs/testing.md): Linux setup, focused checks, and integration coverage.
 - [Code organization](docs/code-organization.md): source layout and contributor conventions.
 - [Scope and limitations](docs/parity.md): supported behavior and remaining differences.
-- [Roadmap](docs/roadmap.md): implementation phases and possible future work.
+- [Roadmap](docs/roadmap.md): ordered feature milestones after the Swift refactor.
+- [Docker integration gap](docs/docker-integration.md): required contracts and acceptance gates.
 
 ## License and credits
 
 [MIT](LICENSE). [runc](https://github.com/opencontainers/runc) is the behavioral
-reference; [kontainer-runtime](https://github.com/ternbusty/kontainer-runtime) is
+reference for OCI semantics; [kontainer-runtime](https://github.com/ternbusty/kontainer-runtime) is
 the companion implementation and initial feature target. Both use Apache 2.0;
 see [NOTICE](NOTICE) and [upstream licenses](LICENSES).

@@ -1,6 +1,6 @@
 # Repository guidance
 
-- Educational Linux runtime; runc is the behavioral authority and kontainer-runtime is the comparison target. Full parity work is paused; see `docs/parity.md` before choosing work.
+- Educational Linux runtime targeting kontainer-runtime-level functionality, with eventual Docker integration through the existing containerd runc shim. Use runc for OCI semantics and security ordering; exact parity with every runc behavior is not a goal. Follow `docs/roadmap.md`, `docs/parity.md`, and `docs/docker-integration.md` when choosing work.
 - Use Swift 6.4 (6.4.1 on Linux). Keep strict memory safety and warnings-as-errors enabled.
 - Use swift-system and swift-argument-parser. Discuss new external dependencies first. Preserve conditional Musl/Glibc imports, which belong only in `Sources/ContainerRuntime/Kernel/`; add new system calls there with an `ENOSYS` stub off Linux.
 - Prefer Swift Concurrency over locks for shared state, but keep CLI launch and pre-fork setup synchronous and single-threaded. Never hold a lock across `await`; explain unavoidable locking.
