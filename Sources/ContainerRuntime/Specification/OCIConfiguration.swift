@@ -89,11 +89,18 @@ struct OCIConfiguration: Decodable, Sendable {
         var capabilities: Capabilities?
         var rlimits: [Rlimit]?
         var oomScoreAdj: Int64?
+        var apparmorProfile: String?
+        var selinuxLabel: String?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
-                decoder, allowed: ["terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities", "rlimits", "oomScoreAdj"]
+                decoder, allowed: [
+                    "terminal", "user", "args", "env", "cwd", "noNewPrivileges", "capabilities", "rlimits", "oomScoreAdj",
+                    "apparmorProfile", "selinuxLabel",
+                ]
             )
+            apparmorProfile = try object.optional("apparmorProfile")
+            selinuxLabel = try object.optional("selinuxLabel")
             rlimits = try object.optional("rlimits")
             oomScoreAdj = try object.optionalInt64("oomScoreAdj")
             terminal = try object.optional("terminal")
@@ -237,12 +244,18 @@ struct OCIConfiguration: Decodable, Sendable {
         var cgroupsPath: String?
         var resources: Resources?
         var seccomp: SeccompProfile?
+        /// Decoded only so that a requested label is refused, not ignored.
+        var mountLabel: String?
 
         init(from decoder: any Decoder) throws {
             let object = try StrictObject(
                 decoder,
-                allowed: ["namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources", "seccomp"]
+                allowed: [
+                    "namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources", "seccomp",
+                    "mountLabel",
+                ]
             )
+            mountLabel = try object.optional("mountLabel")
             namespaces = try object.required("namespaces")
             rootfsPropagation = try object.optional("rootfsPropagation")
             maskedPaths = try object.optional("maskedPaths")

@@ -11,6 +11,7 @@ enum LaunchStage: Int32 {
     case resolveReadonlyPath, readonlyPath, openDevNull, resolveMaskedPath, maskPath, verifyMaskedPath
     case findExecutable, relativeExecutable, pidfdOpen, pidfdSend
     case openMountSource, seccomp, oomScoreAdjustment, sessionKeyring, keyringPermissions
+    case keyCreationLabel, appArmorProfile, selinuxLabel
 
     var description: String {
         switch self {
@@ -74,6 +75,9 @@ enum LaunchStage: Int32 {
         case .oomScoreAdjustment: "set process.oomScoreAdj"
         case .sessionKeyring: "join session keyring"
         case .keyringPermissions: "set session keyring permissions"
+        case .keyCreationLabel: "set the SELinux key creation context (process.selinuxLabel)"
+        case .appArmorProfile: "stage process.apparmorProfile for exec (ENOENT: the profile is not loaded)"
+        case .selinuxLabel: "stage process.selinuxLabel for exec (the container needs a /proc mount)"
         }
     }
 }

@@ -153,6 +153,9 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     var noNewKeyring: Bool?
     /// Original container OOM score, reused even for standalone-process exec.
     var oomScoreAdjustment: Int32?
+    /// Container AppArmor/SELinux labels that exec inherits unless its
+    /// process overrides them. Nil in legacy records, which had none.
+    var securityLabels: SecurityLabels?
     /// Raw resource configuration, independent of the source bundle. Nil
     /// distinguishes legacy records from new containers with empty settings.
     var resourceConfiguration: OCIConfiguration.Resources?
@@ -173,6 +176,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         seccomp = plan.seccomp
         self.noNewKeyring = noNewKeyring
         oomScoreAdjustment = plan.oomScoreAdjustment
+        securityLabels = plan.securityLabels
     }
 
     func encoded() throws -> [UInt8] {

@@ -94,8 +94,10 @@ public struct RuntimeFeatures: Codable, Equatable, Sendable {
                     capabilities: CapabilitySet.knownNames,
                     cgroup: Linux.Cgroup(v1: false, v2: true, systemd: false, systemdUser: false, rdma: false),
                     seccomp: Linux.Enabled(enabled: true),
-                    apparmor: disabled,
-                    selinux: disabled,
+                    // Implemented, as runc reports them; a requested module the
+                    // host does not enable fails when the container starts.
+                    apparmor: Linux.Enabled(enabled: true),
+                    selinux: Linux.Enabled(enabled: true),
                     intelRdt: Linux.IntelRdt(enabled: false, schemata: false, monitoring: false),
                     mountExtensions: Linux.MountExtensions(idmap: disabled),
                     netDevices: disabled)

@@ -17,9 +17,11 @@ struct SessionKeyringSetup {
         self.isExec = isExec
     }
 
-    /// Joins (or creates) the keyring. Returns nil or the failure.
-    func apply() -> LaunchFailure? {
+    /// Joins (or creates) the keyring, first giving a keyring it creates the
+    /// SELinux process label, as runc does. Returns nil or the failure.
+    func apply(labels: SecurityLabelSetup) -> LaunchFailure? {
         guard let name else { return nil }
+        if let failure = labels.labelKeyCreation() { return failure }
         let key: Int32
         do { key = try Kernel.Keyring.joinSession(name) }
         catch { return LaunchFailure(stage: .sessionKeyring, error: error) }

@@ -188,9 +188,13 @@ public struct ContainerLifecycle: Sendable {
             // bundle; legacy records without a keyring setting keep the
             // caller's session keyring, as they did before.
             let keyring = SessionKeyringSetup(id: id, disabled: record.noNewKeyring ?? true, isExec: true)
+            // A process file may override the recorded labels; a command
+            // exec rereads the bundle, so only the record applies to it.
+            let labels = (record.securityLabels ?? SecurityLabels())
+                .overridden(by: processFile == nil ? SecurityLabels() : plan.securityLabels)
             return try plan.execOnLinux(
                 namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd, seccomp: record.seccomp,
-                oomScoreAdjustment: record.oomScoreAdjustment, keyring: keyring)
+                oomScoreAdjustment: record.oomScoreAdjustment, keyring: keyring, securityLabels: labels)
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
         return detach ? .success : ExitStatus(shellStatus: result)

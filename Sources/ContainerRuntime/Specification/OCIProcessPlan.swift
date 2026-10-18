@@ -14,6 +14,9 @@ struct OCIProcessPlan: Sendable {
     /// `process.oomScoreAdj`, validated for both inputs. As in runc, only the
     /// container's value applies: exec reuses the recorded init setting.
     let oomScoreAdjustment: Int32?
+    /// AppArmor and SELinux exec contexts. For exec, the recorded container
+    /// labels apply where these are unset.
+    let securityLabels: SecurityLabels
 
     init(_ process: OCIConfiguration.Process) throws {
         // Validate the requested process before any namespace or child exists.
@@ -23,6 +26,7 @@ struct OCIProcessPlan: Sendable {
         } else {
             oomScoreAdjustment = nil
         }
+        securityLabels = try SecurityLabels(process)
         guard process.terminal != true else {
             throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
         }

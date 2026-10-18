@@ -15,6 +15,8 @@ struct WorkloadSetup {
     let lastCapability: Int32
     let resourceLimits: [ResourceLimit]
     let seccomp: PreparedSeccomp?
+    /// AppArmor/SELinux exec contexts staged before the credential change.
+    let labels: SecurityLabelSetup
     let foreground: Bool
 
     /// The caller has entered the root and arranged all mounts.
@@ -111,6 +113,12 @@ struct WorkloadSetup {
                 return LaunchRecord.reportFailure(to: report, at: .cwd, error: error)
             }
             enterCwdAsUser = true
+        }
+
+        // Inside the container root with full privileges and before
+        // no_new_privs. Both contexts apply only at the workload's execve.
+        if let failure = unsafe labels.stageExecContexts() {
+            return LaunchRecord.reportFailure(to: report, failure)
         }
 
         // runc's order from here: umask (0o022 unless configured), then

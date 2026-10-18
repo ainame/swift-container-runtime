@@ -10,7 +10,7 @@ import Testing
     #expect(!setup.isExec)
     let inherited = SessionKeyringSetup(id: id, disabled: true, isExec: true)
     #expect(inherited.name == nil)
-    #expect(inherited.apply() == nil)
+    #expect(try inherited.apply(labels: SecurityLabelSetup(SecurityLabels())) == nil)
 }
 
 @Test(arguments: [false, true])

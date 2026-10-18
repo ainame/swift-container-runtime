@@ -130,6 +130,8 @@ public struct OCIRunPlan: Sendable {
     public let oomScoreAdjustment: Int32?
     /// Syscall policy applied to init and persisted for every exec.
     let seccomp: SeccompProfile?
+    /// AppArmor and SELinux contexts for init, recorded for every exec.
+    let securityLabels: SecurityLabels
     /// The workload's user, groups, umask and no_new_privs.
     public let security: ProcessSecurity
     /// `process.capabilities`; nil leaves the inherited sets, as in runc.
@@ -280,6 +282,11 @@ public struct OCIRunPlan: Sendable {
             throw RuntimeError("config.json: unsupported ociVersion \(version); expected 1.x")
         }
         let process = try OCIProcessPlan(configuration.process)
+        // SELinux mount contexts need context= data on every mount, which
+        // this runtime does not add. Refuse rather than drop the request.
+        if let label = configuration.linux.mountLabel, !label.isEmpty {
+            throw RuntimeError("config.json: linux.mountLabel is not implemented; remove it or use an empty label")
+        }
 
         var namespaces = Set<Namespace>()
         var seenNamespaces = Set<Namespace>()
@@ -337,6 +344,7 @@ public struct OCIRunPlan: Sendable {
         self.namespaces = Namespace.allCases.filter(namespaces.contains)
         self.networkNamespacePath = networkNamespacePath
         self.seccomp = configuration.linux.seccomp
+        self.securityLabels = process.securityLabels
         self.oomScoreAdjustment = process.oomScoreAdjustment
         self.hostname = configuration.hostname
         self.mounts = mounts

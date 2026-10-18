@@ -53,6 +53,7 @@ extension OCIRunPlan {
         let capabilities = self.capabilities
         let resourceLimits = self.resourceLimits
         let filter = try seccomp.map(Kernel.Seccomp.compile)
+        let labels = try SecurityLabelSetup(securityLabels)
         let oom = OOMScoreAdjustment(oomScoreAdjustment)
         let pathControls = self.pathControls
         let cwdCount = cwd.count
@@ -99,7 +100,7 @@ extension OCIRunPlan {
                     executables: pointers + starts[InitStringGroup.executable], searchesPath: searchesPath,
                     directory: (pointers + starts[InitStringGroup.cwdPrefixes])[max(0, cwdCount - 1)],
                     security: security, supplementaryGids: gidBuffer, capabilities: capabilities,
-                    lastCapability: lastCapability, resourceLimits: resourceLimits, seccomp: filter, foreground: !hooks.detached)
+                    lastCapability: lastCapability, resourceLimits: resourceLimits, seccomp: filter, labels: labels, foreground: !hooks.detached)
                 return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context, prepareLauncher: {
                     if let failure = oom.apply() { return failure }
                     return network.join().map { LaunchFailure(stage: .joinNamespaces, error: $0) }
@@ -108,7 +109,7 @@ extension OCIRunPlan {
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
                     }
-                    if let failure = keyring?.apply() { return LaunchRecord.reportFailure(to: report, failure) }
+                    if let failure = keyring?.apply(labels: labels) { return LaunchRecord.reportFailure(to: report, failure) }
                     if let status = unsafe root.prepare(report: report) { return status }
                     // Init hands off its pidfd inside the root, before credentials and readiness.
                     if let failure = pidfdSocket?.handOff(label: .standard) { return LaunchRecord.reportFailure(to: report, failure) }

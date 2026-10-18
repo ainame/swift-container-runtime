@@ -79,9 +79,12 @@ extension OCIProcessPlan {
     /// `seccomp`, `oomScoreAdjustment` and `keyring` are the container's
     /// recorded settings: the filter is compiled here before fork, the score
     /// is written by the launcher and the keyring is joined by the child.
+    /// `securityLabels` are the effective exec labels (see
+    /// ``SecurityLabels/overridden(by:)``).
     func execOnLinux(
         namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil,
-        seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil, keyring: SessionKeyringSetup? = nil
+        seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil, keyring: SessionKeyringSetup? = nil,
+        securityLabels: SecurityLabels = SecurityLabels()
     ) throws -> Int32 {
         var strings = try CStringVector(
             groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
@@ -98,6 +101,7 @@ extension OCIProcessPlan {
         let gids = security.additionalGids.map { gid_t($0) }
         let last = try capabilities?.validatedKernelLimit() ?? -1
         let filter = try seccomp.map(Kernel.Seccomp.compile)
+        let labels = try SecurityLabelSetup(securityLabels)
         let oom = OOMScoreAdjustment(oomScoreAdjustment)
 
         // All borrowed C storage spans the complete synchronous launch. The
@@ -110,7 +114,7 @@ extension OCIProcessPlan {
                     executables: pointers + starts[3], searchesPath: searchesPath,
                     directory: (pointers + starts[2])[0], security: security,
                     supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
-                    resourceLimits: resourceLimits, seccomp: filter, foreground: !hooks.detached)
+                    resourceLimits: resourceLimits, seccomp: filter, labels: labels, foreground: !hooks.detached)
                 return unsafe try NamespaceLauncher.run(hooks: hooks, context: context, prepareLauncher: {
                     if let failure = oom.apply() { return failure }
                     return namespaces.join().map { LaunchFailure(stage: .joinNamespaces, error: $0) }
@@ -118,7 +122,7 @@ extension OCIProcessPlan {
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
                     }
-                    if let failure = keyring?.apply() { return LaunchRecord.reportFailure(to: report, failure) }
+                    if let failure = keyring?.apply(labels: labels) { return LaunchRecord.reportFailure(to: report, failure) }
                     if let error = namespaces.enterRoot() { return LaunchRecord.reportFailure(to: report, at: .enterRoot, error: error) }
                     // As runc's setns init: inside the container, before
                     // no_new_privs and the credential switch.
