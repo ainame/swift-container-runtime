@@ -553,3 +553,12 @@ func rejectsConflictingOrUnsupportedNamespacePaths(_ entries: String, _ reason: 
         #expect(String(describing: error).contains(reason))
     }
 }
+
+@Test func filesystemMountsAcceptPrivatePropagationOnly() throws {
+    let tmpfs = #"[{"destination": "/tmp", "type": "tmpfs", "source": "tmpfs", "options": ["rprivate", "noexec", "nosuid", "nodev"]}]"#
+    let accepted = try plan(config(mounts: tmpfs))
+    #expect(accepted.mounts[0].propagation == nil)
+    #expect(accepted.mounts[0].flags == [.noexec, .nosuid, .nodev])
+    let shared = #"[{"destination": "/tmp", "type": "tmpfs", "source": "tmpfs", "options": ["rshared"]}]"#
+    #expect(throws: RuntimeError.self) { try plan(config(mounts: shared)) }
+}

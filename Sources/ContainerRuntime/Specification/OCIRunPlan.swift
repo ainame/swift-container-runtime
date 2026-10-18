@@ -486,6 +486,10 @@ public struct OCIRunPlan: Sendable {
             case "rbind" where type == .bind: recursiveBind = true
             case "private" where type == .bind: propagation = .private
             case "rprivate" where type == .bind: propagation = .recursivePrivate
+            // A new filesystem mount under the container's rprivate tree is
+            // already private, so the request (as Docker's --tmpfs sends it)
+            // holds without another mount call. Shared or slave stays refused.
+            case "private", "rprivate": break
             default:
                 guard isSupportedData(option, for: type) else {
                     throw RuntimeError("config.json: \(field).options \(option) is not implemented for \(type.rawValue)")
