@@ -182,8 +182,8 @@ touch_ran=$(process '["/bin/touch", "/ran"]')
 
 write_config "$scratch/terminal" '{"terminal": true, "args": ["/bin/touch", "/ran"], "cwd": "/"}'
 expect_setup_failure "$scratch/terminal" 'process.terminal in the foreground is not implemented'
-write_config "$scratch/seccomp" "$touch_ran" ', "unknownField": {}'
-expect_setup_failure "$scratch/seccomp" 'unsupported field(s): unknownField'
+write_config "$scratch/seccomp" "$touch_ran" ', "domainname": "example.test"'
+expect_setup_failure "$scratch/seccomp" 'unsupported field(s): domainname'
 write_config "$scratch/oomscore" '{"args": ["/bin/touch", "/ran"], "cwd": "/", "oomScoreAdj": 1001}'
 expect_setup_failure "$scratch/oomscore" 'process.oomScoreAdj must be -1000...1000'
 write_config "$scratch/caps" '{"args": ["/bin/touch", "/ran"], "cwd": "/", "capabilities": {"bounding": ["CAP_NOPE"]}}'

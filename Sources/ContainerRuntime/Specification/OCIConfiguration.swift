@@ -6,10 +6,9 @@ import Foundation
 
 /// The subset of the OCI runtime `config.json` this runtime understands.
 ///
-/// Every object rejects keys outside this subset: an unknown or unimplemented
-/// field may change behavior, so silently discarding it would misrepresent
-/// what runs. `annotations` is the only free-form map; it does not affect
-/// runtime behavior.
+/// Known unimplemented settings are refused. Top-level extension properties
+/// are ignored as required by OCI extensibility; nested configuration objects
+/// remain strict so unimplemented security/resource settings are not dropped.
 struct OCIConfiguration: Decodable, Sendable {
     struct Root: Decodable, Sendable {
         var path: String
@@ -346,7 +345,8 @@ struct OCIConfiguration: Decodable, Sendable {
 
     init(from decoder: any Decoder) throws {
         let object = try StrictObject(
-            decoder, allowed: ["ociVersion", "root", "process", "hostname", "mounts", "linux", "annotations", "hooks"]
+            decoder, allowed: ["ociVersion", "root", "process", "hostname", "mounts", "linux", "annotations", "hooks"],
+            extensionKeys: true
         )
         hooks = try object.optional("hooks")
         ociVersion = try object.required("ociVersion")
@@ -391,9 +391,14 @@ private struct AnyKey: CodingKey {
 struct StrictObject {
     private let container: KeyedDecodingContainer<AnyKey>
 
-    init(_ decoder: any Decoder, allowed: Set<String>) throws {
+    init(_ decoder: any Decoder, allowed: Set<String>, extensionKeys: Bool = false) throws {
         container = try decoder.container(keyedBy: AnyKey.self)
-        let unknown = container.allKeys.map(\.stringValue).filter { !allowed.contains($0) }.sorted()
+        // These are recognized OCI top-level fields with unimplemented behavior,
+        // not arbitrary vendor extensions. Never silently discard them.
+        let unsupportedRoot: Set<String> = ["domainname", "windows", "solaris", "vm", "zos"]
+        let unknown = container.allKeys.map(\.stringValue).filter {
+            !allowed.contains($0) && (!extensionKeys || unsupportedRoot.contains($0))
+        }.sorted()
         guard unknown.isEmpty else {
             let fields = unknown.map { ConfigurationPath.format(decoder.codingPath + [AnyKey(stringValue: $0)]) }
             throw RuntimeError("config.json: unsupported field(s): \(fields.joined(separator: ", "))")

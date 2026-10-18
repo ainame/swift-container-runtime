@@ -144,7 +144,7 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(extra: #""hooks": {"prestart": [{"path": "relative"}]}"#), "hooks.prestart[0].path must be absolute"),
     (config(extra: #""hooks": {"poststop": [{"path": "/bin/true", "timeout": 0}]}"#), "hooks.poststop[0].timeout must be positive"),
     (config(extra: #""hooks": {"onCreate": []}"#), "hooks.onCreate"),
-    (config(extra: #""futureField": 1"#), "futureField"),
+    (config(extra: #""domainname": "example.test""#), "domainname"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "capabilities": {"permited": []}}"#), "process.capabilities.permited"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "oomScoreAdj": 1001}"#), "process.oomScoreAdj"),
     (config(process: #"{"args": ["/bin/true"], "cwd": "/", "user": {"uid": 0, "gid": 0, "username": "root"}}"#), "process.user.username"),
@@ -619,4 +619,12 @@ func plansSuppliedNamespacePaths(_ namespace: String) throws {
     #expect(value.namespaces.isEmpty)
     #expect(value.namespacePaths.isEmpty)
     #expect(!value.usesPivotRoot)
+}
+
+@Test func ignoresTopLevelExtensionProperties() throws {
+    let baseline = try plan(config())
+    let extended = try plan(config(extra: #""futureField":{"nested":[true,null,42]}"#))
+    #expect(extended.arguments == baseline.arguments)
+    #expect(extended.security == baseline.security)
+    #expect(extended.mounts == baseline.mounts)
 }
