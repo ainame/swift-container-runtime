@@ -9,14 +9,11 @@ enum LaunchStage: Int32 {
     case dropBoundingCapability, keepCapabilities, setCapabilities, clearAmbientCapabilities, raiseAmbientCapability
     case setResourceLimit, startDescriptor, readonlyRoot
     case resolveReadonlyPath, readonlyPath, openDevNull, resolveMaskedPath, maskPath, verifyMaskedPath
-    case findExecutable, relativeExecutable, pidfdOpen, pidfdSend, openMountSource, seccomp, oomScoreAdjustment, sessionKeyring, keyringPermissions
+    case findExecutable, relativeExecutable, pidfdOpen, pidfdSend
+    case openMountSource, seccomp, oomScoreAdjustment, sessionKeyring, keyringPermissions
 
     var description: String {
         switch self {
-        case .sessionKeyring: "join session keyring"
-        case .keyringPermissions: "set session keyring permissions"
-        case .oomScoreAdjustment: "set process.oomScoreAdj"
-        case .seccomp: "load linux.seccomp filter"
         case .pipe: "create launch pipe"
         case .forkLauncher: "fork launcher"
         case .namespaces: "create namespaces"
@@ -73,6 +70,10 @@ enum LaunchStage: Int32 {
         case .relativeExecutable: "refusing an executable found through PATH relative to the current directory"
         case .pidfdOpen: "open a pidfd for --pidfd-socket (pidfd_open requires Linux 5.3+)"
         case .pidfdSend: "send the pidfd to --pidfd-socket"
+        case .seccomp: "load linux.seccomp filter"
+        case .oomScoreAdjustment: "set process.oomScoreAdj"
+        case .sessionKeyring: "join session keyring"
+        case .keyringPermissions: "set session keyring permissions"
         }
     }
 }

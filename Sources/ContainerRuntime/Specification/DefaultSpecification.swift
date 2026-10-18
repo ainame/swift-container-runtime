@@ -8,8 +8,7 @@ import SystemPackage
 /// The starter `config.json` written by `spec`, field for field what runc's `specconv.Example`
 /// and `ToRootless` produce. It is a write-only model: optional fields are omitted when nil so the
 /// JSON has the same keys as runc's. The starter spec asks for features this runtime cannot run yet
-/// (a terminal, /dev/shm, mqueue, sysfs and cgroup mounts, device rules, the cgroup and user
-/// namespaces); they are kept so the output stays a faithful runc starter rather than a reduced one.
+/// (a terminal, the /sys/fs/cgroup mount, and the cgroup and user namespaces); they are kept so the output stays a faithful runc starter rather than a reduced one.
 /// Nested types and properties mirror the OCI runtime specification's JSON keys of the same names.
 public struct DefaultSpecification: Codable, Equatable, Sendable {
     public struct Root: Codable, Equatable, Sendable {

@@ -1,8 +1,10 @@
 import SystemPackage
 
-/// A small, forward-only eBPF program for bpf_cgroup_dev_ctx. Its decisions
-/// depend only on the normalized policy; loading/attachment stays in Kernel.
+/// A small, forward-only eBPF program over `struct bpf_cgroup_dev_ctx`,
+/// equivalent to runc's devicefilter. Its decisions depend only on the
+/// normalized policy; loading and attachment stay in Kernel.
 enum DeviceFilter {
+    /// One `struct bpf_insn`; `offset` is patched once a jump target is known.
     private struct Instruction {
         let code: UInt8
         let destination: UInt8
@@ -11,12 +13,17 @@ enum DeviceFilter {
         let immediate: Int32
     }
 
+    /// The program as raw `bpf_insn` bytes in host byte order. Each
+    /// exception is a block that falls through to the next one when the
+    /// device or access does not match, then returns its verdict; the final
+    /// instructions return the default verdict.
     static func bytecode(_ policy: DevicePolicy) -> [UInt8] {
         var code: [Instruction] = []
         func emit(_ opcode: UInt8, _ dst: UInt8 = 0, _ src: UInt8 = 0, _ offset: Int16 = 0, _ immediate: Int32 = 0) {
             code.append(Instruction(code: opcode, destination: dst, source: src, offset: offset, immediate: immediate))
         }
-        // R2=type, R3=requested access, R4=major, R5=minor. R1 is the ctx.
+        // Load the context (R1): R2=type, R3=requested access, R4=major,
+        // R5=minor. access_type packs the type low and the access high.
         emit(0x61, 2, 1); emit(0x54, 2, 0, 0, 0xffff)
         emit(0x61, 3, 1); emit(0x74, 3, 0, 0, 16)
         emit(0x61, 4, 1, 4); emit(0x61, 5, 1, 8)
@@ -63,6 +70,8 @@ enum DeviceFilter {
         }
     }
 
+    /// Loads and attaches the policy's program to `cgroup`, returning the
+    /// program ID the caller records for `remove(_:from:)`.
     static func install(_ policy: DevicePolicy, in cgroup: FileDescriptor) throws -> UInt32 {
         var verifier = [UInt8](repeating: 0, count: 65_536)
         let program: OwnedFileDescriptor
@@ -82,6 +91,8 @@ enum DeviceFilter {
         }
     }
 
+    /// Detaches only the recorded program, leaving any other program attached
+    /// to an adopted cgroup. A program that no longer exists is not an error.
     static func remove(_ id: UInt32, from cgroup: FileDescriptor) throws {
         do {
             let program = try Kernel.BPF.openProgram(id)

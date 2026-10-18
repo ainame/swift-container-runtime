@@ -99,20 +99,23 @@ extension Kernel {
             #endif
         }
 
-        /// Change the requested VFS flags on a detached bind clone, preserving
-        /// unmentioned inherited flags and all submount attributes (Linux 5.12+).
-        static func setBindAttributes(_ mount: FileDescriptor, set: UInt64, clear: UInt64) throws(Errno) {
+        /// mount_setattr(2): sets and clears only the per-mount flags among
+        /// `set` and `clear` (read-only, nosuid, nodev, noexec, strictatime),
+        /// keeping inherited flags and every submount's attributes.
+        static func changeFlags(_ mount: FileDescriptor, set: MountFlags, clear: MountFlags) throws(Errno) {
             #if os(Linux)
-            guard set != 0 || clear != 0 else { return }
-            guard linux_set_bind_attributes(mount.rawValue, set, clear) == 0 else { throw .current }
+            guard !set.isEmpty || !clear.isEmpty else { return }
+            guard linux_change_mount_flags(mount.rawValue, set.rawValue, clear.rawValue) == 0 else { throw .current }
             #else
             throw .noFunction
             #endif
         }
 
+        /// mount_setattr(MS_PRIVATE) on the mount open at `mount`, and on
+        /// every mount below it when `recursive`.
         static func makePrivate(_ mount: FileDescriptor, recursive: Bool) throws(Errno) {
             #if os(Linux)
-            guard linux_set_bind_private(mount.rawValue, recursive ? 1 : 0) == 0 else { throw .current }
+            guard linux_make_mount_private(mount.rawValue, recursive ? 1 : 0) == 0 else { throw .current }
             #else
             throw .noFunction
             #endif

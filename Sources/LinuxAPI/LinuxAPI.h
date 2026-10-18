@@ -3,18 +3,19 @@
 
 #if defined(__linux__)
 #include <fcntl.h>
+/* bpf(2) device programs, keyctl(2) session keyrings and nsfs ioctls. */
 #include <linux/bpf.h>
-#include <linux/nsfs.h>
 #include <linux/keyctl.h>
-#include <sys/ioctl.h>
-#include <stdint.h>
+#include <linux/nsfs.h>
 #include <linux/sched.h>
 #include <poll.h>
 #include <signal.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/file.h>
 /* inotify(7), which `events` uses to observe cgroup and state changes. */
 #include <sys/inotify.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
@@ -210,18 +211,37 @@ static inline int linux_set_mount_readonly(int fd) {
     return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH, &attr, sizeof attr);
 }
 
-/* Change only requested bind-clone attributes. A nonzero propagation is
- * MS_PRIVATE; recursion applies to propagation, not the mount attributes. */
-static inline int linux_set_bind_attributes(int fd, uint64_t set, uint64_t clear) {
-    struct mount_attr attr = {0};
-    attr.attr_set = set;
-    attr.attr_clr = clear;
-    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH, &attr, sizeof(attr));
+/* The MOUNT_ATTR_* bits for MS_RDONLY, MS_NOSUID, MS_NODEV, MS_NOEXEC and
+ * MS_STRICTATIME in flags; other MS_* bits have no per-mount attribute. */
+static inline uint64_t linux_mount_attributes(unsigned long flags) {
+    uint64_t attributes = 0;
+    if (flags & MS_RDONLY) attributes |= MOUNT_ATTR_RDONLY;
+    if (flags & MS_NOSUID) attributes |= MOUNT_ATTR_NOSUID;
+    if (flags & MS_NODEV) attributes |= MOUNT_ATTR_NODEV;
+    if (flags & MS_NOEXEC) attributes |= MOUNT_ATTR_NOEXEC;
+    if (flags & MS_STRICTATIME) attributes |= MOUNT_ATTR_STRICTATIME;
+    return attributes;
 }
-static inline int linux_set_bind_private(int fd, int recursive) {
-    struct mount_attr attr = {0};
+
+/* Sets and clears only the given per-mount flags on the mount whose root is
+ * open at fd, keeping every other attribute; submounts are unchanged. An
+ * atime mode replaces the whole atime field, as the kernel requires. */
+static inline int linux_change_mount_flags(int fd, unsigned long set, unsigned long clear) {
+    struct mount_attr attr;
+    memset(&attr, 0, sizeof attr);
+    attr.attr_set = linux_mount_attributes(set);
+    attr.attr_clr = linux_mount_attributes(clear);
+    if (attr.attr_set & MOUNT_ATTR__ATIME) attr.attr_clr |= MOUNT_ATTR__ATIME;
+    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH, &attr, sizeof attr);
+}
+
+/* Makes the mount whose root is open at fd private, with every mount below
+ * it when recursive. */
+static inline int linux_make_mount_private(int fd, int recursive) {
+    struct mount_attr attr;
+    memset(&attr, 0, sizeof attr);
     attr.propagation = MS_PRIVATE;
-    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH | (recursive ? AT_RECURSIVE : 0), &attr, sizeof(attr));
+    return (int)syscall(SYS_mount_setattr, fd, "", AT_EMPTY_PATH | (recursive ? AT_RECURSIVE : 0), &attr, sizeof attr);
 }
 
 /* A close-on-exec filesystem context for type, as fsopen(FSOPEN_CLOEXEC). */

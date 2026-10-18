@@ -11,16 +11,18 @@ struct OCIProcessPlan: Sendable {
     let security: OCIRunPlan.ProcessSecurity
     let capabilities: ProcessCapabilities?
     let resourceLimits: [ResourceLimit]
+    /// `process.oomScoreAdj`, validated for both inputs. As in runc, only the
+    /// container's value applies: exec reuses the recorded init setting.
     let oomScoreAdjustment: Int32?
 
     init(_ process: OCIConfiguration.Process) throws {
+        // Validate the requested process before any namespace or child exists.
         if let value = process.oomScoreAdj {
             guard (-1000...1000).contains(value) else { throw RuntimeError("config.json: process.oomScoreAdj must be -1000...1000") }
             oomScoreAdjustment = Int32(value)
         } else {
             oomScoreAdjustment = nil
         }
-        // Validate the requested process before any namespace or child exists.
         guard process.terminal != true else {
             throw RuntimeError("config.json: process.terminal is not implemented; use terminal: false")
         }

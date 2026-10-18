@@ -1,12 +1,16 @@
 /// Validated OCI policy, stored with container state so exec never rereads a
 /// potentially changed or removed source bundle for its security restrictions.
 struct SeccompProfile: Codable, Sendable, Equatable {
+    /// The supported SCMP_ACT_* actions. NOTIFY is rejected until listener
+    /// handoff exists.
     enum Action: String, Codable, Sendable {
         case kill = "SCMP_ACT_KILL", killThread = "SCMP_ACT_KILL_THREAD"
         case killProcess = "SCMP_ACT_KILL_PROCESS", trap = "SCMP_ACT_TRAP"
         case errno = "SCMP_ACT_ERRNO", trace = "SCMP_ACT_TRACE"
         case allow = "SCMP_ACT_ALLOW", log = "SCMP_ACT_LOG"
 
+        /// The kernel SECCOMP_RET_* value, with `data` (errnoRet) in the low
+        /// bits for ERRNO and TRACE; both default to 1, as in runc.
         func value(_ data: UInt32?) throws -> UInt32 {
             if let data {
                 guard self == .errno || self == .trace else { throw RuntimeError("linux.seccomp: errnoRet requires ERRNO or TRACE") }
@@ -24,7 +28,9 @@ struct SeccompProfile: Codable, Sendable, Equatable {
         }
     }
 
+    /// A condition on one syscall argument.
     struct Argument: Codable, Sendable, Equatable {
+        /// SCMP_CMP_* comparisons; `number` is libseccomp's enum value.
         enum Operation: String, Codable, Sendable {
             case ne = "SCMP_CMP_NE", lt = "SCMP_CMP_LT", le = "SCMP_CMP_LE"
             case eq = "SCMP_CMP_EQ", ge = "SCMP_CMP_GE", gt = "SCMP_CMP_GT", maskedEqual = "SCMP_CMP_MASKED_EQ"
@@ -32,8 +38,10 @@ struct SeccompProfile: Codable, Sendable, Equatable {
                 switch self { case .ne: 1; case .lt: 2; case .le: 3; case .eq: 4; case .ge: 5; case .gt: 6; case .maskedEqual: 7 }
             }
         }
+        /// The argument position, 0...5.
         let index: UInt32
         let value: UInt64
+        /// The comparison operand for MASKED_EQ; `value` is then the mask.
         let valueTwo: UInt64?
         let op: Operation
 
@@ -47,6 +55,8 @@ struct SeccompProfile: Codable, Sendable, Equatable {
         }
     }
 
+    /// One `linux.seccomp.syscalls` entry: an action for the named syscalls,
+    /// optionally only when `args` match.
     struct Rule: Codable, Sendable, Equatable {
         let names: [String]
         let action: Action
@@ -90,6 +100,7 @@ struct SeccompProfile: Codable, Sendable, Equatable {
         syscalls = try object.optional("syscalls")
     }
 
+    /// The SECCOMP_FILTER_FLAG_* bits for `linux.seccomp.flags`.
     static func kernelFlags(_ flags: [String]?) throws -> UInt32 {
         // Like runc's absent-flags default. An explicit [] keeps kernel defaults.
         var result: UInt32 = flags == nil ? 4 : 0
@@ -104,6 +115,7 @@ struct SeccompProfile: Codable, Sendable, Equatable {
         return result
     }
 
+    /// OCI SCMP_ARCH_* names and the names libseccomp resolves.
     static let architectureNames: [String: String] = [
         "SCMP_ARCH_X86": "x86", "SCMP_ARCH_X86_64": "x86_64", "SCMP_ARCH_X32": "x32",
         "SCMP_ARCH_ARM": "arm", "SCMP_ARCH_AARCH64": "aarch64",

@@ -1,18 +1,29 @@
 /// Normalized cgroup-v2 device policy, following runc's cgroup-v1-compatible
 /// rule updates. Wildcard resets clear exceptions; partial wildcard holes fail.
 struct DevicePolicy: Sendable, Equatable {
+    /// A device selector; a nil major or minor matches any number.
     struct Device: Hashable, Sendable {
-        let type: UInt32 // BPF_DEVCG_DEV_BLOCK=1, CHAR=2
+        /// BPF_DEVCG_DEV_BLOCK (1) or BPF_DEVCG_DEV_CHAR (2).
+        let type: UInt32
         let major: UInt32?
         let minor: UInt32?
     }
+    /// Accesses to a device that differ from the default verdict.
     struct Exception: Sendable, Equatable {
         let device: Device
-        let access: UInt32 // BPF mknod=1, read=2, write=4
+        /// BPF_DEVCG_ACC_MKNOD (1), READ (2) and WRITE (4) bits.
+        let access: UInt32
     }
+    /// The verdict for a device no exception matches.
     let defaultAllow: Bool
+    /// Exceptions in a deterministic order, so equal policies compile to the
+    /// same program.
     let exceptions: [Exception]
 
+    /// Applies `linux.resources.devices` in order, followed by runc's default
+    /// allowed devices, as cgroup v1 would.
+    /// - Throws: `RuntimeError` for an invalid rule or an ambiguous partial
+    ///   removal from a wildcard exception.
     init(_ input: [OCIConfiguration.DeviceRule]) throws {
         var defaultAllow = false
         var entries: [Device: UInt32] = [:]
@@ -64,6 +75,8 @@ struct DevicePolicy: Sendable, Equatable {
         }
     }
 
+    /// runc's AllowedDevices: mknod of any device, plus /dev/null, zero, full,
+    /// tty, random, urandom, console, ptmx and every /dev/pts device.
     private static var standardRules: [OCIConfiguration.DeviceRule] {
         var rules = ["b", "c"].map { OCIConfiguration.DeviceRule(allow: true, type: $0, access: "m") }
         for (major, minor) in [(1, 3), (1, 5), (1, 7), (1, 8), (1, 9), (5, 0), (5, 1), (5, 2)] {

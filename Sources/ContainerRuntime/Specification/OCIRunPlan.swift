@@ -46,6 +46,14 @@ public struct OCIRunPlan: Sendable {
         public static let readonly = MountFlags(rawValue: 1 << 4)
     }
 
+    /// The propagation a bind clone is given before it is attached.
+    public enum BindPropagation: Sendable, Equatable {
+        /// `private`: the clone's top mount only.
+        case `private`
+        /// `rprivate`: the clone and every mount below it.
+        case recursivePrivate
+    }
+
     /// One validated entry of `mounts`.
     public struct Mount: Sendable, Equatable {
         public let type: FilesystemType
@@ -56,9 +64,10 @@ public struct OCIRunPlan: Sendable {
         public let flags: MountFlags
         /// Flags explicitly cleared (for example rw or exec) on a bind clone.
         public let clearedFlags: MountFlags
+        /// `rbind`: the bind also clones every mount below its source.
         public let recursiveBind: Bool
         /// nil keeps the private launch namespace's default propagation.
-        public let recursivePrivate: Bool?
+        public let propagation: BindPropagation?
         /// Comma-separated filesystem data (for example `mode=755`).
         public let data: String
 
@@ -425,7 +434,7 @@ public struct OCIRunPlan: Sendable {
         var flags: MountFlags = []
         var cleared: MountFlags = []
         var recursiveBind = false
-        var recursivePrivate: Bool?
+        var propagation: BindPropagation?
         var data: [String] = []
         for option in options {
             switch option {
@@ -440,8 +449,8 @@ public struct OCIRunPlan: Sendable {
             case "rw": flags.remove(.readonly); cleared.insert(.readonly)
             case "bind" where type == .bind: break
             case "rbind" where type == .bind: recursiveBind = true
-            case "private" where type == .bind: recursivePrivate = false
-            case "rprivate" where type == .bind: recursivePrivate = true
+            case "private" where type == .bind: propagation = .private
+            case "rprivate" where type == .bind: propagation = .recursivePrivate
             default:
                 guard isSupportedData(option, for: type) else {
                     throw RuntimeError("config.json: \(field).options \(option) is not implemented for \(type.rawValue)")
@@ -460,7 +469,7 @@ public struct OCIRunPlan: Sendable {
             source = mount.source ?? type.rawValue
         }
         return Mount(type: type, source: source, destination: destination, flags: flags,
-                     clearedFlags: cleared, recursiveBind: recursiveBind, recursivePrivate: recursivePrivate,
+                     clearedFlags: cleared, recursiveBind: recursiveBind, propagation: propagation,
                      data: data.joined(separator: ","))
     }
 

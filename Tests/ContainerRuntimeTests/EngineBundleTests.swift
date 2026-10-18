@@ -39,7 +39,7 @@ private func engineFixture(_ name: String) throws -> Data {
     let plan = try OCIRunPlan(config, bundle: FilePath("/bundle"), rootfs: FilePath("/rootfs"))
     let binds = plan.mounts.filter { $0.type == .bind }
     #expect(binds.count == 2)
-    #expect(binds.allSatisfy { $0.recursiveBind && $0.recursivePrivate == true })
+    #expect(binds.allSatisfy { $0.recursiveBind && $0.propagation == .recursivePrivate })
     #expect(binds.first { $0.destinationPath == "/etc/resolv.conf" }?.flags.contains(.readonly) == true)
     #expect(binds.first { $0.destinationPath == "/volume" }?.clearedFlags.contains(.readonly) == true)
     #expect(plan.cgroup.resources.devicePolicy != nil)

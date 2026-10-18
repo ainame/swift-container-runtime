@@ -1,11 +1,13 @@
 import SystemPackage
 
-/// Group indices in the launch string vector. Each mount adds two groups:
-/// its destination components, then `[source, type, data]`.
+/// Group indices in the launch string vector. Each mount adds three groups:
+/// its destination components, `[source, type, data]`, and the absolute
+/// destination prefixes a bind resolves in-root (empty for other mounts).
 enum InitStringGroup {
     static let arguments = 0, environment = 1, rootfs = 2, hostname = 3, cwdPrefixes = 4, dev = 5, executable = 6
-    static func destination(_ mount: Int) -> Int { 7 + 2 * mount }
-    static func filesystem(_ mount: Int) -> Int { 8 + 2 * mount }
+    static func destination(_ mount: Int) -> Int { 7 + 3 * mount }
+    static func filesystem(_ mount: Int) -> Int { 8 + 3 * mount }
+    static func destinationPrefixes(_ mount: Int) -> Int { 9 + 3 * mount }
 }
 
 /// Prepared init inputs; every borrowed string remains within the enclosing launch scope.
@@ -30,7 +32,7 @@ struct RootFilesystemSetup {
     @unsafe
     private func prepareSteps() -> LaunchFailure? {
         let sources: [BindMountSource?]
-        do { sources = try BindMountSource.pin(unsafe mounts) }
+        do { sources = try unsafe pinBindSources() }
         catch { return error }
         let rootfs = unsafe group(InitStringGroup.rootfs)[0]!
         var root = OwnedFileDescriptor()
@@ -95,21 +97,41 @@ struct RootFilesystemSetup {
         return nil
     }
 
+    /// Pins every bind source by its host path before any configured mount
+    /// could hide that path.
+    @unsafe
+    private func pinBindSources() throws(LaunchFailure) -> [BindMountSource?] {
+        var sources: [BindMountSource?] = []
+        for (index, mount) in unsafe mounts.enumerated() {
+            guard mount.type == .bind else {
+                sources.append(nil)
+                continue
+            }
+            do {
+                sources.append(try unsafe BindMountSource(path: group(InitStringGroup.filesystem(index))[0]!))
+            } catch {
+                throw LaunchFailure(stage: .openMountSource, error: error, detail: Int32(index))
+            }
+        }
+        return sources
+    }
+
     /// The configured mounts in order, each on a destination resolved beneath `root`.
     @unsafe
     private func mountAll(beneath root: borrowing OwnedFileDescriptor, sources: [BindMountSource?]) -> LaunchFailure? {
         for (index, mount) in unsafe mounts.enumerated() {
+            let destination = unsafe group(InitStringGroup.destination(index))
+            let failure: LaunchFailure?
             if let source = sources[index] {
-                do { try source.apply(mount, beneath: root) }
-                catch var failure { failure.detail = Int32(index); return failure }
-                continue
+                failure = unsafe source.attach(
+                    mount, components: destination, prefixes: group(InitStringGroup.destinationPrefixes(index)), beneath: root)
+            } else {
+                let filesystem = unsafe group(InitStringGroup.filesystem(index))
+                failure = unsafe Self.mount(
+                    root, destination, source: unsafe filesystem[0]!, type: unsafe filesystem[1]!,
+                    flags: mount.flags.kernelFlags, data: unsafe filesystem[2]!)
             }
-            let filesystem = unsafe group(InitStringGroup.filesystem(index))
-            if var failure = unsafe Self.mount(
-                root, unsafe group(InitStringGroup.destination(index)),
-                source: unsafe filesystem[0]!, type: unsafe filesystem[1]!, flags: mount.flags.kernelFlags,
-                data: unsafe filesystem[2]!
-            ) {
+            if var failure {
                 failure.detail = Int32(index)
                 return failure
             }

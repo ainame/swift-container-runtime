@@ -76,7 +76,13 @@ extension OCIProcessPlan {
     /// The existing launch handshake pins and places the exec child before
     /// releasing it, and confirms exec by EOF on its close-on-exec pipe.
     /// With `pidfdSocket`, the process sends its own pidfd, labelled `setns`.
-    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil, seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil, keyring: SessionKeyringSetup? = nil) throws -> Int32 {
+    /// `seccomp`, `oomScoreAdjustment` and `keyring` are the container's
+    /// recorded settings: the filter is compiled here before fork, the score
+    /// is written by the launcher and the keyring is joined by the child.
+    func execOnLinux(
+        namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil,
+        seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil, keyring: SessionKeyringSetup? = nil
+    ) throws -> Int32 {
         var strings = try CStringVector(
             groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
         )

@@ -34,8 +34,8 @@ extension Kernel {
             #endif
         }
 
-        /// NS_GET_NSTYPE, rejecting ordinary files and mismatched namespaces
-        /// before the launcher forks. Paths themselves remain owned by Launch.
+        /// NS_GET_NSTYPE: the CLONE_NEW* type of the namespace open at
+        /// `descriptor` (Linux 4.11+). An ordinary file fails with ENOTTY.
         static func type(of descriptor: FileDescriptor) throws(Errno) -> Int32 {
             #if os(Linux)
             let type = linux_namespace_type(descriptor.rawValue)

@@ -184,7 +184,13 @@ public struct ContainerLifecycle: Sendable {
                 try PidfdSocket(connectingTo: $0, relativeTo: processFile == nil ? record.bundle : nil)
             }
             defer { pidfd?.close() }
-            return try plan.execOnLinux(namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd, seccomp: record.seccomp, oomScoreAdjustment: record.oomScoreAdjustment, keyring: SessionKeyringSetup(id: id, disabled: record.noNewKeyring ?? true, isExec: true))
+            // Security settings come from the record, never the (mutable)
+            // bundle; legacy records without a keyring setting keep the
+            // caller's session keyring, as they did before.
+            let keyring = SessionKeyringSetup(id: id, disabled: record.noNewKeyring ?? true, isExec: true)
+            return try plan.execOnLinux(
+                namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd, seccomp: record.seccomp,
+                oomScoreAdjustment: record.oomScoreAdjustment, keyring: keyring)
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
         return detach ? .success : ExitStatus(shellStatus: result)

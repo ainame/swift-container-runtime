@@ -187,6 +187,8 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
+    /// One `linux.resources.devices` entry. A missing type, major or minor
+    /// (or -1) matches every device; `access` combines r, w and m.
     struct DeviceRule: Codable, Sendable, Equatable {
         var allow: Bool
         var type: String?

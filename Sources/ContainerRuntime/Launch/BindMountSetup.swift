@@ -1,113 +1,103 @@
 import SystemPackage
 
-/// A host source pinned before any configured mount can hide its original path.
-/// Its O_PATH handle never opens a device/FIFO for I/O and is close-on-exec.
+/// A bind source pinned by its host path before any configured mount can hide
+/// it. The O_PATH handle never opens a device or FIFO for I/O and is
+/// close-on-exec. The init creates it between fork and exec, from the
+/// prepared launch strings.
 final class BindMountSource {
     private let descriptor: OwnedFileDescriptor
     private let isDirectory: Bool
 
-    init(path: String) throws(Errno) {
-        descriptor = try Kernel.File.openPath(path)
+    @unsafe
+    init(path: UnsafePointer<CChar>) throws(Errno) {
+        descriptor = try unsafe Kernel.File.openPath(path)
         isDirectory = try descriptor.borrowDescriptor { descriptor throws(Errno) in try Kernel.File.status(of: descriptor).isDirectory }
     }
 
-    static func pin(_ mounts: [OCIRunPlan.Mount]) throws(LaunchFailure) -> [BindMountSource?] {
-        var sources: [BindMountSource?] = []
-        for (index, mount) in mounts.enumerated() {
-            do {
-                sources.append(mount.type == .bind ? try BindMountSource(path: mount.source) : nil)
-            } catch {
-                throw LaunchFailure(stage: .openMountSource, error: error, detail: Int32(index))
+    /// Clones the source (with every mount below it for `rbind`), changes
+    /// only the requested flags and propagation on the detached clone, then
+    /// attaches it on the destination resolved beneath `root`.
+    /// Returns nil or the failure.
+    @unsafe
+    func attach(
+        _ mount: OCIRunPlan.Mount,
+        components: UnsafePointer<UnsafeMutablePointer<CChar>?>, prefixes: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+        beneath root: borrowing OwnedFileDescriptor
+    ) -> LaunchFailure? {
+        var target = OwnedFileDescriptor()
+        do {
+            target = try root.borrowDescriptor { root throws(Errno) in
+                try unsafe Self.resolve(components, prefixes, isDirectory: isDirectory, root: root, parent: root)
             }
+        } catch {
+            return LaunchFailure(stage: .resolveMount, error: error)
         }
-        return sources
-    }
-
-    func apply(_ mount: OCIRunPlan.Mount, beneath root: borrowing OwnedFileDescriptor) throws(LaunchFailure) {
-        let target = try resolvedTarget(mount, beneath: root)
         do {
             try descriptor.borrowDescriptor { source throws(Errno) in
                 let tree = try Kernel.Mount.cloneTree(of: source, recursive: mount.recursiveBind)
                 try tree.borrowDescriptor { tree throws(Errno) in
-                    // Set only requested attributes before exposing the clone.
-                    // rbind,ro changes the top mount; submounts keep their flags.
-                    var clear = mount.clearedFlags.bindAttributes
-                    if mount.flags.contains(.strictatime) { clear |= 0x70 }
-                    try Kernel.Mount.setBindAttributes(tree, set: mount.flags.bindAttributes, clear: clear)
-                    if let recursive = mount.recursivePrivate {
-                        try Kernel.Mount.makePrivate(tree, recursive: recursive)
+                    // Before the clone is visible. As in runc, rbind,ro changes
+                    // the top mount only; submounts keep their own flags.
+                    try Kernel.Mount.changeFlags(tree, set: mount.flags.kernelFlags, clear: mount.clearedFlags.kernelFlags)
+                    if let propagation = mount.propagation {
+                        try Kernel.Mount.makePrivate(tree, recursive: propagation == .recursivePrivate)
                     }
                     try target.borrowDescriptor { target throws(Errno) in try Kernel.Mount.attach(tree, onto: target) }
                 }
             }
         } catch {
-            throw LaunchFailure(stage: .mount, error: error)
+            return LaunchFailure(stage: .mount, error: error)
         }
+        return nil
     }
 
-    private func resolvedTarget(_ mount: OCIRunPlan.Mount, beneath root: borrowing OwnedFileDescriptor) throws(LaunchFailure) -> OwnedFileDescriptor {
-        do {
-            return try root.borrowDescriptor { root throws(Errno) in
-                try Self.target(mount.destination, directory: isDirectory, root: root)
+    /// Resolves the destination one absolute prefix at a time with openat2's
+    /// in-root, no-magic-link policy, so existing symbolic links (such as an
+    /// image's /etc/resolv.conf) stay below `root`. A missing component is
+    /// created in its resolved parent: a directory, or an empty regular file
+    /// for the last component of a file source. The final entry must match
+    /// the source's kind.
+    @unsafe
+    private static func resolve(
+        _ components: UnsafePointer<UnsafeMutablePointer<CChar>?>, _ prefixes: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+        isDirectory: Bool, root: FileDescriptor, parent: FileDescriptor
+    ) throws(Errno) -> OwnedFileDescriptor {
+        // Plans reject an empty destination, so there is always a component.
+        let last = unsafe components[1] == nil
+        let opened = try unsafe openOrCreate(
+            prefixes[0]!, name: components[0]!, in: parent, directory: !last || isDirectory, root: root)
+        guard last else {
+            return try opened.borrowDescriptor { opened throws(Errno) in
+                try unsafe resolve(components + 1, prefixes + 1, isDirectory: isDirectory, root: root, parent: opened)
             }
-        } catch {
-            throw LaunchFailure(stage: .resolveMount, error: error)
         }
+        let openedIsDirectory = try opened.borrowDescriptor { descriptor throws(Errno) in
+            try Kernel.File.status(of: descriptor).isDirectory
+        }
+        guard openedIsDirectory == isDirectory else { throw isDirectory ? .notDirectory : .isDirectory }
+        return opened
     }
 
-    /// Resolve existing links with openat2's in-root/no-magic-link policy.
-    /// Missing parents are created through pinned, already-resolved parents;
-    /// a regular-file source gets a regular-file placeholder at its target.
-    /// Dangling symlinks whose referent does not exist fail explicitly.
-    private static func target(_ components: [String], directory: Bool, root: FileDescriptor) throws(Errno) -> OwnedFileDescriptor {
-        var path = ""
-        for (index, name) in components.enumerated() {
-            let parentPath = path.isEmpty ? "/" : path
-            path += "/" + name
-            let last = index == components.count - 1
-            let needsDirectory = !last || directory
-            let opened = try openOrCreate(path, name: name, parentPath: parentPath, directory: needsDirectory, root: root)
-            if last {
-                let actual = try opened.borrowDescriptor { descriptor throws(Errno) in try Kernel.File.status(of: descriptor).isDirectory }
-                guard actual == directory else { throw directory ? .notDirectory : .isDirectory }
-                return opened
-            }
-        }
-        throw .invalidArgument // plans reject mounting over the root itself
-    }
-    private static func openOrCreate(_ path: String, name: String, parentPath: String, directory: Bool, root: FileDescriptor) throws(Errno) -> OwnedFileDescriptor {
+    /// The entry at `path` beneath `root`, created first as `name` in
+    /// `parent` when it is missing. Creation never follows a final symbolic
+    /// link: a dangling one stays missing and the reopen fails with ENOENT.
+    @unsafe
+    private static func openOrCreate(
+        _ path: UnsafePointer<CChar>, name: UnsafePointer<CChar>, in parent: FileDescriptor, directory: Bool, root: FileDescriptor
+    ) throws(Errno) -> OwnedFileDescriptor {
+        let options: FileDescriptor.OpenOptions = directory ? .directory : []
         do {
-            return try Kernel.File.openPathInRoot(path, beneath: root, options: directory ? .directory : [])
+            return try unsafe Kernel.File.openPath(path, beneath: root, options: options)
         } catch .noSuchFileOrDirectory {
         }
-        let parent = try Kernel.File.openPathInRoot(parentPath, beneath: root, options: .directory)
-        try parent.borrowDescriptor { parent throws(Errno) in
-            do throws(Errno) {
-                if directory {
-                    try Kernel.File.makeDirectory(name, in: parent, permissions: FilePermissions(rawValue: 0o755))
-                } else {
-                    var file = try Kernel.File.open(name, in: parent, .writeOnly,
-                        options: [.create, .exclusiveCreate, .noFollow], permissions: FilePermissions(rawValue: 0o644))
-                    try? file.close()
-                }
-            } catch .fileExists {
-                // Reopen in-root; never follow an unconfined final link when
-                // creating a placeholder (including a dangling symlink).
+        do {
+            if directory {
+                try unsafe Kernel.File.makeDirectory(name, in: parent, permissions: FilePermissions(rawValue: 0o755))
+            } else {
+                try unsafe Kernel.File.makeEmptyFile(name, in: parent, permissions: FilePermissions(rawValue: 0o644))
             }
+        } catch .fileExists {
         }
-        return try Kernel.File.openPathInRoot(path, beneath: root, options: directory ? .directory : [])
-    }
-
-}
-
-private extension OCIRunPlan.MountFlags {
-    var bindAttributes: UInt64 {
-        var value: UInt64 = 0
-        if contains(.readonly) { value |= 1 }
-        if contains(.nosuid) { value |= 2 }
-        if contains(.nodev) { value |= 4 }
-        if contains(.noexec) { value |= 8 }
-        if contains(.strictatime) { value |= 0x20 }
-        return value
+        return try unsafe Kernel.File.openPath(path, beneath: root, options: options)
     }
 }

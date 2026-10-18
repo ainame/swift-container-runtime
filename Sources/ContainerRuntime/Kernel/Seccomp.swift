@@ -6,16 +6,24 @@ import SystemPackage
 /// Exported classic BPF and load flags. The parent compiles everything before
 /// fork; the child only borrows bytes and invokes seccomp(2).
 struct PreparedSeccomp: Sendable {
+    /// `struct sock_filter` instructions exported by libseccomp.
     let bytes: [UInt8]
+    /// SECCOMP_FILTER_FLAG_* bits passed to seccomp(2).
     let flags: UInt32
 
+    /// Loads the filter into the calling thread. Returns nil or the error.
     func install() -> Errno? {
         Errno.failure { () throws(Errno) in try Kernel.Seccomp.install(bytes, flags: flags) }
     }
 }
 
 extension Kernel {
+    /// libseccomp filter construction (supervisor only) and seccomp(2) loading.
     enum Seccomp {
+        /// Builds the profile with libseccomp and exports it as classic BPF.
+        /// Unknown syscall names and architectures fail instead of weakening
+        /// the policy; rules whose action equals the default are skipped.
+        /// - Throws: `RuntimeError` naming the rejected part of `linux.seccomp`.
         static func compile(_ profile: SeccompProfile) throws -> PreparedSeccomp {
             #if os(Linux)
             let defaultAction = try profile.defaultAction.value(profile.defaultErrnoRet)
@@ -70,6 +78,8 @@ extension Kernel {
             #endif
         }
 
+        /// SECCOMP_SET_MODE_FILTER with prepared bytes. Without no_new_privs
+        /// this needs CAP_SYS_ADMIN.
         static func install(_ bytes: [UInt8], flags: UInt32) throws(Errno) {
             #if os(Linux)
             let result = bytes.withUnsafeBufferPointer { unsafe sct_seccomp_install($0.baseAddress, $0.count, flags) }

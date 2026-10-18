@@ -503,7 +503,7 @@ func mountReadonlyOptionsUseLastRequestedMode(_ options: String, _ readonly: Boo
     #expect(value.mounts[0].type == .bind)
     #expect(value.mounts[0].source == "/bundle/../resolv.conf")
     #expect(value.mounts[0].recursiveBind)
-    #expect(value.mounts[0].recursivePrivate == true)
+    #expect(value.mounts[0].propagation == .recursivePrivate)
     #expect(value.mounts[0].flags.contains(.readonly))
     #expect(value.mounts[1].flags == [.nodev])
     #expect(value.mounts[1].clearedFlags == [.readonly, .nosuid, .noexec])

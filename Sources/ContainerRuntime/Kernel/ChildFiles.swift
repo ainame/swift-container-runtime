@@ -18,6 +18,16 @@ extension Kernel.File {
         guard unsafe mkdirat(directory?.rawValue ?? AT_FDCWD, path, mode_t(permissions.rawValue)) == 0 else { throw .current }
     }
 
+    /// An empty regular file `name` in `directory`, as openat(2) with
+    /// O_CREAT|O_EXCL|O_NOFOLLOW, closed again at once. Any existing entry,
+    /// including a dangling symbolic link, fails with EEXIST.
+    static func makeEmptyFile(_ name: UnsafePointer<CChar>, in directory: FileDescriptor, permissions: FilePermissions) throws(Errno) {
+        let flags = O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC
+        let raw = unsafe openat(directory.rawValue, name, flags, mode_t(permissions.rawValue))
+        guard raw >= 0 else { throw .current }
+        _ = close(raw)
+    }
+
     /// mknodat(2) of a character device.
     static func makeCharacterDevice(_ name: UnsafePointer<CChar>, in directory: FileDescriptor, permissions: FilePermissions, device: UInt64) throws(Errno) {
         let mode = mode_t(fileTypeCharacterDevice) | mode_t(permissions.rawValue)

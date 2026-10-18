@@ -18,7 +18,11 @@ extension OCIRunPlan {
     /// hooks) the init waits for `start` instead, and this returns 0 once it
     /// has been committed. With `pidfdSocket`, the init sends its own pidfd,
     /// labelled `standard`, before it drops privileges or reports readiness.
-    func runOnLinux(hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil, keyring: SessionKeyringSetup? = nil) throws -> Int32 {
+    /// With `keyring`, the init joins the container's session keyring first.
+    func runOnLinux(
+        hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil,
+        keyring: SessionKeyringSetup? = nil
+    ) throws -> Int32 {
         var groups: [[String]] = [
             arguments,
             environment,
@@ -31,6 +35,8 @@ extension OCIRunPlan {
         for mount in mounts {
             groups.append(mount.destination)
             groups.append([mount.source, mount.type.rawValue, mount.data])
+            groups.append(mount.type == .bind
+                ? mount.destination.indices.map { "/" + mount.destination[...$0].joined(separator: "/") } : [])
         }
         var strings = try CStringVector(groups: groups)
         let starts = strings.groupStarts
