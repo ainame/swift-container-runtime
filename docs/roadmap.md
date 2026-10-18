@@ -2,6 +2,8 @@
 
 The target is an understandable Linux runtime with roughly the features of kontainer-runtime, built in small working iterations. runc is the behavioral authority when implementations differ. Each phase needs Linux integration evidence; portable unit tests and successful compilation alone cannot establish namespace or container behavior.
 
+Full parity work is **paused**. The phases below retain the implementation history and remaining inventory, rather than prescribing the next tasks. Choose future work by learning value or a concrete usage need; see the [option comparison and usage scenarios](parity.md#current-scope-and-option-comparison). Descriptor handoff and socket activation are optional supervisor integration. The socket-activation draft is unvalidated and has not landed.
+
 ## Progress
 
 | Phase | Status |
