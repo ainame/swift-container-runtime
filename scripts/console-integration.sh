@@ -14,6 +14,23 @@
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cc=${CC:-clang}
+
+# Detached exec processes are reaped by the caller's subreaper (runc's
+# contract). Under a PID 1 that never reaps, such as a CI job container's
+# `tail -f /dev/null`, they would stay zombies and block the container's PID
+# namespace teardown, so the suite reruns itself under the subreaper fixture.
+if [ "${CONSOLE_SUITE_SUBREAPED:-}" != 1 ]; then
+    outer=$(mktemp -d)
+    "$cc" -O2 -Wall -Wextra -Werror -o "$outer/subreaper" "$here/fixtures/subreaper.c" || {
+        rm -rf "$outer"
+        echo "console-integration: cannot build the subreaper fixture with $cc" >&2
+        exit 1
+    }
+    suite_status=0
+    CONSOLE_SUITE_SUBREAPED=1 timeout -k 5 600 "$outer/subreaper" sh "$here/console-integration.sh" "$@" || suite_status=$?
+    rm -rf "$outer"
+    exit "$suite_status"
+fi
 runtime=${1:-.build/debug/swift-container-runtime}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 busybox=${BUSYBOX:-/bin/busybox}
