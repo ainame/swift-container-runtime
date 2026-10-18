@@ -39,10 +39,26 @@ For command options:
 .build/debug/srunc run --help
 ```
 
-## What works
+## OCI validation
 
-CI includes a pinned [OCI runtime-tools validation gate](docs/testing.md#oci-runtime-tools-validation),
-with explicit upstream and host exclusions and per-test artifacts.
+Every CI run checks srunc against the unmodified upstream
+[OCI runtime-tools](https://github.com/opencontainers/runtime-tools) validation
+suite, pinned to a fixed commit. The latest run on Ubuntu 26.04, x86_64, passes
+35 of its 58 executables, with none failing. The other 23 are excluded by name,
+each with a recorded reason:
+
+- 16 test cgroup v1, while srunc supports only cgroup v2.
+- 6 are upstream test defects or invalid inputs that runc 1.4.0 and v1.5.2 also fail.
+- 1 needs SELinux, which the CI host lacks; AppArmor is loaded and its test runs.
+
+This is not a claim of full conformance. The exclusions live in
+[`scripts/runtime-tools-exclusions.json`](scripts/runtime-tools-exclusions.json),
+`--strict` runs everything, and each CI run uploads raw TAP and results.
+See [OCI runtime-tools validation](docs/testing.md#oci-runtime-tools-validation)
+for how to run it, and [current status](docs/testing.md#current-runtime-tools-status)
+for what the exclusions rest on and what is still unverified.
+
+## What works
 
 - Container lifecycle: create, start, run, exec, inspect, signal, and delete.
 - Namespaces, a separate root filesystem, bind mounts and proc/tmpfs/devpts/sysfs/mqueue;

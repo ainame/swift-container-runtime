@@ -361,6 +361,33 @@ sudo python3 scripts/runtime-tools-integration.py \
   linux_ns_itype linux_ns_path linux_ns_nopath linux_uid_mappings
 ```
 
-The first local arm64 Linux run passed 34 executables; 16 required cgroup v1,
-six exposed the upstream issues above, and two required unavailable LSM policy.
-Hosted x86_64 CI is a separate result, recorded by the workflow.
+### Current runtime-tools status
+
+Recorded 2026-10-19 at upstream `bd3b0bd` (58 executables). Both hosts use
+cgroup v2 and Ubuntu 26.04.
+
+| Host | Passed | Excluded | Failed | Host exclusions |
+| --- | --- | --- | --- | --- |
+| Hosted CI, x86_64 `ubuntu-26.04` runner, privileged `swift:6.4.1` container | 35 | 23 | 0 | SELinux |
+| `srunc-dev` container machine, arm64, kernel 6.12.28 | 34 | 24 | 0 | SELinux, AppArmor |
+
+How far each exclusion group is justified:
+
+- **cgroup v1 (16):** a scope decision, not an upstream defect. The suites read
+  v1 controller paths and srunc supports only cgroup v2. They were classified
+  from source and have not been run on 26.04; the cgroup v2 integration suites
+  above cover these controllers instead.
+- **Upstream defects (6):** each reason explains why the test is wrong, and all
+  six were rerun by name on arm64 against runc 1.4.0-0ubuntu1, upstream runc
+  v1.5.2 and srunc; every runtime fails every one. runc v1.5.2 stops
+  `hooks_stdin` and `pidfile` earlier on the suite's missing `faccessat2`
+  seccomp rule, so on v1.5.2 the `pidfile` defect itself is masked; runc 1.4.0
+  reproduces it. The rerun was not repeated on x86_64.
+- **Host LSM (1–2):** applied only when the policy is missing. AppArmor runs
+  and passes in CI. SELinux is unavailable on both hosts, so `linux_mount_label`
+  has not run against srunc anywhere.
+
+Open follow-ups, cheapest first: run the cgroup v1 suites on `srunc-dev` to
+confirm they fail only on v1 paths; rerun `pidfile` and `hooks_stdin` against
+runc v1.5.2 with a copied config that adds `faccessat2`; repeat the six-test
+rerun on x86_64; and find an SELinux-enforcing host for `linux_mount_label`.
