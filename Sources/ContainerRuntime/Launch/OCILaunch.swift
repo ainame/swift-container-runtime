@@ -18,7 +18,7 @@ extension OCIRunPlan {
     /// hooks) the init waits for `start` instead, and this returns 0 once it
     /// has been committed. With `pidfdSocket`, the init sends its own pidfd,
     /// labelled `standard`, before it drops privileges or reports readiness.
-    func runOnLinux(hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil) throws -> Int32 {
+    func runOnLinux(hooks: LaunchHooks = LaunchHooks(), gate: StartGate? = nil, pidfdSocket: PidfdSocket? = nil, keyring: SessionKeyringSetup? = nil) throws -> Int32 {
         var groups: [[String]] = [
             arguments,
             environment,
@@ -102,6 +102,7 @@ extension OCIRunPlan {
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
                     }
+                    if let failure = keyring?.apply() { return LaunchRecord.reportFailure(to: report, failure) }
                     if let status = unsafe root.prepare(report: report) { return status }
                     // Init hands off its pidfd inside the root, before credentials and readiness.
                     if let failure = pidfdSocket?.handOff(label: .standard) { return LaunchRecord.reportFailure(to: report, failure) }

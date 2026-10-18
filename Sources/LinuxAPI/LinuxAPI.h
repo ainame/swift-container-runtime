@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <linux/bpf.h>
 #include <linux/nsfs.h>
+#include <linux/keyctl.h>
 #include <sys/ioctl.h>
 #include <stdint.h>
 #include <linux/sched.h>
@@ -290,6 +291,17 @@ static inline int linux_accept_cloexec(int fd) {
 #ifndef POLLRDHUP
 #define POLLRDHUP 0x2000
 #endif
+/* keyctl(2), kept fixed-signature for Swift. No libkeyutils dependency. */
+static inline int linux_join_session_keyring(const char *name) {
+    return syscall(SYS_keyctl, KEYCTL_JOIN_SESSION_KEYRING, name);
+}
+static inline long linux_describe_keyring(int key, unsigned char *buffer, size_t size) {
+    return syscall(SYS_keyctl, KEYCTL_DESCRIBE, key, buffer, size);
+}
+static inline int linux_set_keyring_permissions(int key, uint32_t permissions) {
+    return syscall(SYS_keyctl, KEYCTL_SETPERM, key, permissions);
+}
+
 /* nsfs ioctl, Linux 4.11+: returns the CLONE_NEW* type of a namespace FD. */
 static inline int linux_namespace_type(int fd) {
     return ioctl(fd, NS_GET_NSTYPE);

@@ -43,6 +43,9 @@ struct Create: RuntimeDescriptorCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
     var pidFile: String?
 
+    @Flag(name: .customLong("no-new-keyring"), help: "Inherit the caller's session keyring for init and exec.")
+    var noNewKeyring = false
+
     @OptionGroup var descriptors: DescriptorOptions
 
     @Argument(help: "Container ID.")
@@ -60,7 +63,7 @@ struct Create: RuntimeDescriptorCommand {
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             try globals.lifecycle().create(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
-                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket)
+                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring)
         } catch {
             throw CommandFailure.report(error)
         }
@@ -329,6 +332,9 @@ struct Run: RuntimeDescriptorCommand {
     @Option(name: .customLong("pid-file"), help: "Write the host init PID atomically to this path.")
     var pidFile: String?
 
+    @Flag(name: .customLong("no-new-keyring"), help: "Inherit the caller's session keyring for init and exec.")
+    var noNewKeyring = false
+
     @OptionGroup var descriptors: DescriptorOptions
 
     @Argument(help: "Container ID.")
@@ -346,7 +352,7 @@ struct Run: RuntimeDescriptorCommand {
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             status = try globals.lifecycle().run(
                 id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
-                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket
+                preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring
             )
         } catch {
             throw CommandFailure.report(error, status: 125)

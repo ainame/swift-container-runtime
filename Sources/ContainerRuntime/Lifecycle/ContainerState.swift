@@ -148,6 +148,9 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     /// Security policy for every later exec, independent of bundle mutations.
     /// Nil also reads legacy records written before seccomp support.
     var seccomp: SeccompProfile?
+    /// Explicit keyring opt-out for init and exec. Nil in legacy records
+    /// preserves their previous inherited-session behavior on exec.
+    var noNewKeyring: Bool?
     /// Original container OOM score, reused even for standalone-process exec.
     var oomScoreAdjustment: Int32?
     /// Raw resource configuration, independent of the source bundle. Nil
@@ -155,7 +158,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
     var resourceConfiguration: OCIConfiguration.Resources?
 
     /// `created` is recorded as RFC 3339 UTC with millisecond precision.
-    init(id: ContainerID, plan: OCIRunPlan, created: Date = Date()) {
+    init(id: ContainerID, plan: OCIRunPlan, created: Date = Date(), noNewKeyring: Bool = false) {
         format = Self.currentFormat
         self.id = id.rawValue
         ociVersion = plan.ociVersion
@@ -168,6 +171,7 @@ struct ContainerRecord: Codable, Sendable, Equatable {
         cgroup = nil
         resourceConfiguration = plan.resourceConfiguration
         seccomp = plan.seccomp
+        self.noNewKeyring = noNewKeyring
         oomScoreAdjustment = plan.oomScoreAdjustment
     }
 

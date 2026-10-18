@@ -76,7 +76,7 @@ extension OCIProcessPlan {
     /// The existing launch handshake pins and places the exec child before
     /// releasing it, and confirms exec by EOF on its close-on-exec pipe.
     /// With `pidfdSocket`, the process sends its own pidfd, labelled `setns`.
-    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil, seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil) throws -> Int32 {
+    func execOnLinux(namespaces: borrowing ExecNamespaceSet, hooks: LaunchHooks, pidfdSocket: PidfdSocket? = nil, seccomp: SeccompProfile? = nil, oomScoreAdjustment: Int32? = nil, keyring: SessionKeyringSetup? = nil) throws -> Int32 {
         var strings = try CStringVector(
             groups: [arguments, environment, ["/" + cwd.joined(separator: "/")], executable.candidates]
         )
@@ -112,6 +112,7 @@ extension OCIProcessPlan {
                     if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
                         return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
                     }
+                    if let failure = keyring?.apply() { return LaunchRecord.reportFailure(to: report, failure) }
                     if let error = namespaces.enterRoot() { return LaunchRecord.reportFailure(to: report, at: .enterRoot, error: error) }
                     // As runc's setns init: inside the container, before
                     // no_new_privs and the credential switch.

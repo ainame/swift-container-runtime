@@ -43,10 +43,17 @@ esac
 if [ -n "${ENGINE_SECCOMP_PROBE:-}" ]; then
     set -- "$@" --mount "type=bind,src=$ENGINE_SECCOMP_PROBE,dst=/seccomp-probe,options=bind:ro:rprivate"
 fi
+if [ -n "${ENGINE_KEYRING_PROBE:-}" ]; then
+    set -- "$@" --mount "type=bind,src=$ENGINE_KEYRING_PROBE,dst=/keyring-probe,options=bind:ro:rprivate"
+fi
+init_command='echo image-volume > /volume/result; exec sleep 1000'
+if [ -n "${ENGINE_KEYRING_PROBE:-}" ]; then
+    init_command='echo image-volume > /volume/result; /keyring-probe inspect > /volume/init-keyring; exec sleep 1000'
+fi
 c run --snapshotter native --runc-binary "$runtime" --runc-root "$scratch/runtime" --cgroup "$fixture/workload" -d \
     --mount "type=bind,src=$scratch/resolv.conf,dst=/etc/resolv.conf,options=rbind:ro:rprivate" \
     --mount "type=bind,src=$scratch/volume,dst=/volume,options=rbind:rw:rprivate" \
-    "$@" "$image" "$id" /bin/sh -ec 'echo image-volume > /volume/result; exec sleep 1000'
+    "$@" "$image" "$id" /bin/sh -ec "$init_command"
 bundle=$("$runtime" --root "$root" state "$id" | sed -n 's/.*"bundle"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 [ -n "$bundle" ] || fail 'missing Swift state/bundle'
 init=$(cat "$bundle/init.pid")
@@ -65,6 +72,19 @@ if [ -n "${ENGINE_NETWORK_TEST_PORT:-}" ]; then
     c tasks exec --exec-id network "$id" /bin/busybox nc -w 3 127.0.0.1 "$ENGINE_NETWORK_TEST_PORT" > "$scratch/network"
     grep -qx joined-network "$scratch/network" || fail 'image exec did not reach supplied namespace listener'
     echo 'network TCP reply: joined-network'
+fi
+if [ -n "${ENGINE_KEYRING_PROBE:-}" ]; then
+    wait_until test -s "$scratch/volume/init-keyring"
+    initial=$(sed -n 's/^keyring=//p' "$scratch/volume/init-keyring")
+    [ -n "$initial" ] || fail 'init keyring missing'
+    grep -Eq ';_ses\.'"$id"'$' "$scratch/volume/init-keyring" || fail 'init keyring name differs'
+    c tasks exec --exec-id keyring-put "$id" /keyring-probe put > "$scratch/keyring-put"
+    c tasks exec --exec-id keyring-read "$id" /keyring-probe inspect > "$scratch/keyring-read"
+    for view in "$scratch/keyring-put" "$scratch/keyring-read"; do
+        [ "$(sed -n 's/^keyring=//p' "$view")" = "$initial" ] || fail 'engine exec did not join init keyring'
+        grep -qx 'container-secret=1' "$view" || fail 'engine session key missing'
+    done
+    printf 'session keyring: init/exec identity and shared key verified (%s)\n' "$initial"
 fi
 if [ -n "${ENGINE_SECCOMP:-}" ]; then
     grep -Eq '^Seccomp:[[:space:]]+2$' "/proc/$init/status" || fail 'init seccomp filter missing'
