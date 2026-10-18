@@ -287,3 +287,60 @@ key in that same session. This explicit diagnostic profile permits keyctl and ha
 no seccomp profile. Separately, the existing default/custom seccomp image gate
 verifies keyring setup occurs before workload filtering; it does not weaken the
 engine's default seccomp rules to allow the diagnostic syscalls.
+
+## OCI runtime-tools validation
+
+CI also runs the unmodified `opencontainers/runtime-tools` validation executables
+at the commit in [`scripts/runtime-tools-revision`](../scripts/runtime-tools-revision).
+This is an independent OCI gate, separate from the project's differential tests.
+The declared host is rootful Linux with cgroup v2 and a private mount namespace.
+
+On a disposable Linux host, install Go, make, Perl (`prove`), Python 3, git,
+`busybox-static`, and `libseccomp-dev`, then run from the repository root:
+
+```sh
+swift build --product srunc
+sh scripts/prepare-runtime-tools.sh .build/runtime-tools-upstream
+sudo python3 scripts/runtime-tools-integration.py \
+  .build/debug/srunc .build/runtime-tools-upstream .build/runtime-tools-results
+```
+
+The runner uses a separate state root, applies a per-executable timeout, checks
+both exit status and TAP plans/assertions, and cleans up only its own containers.
+`tap-go` embeds JSON in TAP diagnostic blocks, which Perl's YAMLish reader rejects;
+the parser receives a copy with only those blocks removed, while raw output is
+retained. Two upstream negative executables have no TAP: their exit status and
+specific invalid-capability/rlimit rejection diagnostics are required instead.
+The rootfs tarball includes the static probe and has mode 0755 so mapped and
+non-root users can execute it.
+
+This is **not a claim that every upstream executable passes**. The versioned
+[`runtime-tools-exclusions.json`](../scripts/runtime-tools-exclusions.json) names
+16 cgroup-v1-only executables and six upstream defects or invalid inputs, with
+individual reasons. The latter were also reproduced against runc 1.3.4-0ubuntu1~24.04.1
+(Go 1.24.4, libseccomp 2.5.5) on the local Ubuntu machine:
+prestart hook state, FIFO device numbers, filesystem data on bind mounts, killing
+an exited pidfile workload, Go startup under its requested rlimits, and the
+unset-process start test. The pidfile defect is tracked in
+[upstream issue 805](https://github.com/opencontainers/runtime-tools/issues/805). Existing static C-probe and lifecycle integrations
+remain the gates for these behaviors; runtime validation is not weakened.
+SELinux and AppArmor tests are excluded only when their required host policy is
+unavailable. CI loads the upstream AppArmor profile on an AppArmor-enabled host.
+
+Every exclusion appears in the job summary and `results.json`, alongside raw TAP,
+normalized TAP and parser logs for executed tests. An unexpected failure,
+nonzero exit, timeout, malformed/truncated TAP, failed cleanup or zero passing
+executables fails the gate. To audit everything without exclusions, add `--strict`.
+Naming individual suites also bypasses exclusions:
+
+```sh
+sudo python3 scripts/runtime-tools-integration.py \
+  .build/debug/srunc .build/runtime-tools-upstream .build/runtime-tools-strict --strict
+sudo python3 scripts/runtime-tools-integration.py \
+  .build/debug/srunc .build/runtime-tools-upstream .build/runtime-tools-namespaces \
+  linux_ns_itype linux_ns_path linux_ns_nopath linux_uid_mappings
+```
+
+The first local arm64 Linux run passed 34 executables; 16 required cgroup v1,
+six exposed the upstream issues above, and two required unavailable LSM policy.
+Hosted x86_64 CI is a separate result, recorded by the workflow.

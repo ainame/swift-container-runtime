@@ -4,8 +4,7 @@ An educational Linux container runtime written in Swift. Explore how namespaces,
 root filesystems, process isolation, and cgroups fit together in a small OCI runtime.
 
 **For learning and experimentation.** This is not a production runtime or a security
-boundary. Custom device entries, user namespaces, rootless operation
-and foreground terminals are not implemented; detached terminals are handed to
+boundary. Rootless operation and foreground terminals are not implemented; detached terminals are handed to
 `--console-socket`. Experimental Docker support (`--runtime swift`) passes an
 acceptance gate on one declared Ubuntu/cgroupfs profile; see
 [Docker integration](docs/docker-integration.md). The [roadmap](docs/roadmap.md) targets
@@ -41,6 +40,9 @@ For command options:
 ```
 
 ## What works
+
+CI includes a pinned [OCI runtime-tools validation gate](docs/testing.md#oci-runtime-tools-validation),
+with explicit upstream and host exclusions and per-test artifacts.
 
 - Container lifecycle: create, start, run, exec, inspect, signal, and delete.
 - Namespaces, a separate root filesystem, bind mounts and proc/tmpfs/devpts/sysfs/mqueue;
