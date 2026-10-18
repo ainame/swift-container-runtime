@@ -1,0 +1,6 @@
+host: Ubuntu 26.04.1 LTS, kernel 7.0.0-34-generic, aarch64, runc version 1.4.0-0ubuntu1, AppArmor parser version 5.0.2
+binary sha256: e5b97d16444cbf099bd45f417ff07e6324257f4b36a477cdc16738d0c256a732 (debug, --static-swift-stdlib)
+swift: root/nonroot+nnp init, unconfined default, recorded/overridden exec profile and unknown profile passed
+runc: process exec without a profile reported: runc (unconfined)
+runc: root/nonroot+nnp init, unconfined default, recorded/overridden exec profile and unknown profile passed
+AppArmor integration passed.

@@ -104,8 +104,33 @@ explicit opt-out here. Failed exec setup leaves the live init alone. No libkeyut
 is needed: Kernel wraps keyctl(2) directly, with an ENOSYS stub off Linux.
 The `_ses.` names follow runc's UID/user-namespace naming scope, not a runtime
 state-root scope: identical IDs can join the same ring across state roots.
-Requested SELinux key-creation labels remain unsupported and are rejected with
-the process label, rather than being ignored.
+A requested SELinux process label also labels the session keyring: the child
+writes it to `/proc/thread-self/attr/keycreate` before joining, as runc does.
+
+## AppArmor and SELinux labels
+
+`process.apparmorProfile` and `process.selinuxLabel` are recorded with the
+container. Exec uses a process file's nonempty labels and otherwise the recorded
+ones; command exec never rereads them from the bundle. Empty strings mean unset.
+
+Before any namespace, state or cgroup exists, the supervisor checks that each
+requested module is enabled, with runc's tests: AppArmor needs
+`/sys/kernel/security/apparmor` and `Y` in `/sys/module/apparmor/parameters/enabled`;
+SELinux needs selinuxfs at `/sys/fs/selinux` and a process context other than
+`kernel`. A request on a host without the module fails instead of running
+unconfined. runc itself does not check AppArmor first; on an SELinux kernel
+without a policy its fallback write to `attr/exec` can succeed without confinement.
+
+In the child, the SELinux key-creation context is set before the session keyring
+is joined. Inside the container root, before no_new_privs and the credential
+change, the child stages `exec <profile>` in `attr/apparmor/exec` (or `attr/exec`
+on older kernels) and the SELinux context in `attr/exec`. Both take effect at the
+workload's execve. Each attribute must be on procfs, so the container needs its
+`/proc` mount; an ordinary file there fails setup. An unknown AppArmor profile
+fails setup with ENOENT. A nonempty `linux.mountLabel` is rejected because mount
+contexts are not applied. runc 1.4.0 does not keep the container profile in its
+state, so its `--process` exec without a profile runs unconfined; here the recorded
+profile applies.
 
 ## Seccomp policy
 
@@ -202,7 +227,7 @@ A minimal `config.json` for a static BusyBox rootfs:
 | `/dev` | With a tmpfs at `/dev`, creates `null`, `zero`, `full`, `random`, `urandom`, `tty` (via `mknod`) and the `fd`, `stdin`, `stdout`, `stderr` links, plus `ptmx` when devpts is mounted. Without a `/dev` tmpfs, `/dev` is left as the rootfs provides it. |
 | `annotations` | Accepted and ignored. They do not affect behavior. |
 
-Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.oomScoreAdj`. This includes hooks, `apparmorProfile`, seccomp notification/listener fields, resources outside the memory/pids/CPU/device subset above, custom device entries, sysctl, user/cgroup/time namespaces, ID mappings, other filesystem types and broader propagation options.
+Every other field is rejected with its JSON path, for example `config.json: unsupported field(s): process.oomScoreAdj`. This includes hooks, a nonempty `linux.mountLabel`, seccomp notification/listener fields, resources outside the memory/pids/CPU/device subset above, custom device entries, sysctl, user/cgroup/time namespaces, ID mappings, other filesystem types and broader propagation options.
 
 ### Setup sequence
 

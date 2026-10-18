@@ -54,7 +54,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | Rootfs and mounts | No-pivot; cgroup mounts; explicit remount and broader propagation; dangling target symlinks and protected-proc bind handling; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
 | Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device-rule updates, update support for the other remaining controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
-| Security | Complete init/exec policy verification; AppArmor/SELinux execution-context staging and availability behavior; SELinux key-creation labeling; sealed executable handoff |
+| Security | Complete init/exec policy verification; positive SELinux application and key-label evidence (AppArmor confinement, availability refusal and key-creation staging are implemented); sealed executable handoff |
 | Seccomp | Notification listener handoff and its flags; broader architecture execution evidence. Non-notification actions, compat-ABI filter generation, all argument operators, runc-style AND/OR rules and TSYNC/LOG/SPEC_ALLOW flags are implemented. |
 | Hooks | All six phases, environment, state on stdin, timeout and failure semantics |
 | Foreground and descriptors | Signal forwarding, terminal I/O/resizing, console handoff, socket activation (`LISTEN_FDS`). Inherited descriptors from 3+N up are marked close-on-exec; `--preserve-fds N` is implemented |
@@ -147,6 +147,19 @@ init/exec identity, caller-key exclusion, separate live container IDs, shared
 container keys, bundle removal and persistent `--no-new-keyring` behavior. Swift
 failure probes cover join/permission denial and ENOSYS, failed-exec isolation and
 legacy state. Unlike runc's ENOSYS fallback, Swift requires explicit opt-out when
-keyrings are unavailable. Key labeling remains part of the requested LSM work.
+keyrings are unavailable. A requested SELinux label also sets the key-creation
+context before the join; see the LSM notes below.
 The pinned image also passes session identity/shared-key checks through containerd;
 its default/custom seccomp gates still pass with keyring setup enabled.
+
+AppArmor and SELinux process labels are now applied rather than rejected:
+runc's ordering stages both exec contexts for the workload's execve, a SELinux
+label sets the key-creation context before the session-keyring join, and exec
+uses process-file overrides or the recorded container labels. Unlike runc and the
+pinned target (whose staging failures are only logged), a requested module the
+host does not enable fails before launch. `linux.mountLabel` is not applied by the
+target either and is rejected when nonempty. The `lsm` suite covers availability
+refusal, empty labels, exec refusal and cleanup on a host without either module.
+On an Ubuntu AppArmor host, direct runc comparisons and containerd's generated
+default profile verify init/exec confinement; SELinux has no positive evidence yet
+(see the engine baseline).

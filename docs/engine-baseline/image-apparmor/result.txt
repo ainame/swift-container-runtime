@@ -1,0 +1,15 @@
+Client:
+  Version:  2.2.2
+  Revision: 
+  Go version: go1.24.13
+
+Server:
+  Version:  2.2.2
+  Revision: 
+  UUID: f09516f3-50af-40c3-bb18-b0cb628a45ac
+image: docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+apparmor: init and exec confined by sct-default
+3.23.6
+time="2026-10-18T18:29:17+01:00" level=warning msg="task sct-image-17166 exit with non-zero exit code 137"
+containerd-image: PASS (native snapshot, readonly config, writable volume, init/exec, PID files, exit status and cleanup)
+containerd-apparmor: PASS (generated default profile on init and exec, image cleanup)

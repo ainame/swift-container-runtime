@@ -595,3 +595,57 @@ The broader Docker, requested LSM/key-label, console, rootless and architecture
 acceptance gates remain open. Keyring garbage collection is managed by the kernel;
 tests establish that owned processes/state/cgroups are removed, not an immediate
 GC deadline for unreferenced keys.
+
+## Requested AppArmor and SELinux labels
+
+Implementation `f7398a2` applies `process.apparmorProfile` and
+`process.selinuxLabel` for init and exec, sets the SELinux key-creation context
+before the session-keyring join, and refuses a requested module the host does
+not enable before launch (see [runtime reference](runtime-reference.md#apparmor-and-selinux-labels)).
+
+**Profile A: the usual Apple `container` guest** (kernel 6.12.28, aarch64). AppArmor
+is not active and SELinux is built in without a loaded policy (context `kernel`,
+selinuxfs not mounted), so only availability behavior can be shown. The `lsm`
+suite passes: empty labels run unchanged; requested AppArmor/SELinux labels fail
+run/create (and an exec process label fails exec) without a workload, state or
+cgroup, while the container and plain exec stay intact; a nonempty
+`linux.mountLabel` is refused. runc also refuses the SELinux label. Focused
+`keyring`, `metadata`, `oci` and `lifecycle` pass; Linux unit targets pass with
+208 runtime tests.
+
+**Profile B: AppArmor host.** A disposable Lima VM (vz) with the Ubuntu 26.04.1
+arm64 cloud image, kernel `7.0.0-34-generic`, AppArmor parser 5.0.2 with the
+module enabled, `runc 1.4.0-0ubuntu1`, `containerd 2.2.2`. The Swift binary is the
+`f7398a2` debug build from the `swift:6.4.1` image with `--static-swift-stdlib`,
+SHA256 `e5b97d16444cbf099bd45f417ff07e6324257f4b36a477cdc16738d0c256a732`; it
+needs the host's glibc 2.43 and libseccomp2.
+
+- [Direct gate](engine-baseline/apparmor-direct/result.txt)
+  (`scripts/apparmor-integration.sh`) loads two throwaway profiles. Swift and runc
+  both confine a root init and a non-root no_new_privs init (`sct-test (enforce)`,
+  a denied read), leave an unprofiled workload unconfined, apply an exec
+  process-file override, and fail create with an unknown profile without state.
+- Differences, both deliberate: runc 1.4.0 does not persist the profile in its
+  state, so a `--process` exec without a profile ran unconfined (`runc
+  (unconfined)`), while Swift applies the recorded container profile. runc's
+  command exec rereads an edited bundle; Swift keeps the recorded policy.
+- [Engine gate](engine-baseline/image-apparmor/result.txt) through the real shim
+  with containerd's generated default profile (`ctr run --apparmor-default-profile
+  sct-default`) on the pinned Alpine image: init and an engine exec both report
+  `sct-default (enforce)` under the engine's no_new_privs, capabilities, device
+  rules, masked/readonly paths and binds, and the usual exec, exit-status, kill,
+  delete and snapshot/state/cgroup cleanup checks pass. The
+  [create JSON](engine-baseline/image-apparmor/create.config.json) is
+  pretty-printed with values unchanged.
+
+```sh
+sudo sh scripts/apparmor-integration.sh BINARY
+sudo ENGINE_CAPTURE_DIRECTORY=DIR sh scripts/containerd-apparmor-integration.sh \
+  BINARY /run/containerd/containerd.sock sct-image-baseline \
+  docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+Not verified: positive SELinux application and key labeling (no SELinux-enforcing
+host), AppArmor together with the seccomp default profile through the engine, a
+Docker-generated `docker-default` profile, and release builds. The rest of the
+Profile B suite matrix was not run there.

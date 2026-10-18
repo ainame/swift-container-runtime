@@ -40,6 +40,10 @@ case "${ENGINE_SECCOMP:-}" in
     default) set -- "$@" --seccomp ;;
     *) set -- "$@" --seccomp --seccomp-profile "$ENGINE_SECCOMP" ;;
 esac
+# containerd generates and loads its default AppArmor profile under this name.
+if [ -n "${ENGINE_APPARMOR:-}" ]; then
+    set -- "$@" --apparmor-default-profile "$ENGINE_APPARMOR"
+fi
 if [ -n "${ENGINE_SECCOMP_PROBE:-}" ]; then
     set -- "$@" --mount "type=bind,src=$ENGINE_SECCOMP_PROBE,dst=/seccomp-probe,options=bind:ro:rprivate"
 fi
@@ -90,6 +94,12 @@ if [ -n "${ENGINE_SECCOMP:-}" ]; then
     grep -Eq '^Seccomp:[[:space:]]+2$' "/proc/$init/status" || fail 'init seccomp filter missing'
     c tasks exec --exec-id seccomp "$id" /seccomp-probe "${ENGINE_SECCOMP_EXPECTATION:-allowed}"
     echo 'seccomp: init filter mode and exec syscall result verified'
+fi
+if [ -n "${ENGINE_APPARMOR:-}" ]; then
+    [ "$(cat "/proc/$init/attr/apparmor/current")" = "$ENGINE_APPARMOR (enforce)" ] || fail 'init AppArmor profile differs'
+    c tasks exec --exec-id apparmor "$id" /bin/cat /proc/self/attr/apparmor/current > "$scratch/apparmor"
+    [ "$(cat "$scratch/apparmor")" = "$ENGINE_APPARMOR (enforce)" ] || fail 'exec AppArmor profile differs'
+    printf 'apparmor: init and exec confined by %s\n' "$ENGINE_APPARMOR"
 fi
 c tasks exec --exec-id release "$id" /bin/cat /etc/alpine-release
 c tasks exec --exec-id check "$id" /bin/sh -ec 'cat /etc/resolv.conf; cat /volume/result; if (echo forbidden > /etc/resolv.conf) 2>/dev/null; then exit 3; fi' > "$scratch/check"

@@ -45,6 +45,7 @@ suite because a shared file was touched:
 | Supplied network namespace | `network-namespace oci lifecycle preserve-fds`. |
 | Session keyrings / default launch security | `keyring oci lifecycle credentials capabilities preserve-fds`, plus the opt-in keyring and seccomp image gates. |
 | OOM adjustment | `oom network-namespace seccomp oci lifecycle preserve-fds`. |
+| AppArmor/SELinux labels | `lsm keyring oci lifecycle`; on an AppArmor host also the opt-in `apparmor-integration.sh` and `containerd-apparmor-integration.sh` gates (see the [engine baseline](engine-baseline.md#requested-apparmor-and-selinux-labels)). |
 | Seccomp policy/setup ordering | `seccomp oci lifecycle credentials capabilities preserve-fds`. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
@@ -252,6 +253,15 @@ OOM overrides with runc. Dropping only CAP_SYS_RESOURCE verifies negative-write
 failure before namespace setup. Range failures, state/cgroup cleanup and unchanged
 caller/init scores are required. This changes OOM selection preference; it does
 not deliberately trigger an OOM kill or alter the memory-event tests.
+
+`scripts/lsm-integration.sh` reports which modules the host enables and covers
+what it can: empty labels, refused unavailable AppArmor/SELinux labels for run,
+create and exec, a refused nonempty `linux.mountLabel`, and cleanup. Confinement
+itself needs an AppArmor host: `sudo sh scripts/apparmor-integration.sh BINARY`
+loads two throwaway profiles and compares init/exec confinement with runc. The
+Apple `container` guest has neither module enabled; a Lima Ubuntu 26.04 VM does.
+Its glibc matches the `swift:6.4.1` image, so a binary built there with
+`--static-swift-stdlib` runs with only libseccomp2 installed.
 
 `scripts/keyring-integration.sh` compares named session identity, caller-key
 exclusion, root/non-root init/exec, shared session keys, distinct live container
