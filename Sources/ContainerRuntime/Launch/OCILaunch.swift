@@ -41,6 +41,9 @@ extension OCIRunPlan {
             groups.append(mount.type == .bind
                 ? mount.destination.indices.map { "/" + mount.destination[...$0].joined(separator: "/") } : [])
         }
+        // Custom device paths use the same pinned, component-wise walk as mounts.
+        let deviceGroupBase = groups.count
+        groups += devices.map(\.components)
         // Each container-namespace hook adds [path], its argv and its environment.
         let hookGroupBase = groups.count
         let createContainer = hookSetup?.hooks.createContainer ?? []
@@ -114,7 +117,7 @@ extension OCIRunPlan {
         return unsafe try strings.withPointers { pointers in
             try supplementaryGids.withUnsafeBufferPointer { gidBuffer in
                 var root = unsafe RootFilesystemSetup(
-                    strings: pointers, starts: starts, mounts: mounts, populatesDev: populatesDev,
+                    strings: pointers, starts: starts, mounts: mounts, devices: devices, deviceGroupBase: deviceGroupBase, populatesDev: populatesDev,
                     readonlyRoot: readonlyRoot, rootPropagation: rootPropagation, pathControls: pathControls, terminal: terminal)
                 // Hook buffers point into the launch strings, which outlive the launch.
                 func prepared(_ hooks: [ContainerHooks.Hook], from first: Int, defaultEnvironment: UnsafePointer<UnsafeMutablePointer<CChar>?>?) -> [PreparedHook] {

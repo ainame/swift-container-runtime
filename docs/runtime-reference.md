@@ -415,3 +415,10 @@ unbindable modes, including their recursive forms (`rprivate`, `rshared`,
 `rslave`, `runbindable`). Setup first isolates the mount tree from the host,
 then finalizes root propagation after `pivot_root` and restores explicit child
 mount modes. Filesystem-specific data on bind mounts remains rejected.
+
+### Custom devices
+
+`linux.devices` creates character, block, and FIFO nodes before the root becomes
+read-only. Paths are resolved relative to the pinned root without following
+symlink parents; permissions and numeric UID/GID are applied explicitly. FIFO
+nodes have no device number. Device-cgroup access rules remain a separate policy.

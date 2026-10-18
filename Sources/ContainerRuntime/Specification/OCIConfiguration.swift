@@ -261,8 +261,31 @@ struct OCIConfiguration: Decodable, Sendable {
         }
     }
 
+    /// Custom device metadata; init creates it without opening it for I/O.
+    struct Device: Decodable, Sendable {
+        let path: String
+        let type: String
+        let major: Int64?
+        let minor: Int64?
+        let fileMode: UInt32?
+        let uid: UInt32?
+        let gid: UInt32?
+
+        init(from decoder: any Decoder) throws {
+            let object = try StrictObject(decoder, allowed: ["path", "type", "major", "minor", "fileMode", "uid", "gid"])
+            path = try object.required("path")
+            type = try object.required("type")
+            major = try object.optionalInt64("major")
+            minor = try object.optionalInt64("minor")
+            fileMode = try object.optional("fileMode")
+            uid = try object.optional("uid")
+            gid = try object.optional("gid")
+        }
+    }
+
     struct Linux: Decodable, Sendable {
         var namespaces: [Namespace]
+        var devices: [Device]?
         var rootfsPropagation: String?
         var maskedPaths: [String]?
         var readonlyPaths: [String]?
@@ -278,9 +301,10 @@ struct OCIConfiguration: Decodable, Sendable {
                 decoder,
                 allowed: [
                     "namespaces", "rootfsPropagation", "maskedPaths", "readonlyPaths", "cgroupsPath", "resources", "seccomp",
-                    "mountLabel", "sysctl",
+                    "mountLabel", "sysctl", "devices",
                 ]
             )
+            devices = try object.optional("devices")
             sysctl = try object.optional("sysctl")
             mountLabel = try object.optional("mountLabel")
             namespaces = try object.required("namespaces")

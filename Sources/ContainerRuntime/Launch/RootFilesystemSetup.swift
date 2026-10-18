@@ -18,6 +18,9 @@ struct RootFilesystemSetup {
     let strings: UnsafePointer<UnsafeMutablePointer<CChar>?>
     let starts: [Int]
     let mounts: [OCIRunPlan.Mount]
+    let devices: [DeviceNode]
+    /// First device path in the launch string vector, prepared before fork.
+    let deviceGroupBase: Int
     let populatesDev: Bool
     let readonlyRoot: Bool
     /// Final propagation for the root bind, isolated from the host before setup.
@@ -49,6 +52,18 @@ struct RootFilesystemSetup {
         if let failure = unsafe Self.bindRootfs(rootfs, pinningInto: &root) { return failure }
         if let failure = unsafe mountAll(beneath: root, sources: sources) { return failure }
         if unsafe populatesDev, let failure = unsafe populateDev(beneath: root) { return failure }
+        for (index, device) in unsafe devices.enumerated() {
+            let path = unsafe group(deviceGroupBase + index)
+            let error = root.failure(in: { root in
+                unsafe Self.withDeviceParent(beneath: root, path) { parent, name in
+                    Errno.failure { () throws(Errno) in
+                        try unsafe Kernel.File.makeDevice(name, in: parent, kind: device.kind,
+                            permissions: device.permissions, number: device.number, uid: device.uid, gid: device.gid)
+                    }
+                }
+            })
+            if let error { return LaunchFailure(stage: .devices, error: error, detail: Int32(index)) }
+        }
         // runc's procHooks: with every mount in place, the supervisor runs
         // prestart and createRuntime hooks while this init waits.
         if unsafe runsRuntimeHooks {
@@ -333,6 +348,22 @@ struct RootFilesystemSetup {
             return error
         }
         return directory.failure(in: { unsafe withDirectory(beneath: $0, components + 1, body) })
+    }
+
+    /// Resolves a device's parent without following symlinks; the final name
+    /// goes directly to mknodat, so it cannot escape through a symlink either.
+    @unsafe
+    private static func withDeviceParent(
+        beneath parent: FileDescriptor, _ components: UnsafePointer<UnsafeMutablePointer<CChar>?>,
+        _ body: (FileDescriptor, UnsafePointer<CChar>) -> Errno?
+    ) -> Errno? {
+        guard let name = unsafe components[0] else { return .invalidArgument }
+        if unsafe components[1] == nil { return unsafe body(parent, UnsafePointer(name)) }
+        var directory = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in directory = try unsafe openOrCreateDirectory(name, in: parent) }) {
+            return error
+        }
+        return directory.failure(in: { unsafe withDeviceParent(beneath: $0, components + 1, body) })
     }
 
     /// The directory `name` in `parent`, created first when it is missing.

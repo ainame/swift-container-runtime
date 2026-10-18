@@ -55,6 +55,26 @@ extension Kernel.File {
         guard unsafe mknodat(directory.rawValue, name, mode, dev_t(truncatingIfNeeded: device)) == 0 else { throw .current }
     }
 
+    /// Creates a custom node relative to a directory already resolved by init.
+    /// Replaces only the named entry, never follows a final symlink. A FIFO's
+    /// device number is always zero. Ownership precedes chmod because chown
+    /// may clear the set-ID permission bits requested by the configuration.
+    static func makeDevice(
+        _ name: UnsafePointer<CChar>, in directory: FileDescriptor, kind: UInt32,
+        permissions: UInt16, number: UInt64, uid: UInt32, gid: UInt32
+    ) throws(Errno) {
+        #if os(Linux)
+        if unsafe unlinkat(directory.rawValue, name, 0) != 0, errno != ENOENT { throw .current }
+        let previous = umask(0)
+        defer { _ = umask(previous) }
+        guard unsafe mknodat(directory.rawValue, name, mode_t(kind) | mode_t(permissions), dev_t(number)) == 0 else { throw .current }
+        guard unsafe fchownat(directory.rawValue, name, uid_t(uid), gid_t(gid), AT_SYMLINK_NOFOLLOW) == 0 else { throw .current }
+        guard unsafe fchmodat(directory.rawValue, name, mode_t(permissions), 0) == 0 else { throw .current }
+        #else
+        throw .noFunction
+        #endif
+    }
+
     /// symlinkat(2): `name` in `directory` pointing at `target`.
     static func makeSymbolicLink(_ name: UnsafePointer<CChar>, to target: UnsafePointer<CChar>, in directory: FileDescriptor) throws(Errno) {
         guard unsafe symlinkat(target, directory.rawValue, name) == 0 else { throw .current }

@@ -168,7 +168,6 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(process: #"{"args": ["/bin/sh"], "env": ["=value"], "cwd": "/"}"#), "NAME=value"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "relative"}"#), "process.cwd"),
     (config(process: #"{"args": ["/bin/sh"], "cwd": "/a/../b"}"#), "process.cwd"),
-    (config(linux: #"{"namespaces": [{"type": "mount"}], "devices": []}"#), "linux.devices"),
     // Path controls: lexical checks and value types.
     (config(linux: pathControls(#""readonlyPaths": ["proc/sys"]"#)), "linux.readonlyPaths[0]"),
     (config(linux: pathControls(#""readonlyPaths": ["/proc/sys", "/proc/../etc"]"#)), "linux.readonlyPaths[1]"),
@@ -565,4 +564,28 @@ func filesystemMountsKeepPropagationSeparateFromFlags(_ mode: String) throws {
     #expect(try plan(config(mounts: bind)).mounts[0].propagation?.rawValue == mode)
     let linux = #"{"namespaces":[{"type":"mount"},{"type":"uts"},{"type":"pid"}],"rootfsPropagation":"\#(mode)"}"#
     #expect(try plan(config(linux: linux)).rootPropagation.rawValue == mode)
+}
+
+@Test func validatesCustomDeviceNodes() throws {
+    let linux = #"{"namespaces":[{"type":"pid"},{"type":"mount"},{"type":"uts"}],"devices":[{"path":"/dev/custom/null","type":"c","major":1,"minor":3,"fileMode":432,"uid":1000,"gid":2000},{"path":"/dev/pipe","type":"p"}]}"#
+    let value = try plan(config(linux: linux))
+    #expect(value.devices[0].components == ["dev", "custom", "null"])
+    #expect(value.devices[0].permissions == 0o660)
+    #expect(value.devices[0].uid == 1000)
+    #expect(value.devices[0].gid == 2000)
+    #expect(value.devices[1].kind == 0o010000)
+}
+
+@Test(arguments: [
+    #"{"path":"/dev/../escape","type":"c","major":1,"minor":3}"#,
+    #"{"path":"/","type":"p"}"#,
+    #"{"path":"/dev/x","type":"socket"}"#,
+    #"{"path":"/dev/x","type":"c","major":-1,"minor":3}"#,
+    #"{"path":"/dev/x","type":"p","major":1}"#,
+    #"{"path":"/dev/x","type":"c","fileMode":65535}"#,
+    #"{"path":"/dev/x","type":"c","uid":4294967295}"#,
+])
+func rejectsInvalidDeviceNodes(_ device: String) {
+    let linux = #"{"namespaces":[{"type":"mount"},{"type":"uts"}],"devices":[\#(device)]}"#
+    #expect(throws: RuntimeError.self) { try plan(config(mounts: "[]", linux: linux)) }
 }
