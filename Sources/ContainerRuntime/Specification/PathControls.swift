@@ -1,14 +1,3 @@
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
-#if os(Linux)
-import LinuxAPI
-#endif
-
 /// `linux.readonlyPaths` and `linux.maskedPaths` as absolute container paths.
 ///
 /// Paths are checked lexically like other container paths (`.` and `..` are
@@ -69,16 +58,20 @@ extension PathControls {
     /// race-free against such a writer. The rootfs is assumed to have a single
     /// owner during setup, as for the rest of the rootfs preparation.
     func apply() -> LaunchFailure? {
-        let root = unsafe linux_open_path(AT_FDCWD, "/", O_DIRECTORY)
-        guard root >= 0 else { return LaunchFailure(stage: .resolveReadonlyPath, error: .current) }
-        defer { _ = close(root) }
-        for (index, path) in readonly.enumerated() {
-            if var failure = Self.makeReadonly(path, root: root) {
-                failure.detail = Int32(index)
-                return failure
-            }
+        var root = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in root = try Kernel.File.openPath("/", options: .directory) }) {
+            return LaunchFailure(stage: .resolveReadonlyPath, error: error)
         }
-        return mask(root: root)
+        let closed = LaunchFailure(stage: .resolveReadonlyPath, error: .badFileDescriptor)
+        return root.failure(in: { root in
+            for (index, path) in readonly.enumerated() {
+                if var failure = Self.makeReadonly(path, root: root) {
+                    failure.detail = Int32(index)
+                    return failure
+                }
+            }
+            return mask(root: root)
+        }, whenClosed: closed)
     }
 
     /// runc's maskPaths: a non-directory gets the container's /dev/null bound
@@ -88,63 +81,87 @@ extension PathControls {
     /// Unlike runc, every mask is checked to be what the path now shows, so a
     /// mask hidden from the container (for example one stacked on `/`) fails
     /// setup instead of silently leaving the path unmasked.
-    private func mask(root: Int32) -> LaunchFailure? {
+    private func mask(root: FileDescriptor) -> LaunchFailure? {
         guard !masked.isEmpty else { return nil }
         // runc's verifyDevNull: even when every masked path is missing, the
         // container's /dev/null must be the 1:3 character device.
-        let devNull = unsafe linux_open_path_in_root(root, "/dev/null", 0)
-        guard devNull >= 0 else { return LaunchFailure(stage: .openDevNull, error: .current) }
-        defer { _ = close(devNull) }
-        guard let devNullStatus = Self.fileStatus(devNull) else {
-            return LaunchFailure(stage: .openDevNull, error: .current)
+        var devNull = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in devNull = try unsafe Kernel.File.openPath("/dev/null", beneath: root) }) {
+            return LaunchFailure(stage: .openDevNull, error: error)
         }
-        guard Self.isType(devNullStatus, LinuxAPI.S_IFCHR), UInt64(devNullStatus.st_rdev) == LinuxDevice.number(1, 3) else {
-            return LaunchFailure(stage: .openDevNull, error: Errno(rawValue: ENODEV))
-        }
+        let closed = LaunchFailure(stage: .openDevNull, error: .badFileDescriptor)
+        return devNull.failure(in: { devNull in
+            var status: FileStatus? = nil
+            if let error = Errno.failure({ () throws(Errno) in status = try Kernel.File.status(of: devNull) }) {
+                return LaunchFailure(stage: .openDevNull, error: error)
+            }
+            guard let devNullStatus = status else { return LaunchFailure(stage: .openDevNull, error: .ioError) }
+            guard devNullStatus.isCharacterDevice, devNullStatus.deviceNumber == LinuxDevice.number(1, 3) else {
+                return LaunchFailure(stage: .openDevNull, error: .operationNotSupportedByDevice)  // ENODEV
+            }
+            return maskEach(root: root, devNull: devNull, devNullStatus: devNullStatus)
+        }, whenClosed: closed)
+    }
 
-        // The first directory mask's mount descriptor, kept as the source of
-        // later directory binds; closed before returning.
-        var shared: Int32 = -1
+    /// Masks each path in order; see `mask(root:)`.
+    private func maskEach(root: FileDescriptor, devNull: FileDescriptor, devNullStatus: FileStatus) -> LaunchFailure? {
+        // The first directory mask's mount, kept as the source of later
+        // directory binds; closed when this returns.
+        var shared = OwnedFileDescriptor()
+        var hasShared = false
         var sharedBindFailed = false
-        defer { if shared >= 0 { _ = close(shared) } }
         for (index, path) in masked.enumerated() {
-            let failure = { (stage: LaunchStage, error: Errno) in
+            func failure(_ stage: LaunchStage, _ error: Errno) -> LaunchFailure {
                 LaunchFailure(stage: stage, error: error, detail: Int32(index))
             }
-            let target = unsafe linux_open_path_in_root(root, path, 0)
-            guard target >= 0 else {
-                if errno == ENOENT { continue }
-                return failure(.resolveMaskedPath, .current)
+            var target = OwnedFileDescriptor()
+            if let error = Errno.failure({ () throws(Errno) in target = try unsafe Kernel.File.openPath(path, beneath: root) }) {
+                if error == .noSuchFileOrDirectory { continue }
+                return failure(.resolveMaskedPath, error)
             }
-            defer { _ = close(target) }
-            guard let status = Self.fileStatus(target) else { return failure(.maskPath, .current) }
 
             // Attach the mask and remember the file it must show.
-            let expected: stat
-            if !Self.isType(status, LinuxAPI.S_IFDIR) {
-                if let error = Self.attachClone(of: devNull, onto: target, recursive: false) { return failure(.maskPath, error) }
-                expected = devNullStatus
-            } else if shared >= 0, !sharedBindFailed, Self.attachClone(of: shared, onto: target, recursive: false) == nil {
-                guard let sharedStatus = Self.fileStatus(shared) else { return failure(.maskPath, .current) }
-                expected = sharedStatus
-            } else {
-                // A shared bind failing makes every later directory use its own tmpfs.
-                if shared >= 0 { sharedBindFailed = true }
-                let mask: Int32
-                do { mask = try Self.openMaskTmpfs() } catch { return failure(.maskPath, error) }
-                let keep = shared < 0 && !sharedBindFailed
-                defer { if !keep { _ = close(mask) } }
-                if keep { shared = mask }
-                guard let maskStatus = Self.fileStatus(mask) else { return failure(.maskPath, .current) }
-                guard linux_attach_mount(mask, target) == 0 else { return failure(.maskPath, .current) }
-                expected = maskStatus
-            }
+            var expected: FileStatus? = nil
+            let attachError: Errno? = target.failure(in: { target in
+                Errno.failure { () throws(Errno) in
+                    let status = try Kernel.File.status(of: target)
+                    if !status.isDirectory {
+                        try Self.attachClone(of: devNull, onto: target, recursive: false)
+                        expected = devNullStatus
+                        return
+                    }
+                    if hasShared, !sharedBindFailed {
+                        // nil when the bind failed; a failed fstat after a bind fails setup.
+                        let sharedStatus = try shared.borrowDescriptor { shared throws(Errno) -> FileStatus? in
+                            guard (try? Self.attachClone(of: shared, onto: target, recursive: false)) != nil else { return nil }
+                            return try Kernel.File.status(of: shared)
+                        }
+                        if let sharedStatus {
+                            expected = sharedStatus
+                            return
+                        }
+                        // A shared bind failing makes every later directory use its own tmpfs.
+                        sharedBindFailed = true
+                    }
+                    let mask = try Self.openMaskTmpfs()
+                    let maskStatus = try mask.borrowDescriptor { mask throws(Errno) in try Kernel.File.status(of: mask) }
+                    try mask.borrowDescriptor { mask throws(Errno) in try Kernel.Mount.attach(mask, onto: target) }
+                    expected = maskStatus
+                    if !hasShared && !sharedBindFailed {
+                        shared = mask
+                        hasShared = true
+                    }
+                }
+            })
+            if let attachError { return failure(.maskPath, attachError) }
 
             // The path, resolved again, must now show the mask itself.
-            let shown = unsafe linux_open_path_in_root(root, path, 0)
-            guard shown >= 0 else { return failure(.verifyMaskedPath, .current) }
-            defer { _ = close(shown) }
-            guard let shownStatus = Self.fileStatus(shown), Self.isSameFile(shownStatus, expected) else {
+            var shown = OwnedFileDescriptor()
+            if let error = Errno.failure({ () throws(Errno) in shown = try unsafe Kernel.File.openPath(path, beneath: root) }) {
+                return failure(.verifyMaskedPath, error)
+            }
+            let shownStatus: FileStatus? = shown.failure(in: { try? Kernel.File.status(of: $0) }, whenClosed: nil) ?? nil
+            guard let shownStatus, let expected, shownStatus.identity == expected.identity else {
                 return failure(.verifyMaskedPath, .resourceBusy)
             }
         }
@@ -162,75 +179,64 @@ private extension PathControls {
     /// path again. mount_setattr then sets only the read-only attribute, so
     /// nosuid, nodev, noexec, nosymfollow and atime stay as they were, and mounts
     /// below the bind keep their own flags. Returns nil or the failure.
-    static func makeReadonly(_ path: String, root: Int32) -> LaunchFailure? {
-        func failure(_ stage: LaunchStage, _ error: Errno = .current) -> LaunchFailure {
-            LaunchFailure(stage: stage, error: error)
+    static func makeReadonly(_ path: String, root: FileDescriptor) -> LaunchFailure? {
+        var target = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in target = try unsafe Kernel.File.openPath(path, beneath: root) }) {
+            return error == .noSuchFileOrDirectory ? nil : LaunchFailure(stage: .resolveReadonlyPath, error: error)
         }
-        let target = unsafe linux_open_path_in_root(root, path, 0)
-        guard target >= 0 else { return errno == ENOENT ? nil : failure(.resolveReadonlyPath) }
-        defer { _ = close(target) }
-        guard let original = fileStatus(target) else { return failure(.readonlyPath) }
-        if let error = attachClone(of: target, onto: target, recursive: true) { return failure(.readonlyPath, error) }
+        var original: FileStatus? = nil
+        let bindError = target.failure(in: { target in
+            Errno.failure { () throws(Errno) in
+                original = try Kernel.File.status(of: target)
+                try attachClone(of: target, onto: target, recursive: true)
+            }
+        })
+        if let bindError { return LaunchFailure(stage: .readonlyPath, error: bindError) }
 
         // A bind shows the same file, so a different one means the path was
         // replaced between the lookups. This does not prove which mount the
         // second lookup reached; see PathControls.apply.
-        let reached = unsafe linux_open_path_in_root(root, path, 0)
-        guard reached >= 0 else { return failure(.readonlyPath) }
-        defer { _ = close(reached) }
-        guard let status = fileStatus(reached), isSameFile(status, original) else {
-            return failure(.readonlyPath, Errno(rawValue: ESTALE))
+        var reached = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in reached = try unsafe Kernel.File.openPath(path, beneath: root) }) {
+            return LaunchFailure(stage: .readonlyPath, error: error)
         }
-        guard linux_set_mount_readonly(reached) == 0 else { return failure(.readonlyPath) }
-        return nil
+        let remountError = reached.failure(in: { reached in
+            Errno.failure { () throws(Errno) in
+                guard try Kernel.File.status(of: reached).identity == original?.identity else { throw .staleNFSFileHandle }
+                try Kernel.Mount.setReadOnly(reached)
+            }
+        })
+        return remountError.map { LaunchFailure(stage: .readonlyPath, error: $0) }
     }
 
     /// runc's maskDir as a detached mount: an empty tmpfs with one block and one
     /// inode, read-only both as a filesystem and as a mount, as MS_RDONLY makes
     /// it. Ubuntu's 5.4 kernels reject `nr_inodes<2`, so runc retries with 2.
-    /// Returns the mount descriptor.
-    static func openMaskTmpfs() throws(Errno) -> Int32 {
+    static func openMaskTmpfs() throws(Errno) -> OwnedFileDescriptor {
         var error = Errno.invalidArgument
         for inodes in ["1", "2"] {
-            let filesystem = unsafe linux_open_filesystem("tmpfs")
-            guard filesystem >= 0 else { throw .current }
-            defer { _ = close(filesystem) }
-            guard unsafe linux_set_filesystem_string(filesystem, "nr_blocks", "1") == 0,
-                  unsafe linux_set_filesystem_string(filesystem, "nr_inodes", inodes) == 0,
-                  unsafe linux_set_filesystem_flag(filesystem, "ro") == 0,
-                  linux_create_filesystem(filesystem) == 0 else {
-                error = .current
+            let context = try unsafe Kernel.Mount.openFilesystem("tmpfs")
+            do {
+                try context.borrowDescriptor { context throws(Errno) in
+                    try unsafe Kernel.Mount.setOption(context, "nr_blocks", "1")
+                    try unsafe Kernel.Mount.setOption(context, "nr_inodes", inodes)
+                    try unsafe Kernel.Mount.setFlag(context, "ro")
+                    try Kernel.Mount.createFilesystem(context)
+                }
+            } catch let failure {
+                error = failure
                 continue
             }
-            let mount = linux_mount_filesystem(filesystem, 1)
-            guard mount >= 0 else { throw .current }
-            return mount
+            return try context.borrowDescriptor { context throws(Errno) in try Kernel.Mount.mountFilesystem(context, readOnly: true) }
         }
         throw error
     }
 
     /// Binds the file open at `source` (and, when recursive, the mounts below
-    /// it) onto the file open at `target`. Returns nil or the error.
-    static func attachClone(of source: Int32, onto target: Int32, recursive: Bool) -> Errno? {
-        let tree = linux_clone_mount(source, recursive ? 1 : 0)
-        guard tree >= 0 else { return .current }
-        defer { _ = close(tree) }
-        guard linux_attach_mount(tree, target) == 0 else { return .current }
-        return nil
-    }
-
-    static func fileStatus(_ descriptor: Int32) -> stat? {
-        var status = stat()
-        guard unsafe fstat(descriptor, &status) == 0 else { return nil }
-        return status
-    }
-
-    static func isType(_ status: stat, _ type: some BinaryInteger) -> Bool {
-        status.st_mode & mode_t(LinuxAPI.S_IFMT) == mode_t(type)
-    }
-
-    static func isSameFile(_ a: stat, _ b: stat) -> Bool {
-        a.st_dev == b.st_dev && a.st_ino == b.st_ino
+    /// it) onto the file open at `target`.
+    static func attachClone(of source: FileDescriptor, onto target: FileDescriptor, recursive: Bool) throws(Errno) {
+        let tree = try Kernel.Mount.cloneTree(of: source, recursive: recursive)
+        try tree.borrowDescriptor { tree throws(Errno) in try Kernel.Mount.attach(tree, onto: target) }
     }
 }
 #endif

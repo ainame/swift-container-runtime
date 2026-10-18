@@ -38,11 +38,14 @@ extension Kernel.File {
     }
 
     /// A close-on-exec O_PATH handle (Linux): it names the file without
-    /// opening it for I/O. `noFollow` keeps a final symbolic link itself.
-    static func openPath(_ path: String, in directory: borrowing OwnedFileDescriptor, noFollow: Bool) throws(Errno) -> OwnedFileDescriptor {
+    /// opening it for I/O. `.noFollow` keeps a final symbolic link itself and
+    /// `.directory` requires a directory.
+    static func openPath(
+        _ path: String, in directory: borrowing OwnedFileDescriptor, options: FileDescriptor.OpenOptions = []
+    ) throws(Errno) -> OwnedFileDescriptor {
         let raw: Int32
         do {
-            raw = try directory.withDescriptor { try openPathRaw(path, in: $0.rawValue, noFollow: noFollow) }
+            raw = try directory.withDescriptor { try openPathRaw(path, in: $0.rawValue, options) }
         } catch {
             throw (error as? Errno) ?? .badFileDescriptor
         }
@@ -50,13 +53,13 @@ extension Kernel.File {
     }
 
     /// `openPath` relative to the current directory.
-    static func openPath(_ path: String, noFollow: Bool) throws(Errno) -> OwnedFileDescriptor {
-        OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: try openPathRaw(path, in: AT_FDCWD, noFollow: noFollow)))
+    static func openPath(_ path: String, options: FileDescriptor.OpenOptions = []) throws(Errno) -> OwnedFileDescriptor {
+        OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: try openPathRaw(path, in: AT_FDCWD, options)))
     }
 
-    private static func openPathRaw(_ path: String, in directory: Int32, noFollow: Bool) throws(Errno) -> Int32 {
+    private static func openPathRaw(_ path: String, in directory: Int32, _ options: FileDescriptor.OpenOptions) throws(Errno) -> Int32 {
         #if os(Linux)
-        let raw = unsafe linux_open_path(directory, path, noFollow ? O_NOFOLLOW : 0)
+        let raw = unsafe linux_open_path(directory, path, options.rawValue)
         guard raw >= 0 else { throw .current }
         return raw
         #else

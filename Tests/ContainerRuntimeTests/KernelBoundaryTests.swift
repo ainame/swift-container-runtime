@@ -8,14 +8,6 @@ import Testing
 /// Runtime files that still import libc directly; each migration step to
 /// `Kernel/` removes entries until the list is empty.
 private let pendingMigration: Set<String> = [
-    "Launch/ExecLaunch.swift",
-    "Launch/LaunchProtocol.swift",
-    "Launch/NamespaceCommand.swift",
-    "Launch/NamespaceLauncher.swift",
-    "Launch/OCILaunch.swift",
-    "Launch/RootFilesystemSetup.swift",
-    "Launch/WorkloadSetup.swift",
-    "Specification/PathControls.swift",
 ]
 
 /// Only `Kernel/` may import libc or `LinuxAPI`; the rest of the runtime uses

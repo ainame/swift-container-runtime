@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// One owner for namespace and root descriptors opened while the recorded
@@ -21,11 +15,14 @@ struct ExecNamespaceSet: ~Copyable {
         let directory = OwnedFileDescriptor(takingOwnershipOf: try FileDescriptor.open(
             FilePath("/proc/\(process.pid)"), .readOnly, options: [.directory, .closeOnExec]))
         func open(_ path: String, root: Bool = false) throws -> OwnedFileDescriptor {
-            let raw = try directory.withDescriptor { descriptor in
-                unsafe linux_open_at(descriptor.rawValue, path, (root ? O_PATH | O_DIRECTORY : O_RDONLY) | O_CLOEXEC, 0)
+            do {
+                // The root is only a chroot target, so an O_PATH handle suffices.
+                return root
+                    ? try Kernel.File.openPath(path, in: directory, options: .directory)
+                    : try Kernel.File.open(path, in: directory, .readOnly)
+            } catch {
+                throw RuntimeError("open exec \(path): \(error)")
             }
-            guard raw >= 0 else { throw RuntimeError("open exec \(path): \(Errno.current)") }
-            return OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         }
         // The proc directory and each namespace are pinned before checking
         // the pidfd again: an exit during acquisition invalidates this set.
@@ -52,7 +49,7 @@ struct ExecNamespaceSet: ~Copyable {
     /// applies to the next fork; the launcher remains outside that namespace.
     func join() -> Errno? {
         func enter(_ owner: borrowing OwnedFileDescriptor, _ namespace: OCIRunPlan.Namespace) -> Errno? {
-            owner.failure(in: { setns($0.rawValue, namespace.cloneFlag) == 0 ? nil : .current })
+            owner.failure(in: { descriptor in Errno.failure { () throws(Errno) in try Kernel.Namespace.enter(descriptor, namespace) } })
         }
         if let error = enter(network, .network) { return error }
         if let error = enter(ipc, .ipc) { return error }
@@ -64,9 +61,15 @@ struct ExecNamespaceSet: ~Copyable {
     /// Chroot through the live init's root descriptor, never its host path.
     /// No mount or propagation operation changes the existing container.
     func enterRoot() -> Errno? {
-        if let error = root.failure(in: { fchdir($0.rawValue) == 0 ? nil : .current }) { return error }
-        guard unsafe chroot(".") == 0, unsafe chdir("/") == 0 else { return .current }
-        return nil
+        if let error = root.failure(in: { root in
+            Errno.failure { () throws(Errno) in try Kernel.Process.changeDirectory(to: root) }
+        }) {
+            return error
+        }
+        return Errno.failure { () throws(Errno) in
+            try unsafe Kernel.Process.changeRoot(".")
+            try unsafe Kernel.Process.changeDirectory("/")
+        }
     }
 }
 
@@ -102,8 +105,8 @@ extension OCIProcessPlan {
                     supplementaryGids: groups, capabilities: capabilities, lastCapability: last,
                     resourceLimits: resourceLimits, foreground: !hooks.detached)
                 return unsafe try NamespaceLauncher.run(hooks: hooks, context: context, prepareLauncher: { namespaces.join() }) { report, commit, launcher in
-                    guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
-                        return LaunchRecord.reportFailure(to: report, at: .markDescriptors)
+                    if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
+                        return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
                     }
                     if let error = namespaces.enterRoot() { return LaunchRecord.reportFailure(to: report, at: .enterRoot, error: error) }
                     // As runc's setns init: inside the container, before

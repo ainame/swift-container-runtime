@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 enum LaunchStage: Int32 {
@@ -149,14 +143,10 @@ extension LaunchRecord {
             var record = self
             // Keep ownership through the write. A cached raw number alone could
             // outlive its owner on a child path that never returns to Swift.
-            return withUnsafeBytes(of: &record) { bytes in
-                var result: Int
-                repeat {
-                    result = unsafe socket
-                        ? send(descriptor.rawValue, bytes.baseAddress!, bytes.count, Int32(MSG_NOSIGNAL))
-                        : LinuxAPI.write(descriptor.rawValue, bytes.baseAddress!, bytes.count)
-                } while result < 0 && errno == EINTR
-                return result == bytes.count
+            return try withUnsafeBytes(of: &record) { bytes in
+                // One write either way; a record is smaller than PIPE_BUF.
+                let written = unsafe try socket ? Kernel.Socket.send(descriptor, bytes) : descriptor.write(bytes)
+                return written == bytes.count
             }
         }) ?? false
     }
@@ -207,13 +197,16 @@ extension LaunchRecord {
 
 extension LaunchControl {
     func send(over owner: borrowing OwnedFileDescriptor) throws {
-        let sent = try owner.withDescriptor { descriptor in
-            var byte: UInt8 = rawValue
-            var result: Int
-            repeat { result = unsafe LinuxAPI.send(descriptor.rawValue, &byte, 1, Int32(MSG_NOSIGNAL)) } while result < 0 && errno == EINTR
-            return result
+        let sent: Int
+        do {
+            sent = try owner.withDescriptor { descriptor in
+                var byte: UInt8 = rawValue
+                return try withUnsafeBytes(of: &byte) { bytes in unsafe try Kernel.Socket.send(descriptor, bytes) }
+            }
+        } catch {
+            throw RuntimeError.launch(.commit, (error as? Errno) ?? .badFileDescriptor)
         }
-        guard sent == 1 else { throw RuntimeError.launch(.commit) }
+        guard sent == 1 else { throw RuntimeError.launch(.commit, .ioError) }
     }
 
     /// One control byte from the supervisor; nil on EOF or error.

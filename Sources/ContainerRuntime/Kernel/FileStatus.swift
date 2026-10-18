@@ -23,7 +23,7 @@ struct FileStatus: Equatable, Sendable {
     let owner: UInt32
     let linkCount: UInt64
 
-    fileprivate init(_ status: stat) {
+    init(_ status: stat) {
         identity = FileIdentity(
             device: UInt64(truncatingIfNeeded: status.st_dev), inode: UInt64(truncatingIfNeeded: status.st_ino))
         mode = UInt32(truncatingIfNeeded: status.st_mode)

@@ -58,7 +58,7 @@ final class StartGate {
             let directory = try container.directory.descriptor.withDescriptor { $0.rawValue }
             let path = StartProtocol.sunPath("/proc/self/fd/\(directory)/\(StateFile.startSocket)")
             try listener.withDescriptor { try Kernel.Socket.bind($0, sunPath: path) }
-            marker = try Kernel.File.openPath(StateFile.startSocket, in: container.directory.descriptor, noFollow: true)
+            marker = try Kernel.File.openPath(StateFile.startSocket, in: container.directory.descriptor, options: .noFollow)
         } catch {
             throw RuntimeError.launch(.startSocket, (error as? Errno) ?? .badFileDescriptor)
         }
@@ -192,7 +192,7 @@ extension StartProtocol {
         // whose lifetime in the init reports the exec result.
         let socketFile: OwnedFileDescriptor
         do {
-            socketFile = try Kernel.File.openPath(StateFile.startSocket, in: container.directory.descriptor, noFollow: true)
+            socketFile = try Kernel.File.openPath(StateFile.startSocket, in: container.directory.descriptor, options: .noFollow)
         } catch {
             throw RuntimeError("container \(id) init is not waiting for start: \(error)")
         }

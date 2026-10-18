@@ -85,7 +85,7 @@ final class PidfdSocket {
         if let base, address.isRelative {
             let resolved = base.hasSuffix("/") ? base + address.path : base + "/" + address.path
             do {
-                pinned = try Kernel.File.openPath(resolved, noFollow: false)
+                pinned = try Kernel.File.openPath(resolved)
             } catch {
                 throw RuntimeError("connect to --pidfd-socket \(address.path) in \(base): \(error)")
             }

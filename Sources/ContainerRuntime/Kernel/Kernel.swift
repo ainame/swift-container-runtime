@@ -40,7 +40,7 @@ extension Errno {
 
     /// Runs `body`, returning its error instead of throwing it, for code that
     /// reports failures as values (such as child-side launch steps).
-    static func failure(of body: () throws(Errno) -> Void) -> Errno? {
+    static func failure(_ body: () throws(Errno) -> Void) -> Errno? {
         do {
             try body()
             return nil

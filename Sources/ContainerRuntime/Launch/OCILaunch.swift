@@ -1,31 +1,13 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
-extension OCIRunPlan.Namespace {
-    var cloneFlag: Int32 {
-        switch self {
-        case .pid: Int32(CLONE_NEWPID)
-        case .mount: Int32(CLONE_NEWNS)
-        case .uts: Int32(CLONE_NEWUTS)
-        case .ipc: Int32(CLONE_NEWIPC)
-        case .network: Int32(CLONE_NEWNET)
-        }
-    }
-}
-
 extension OCIRunPlan.MountFlags {
-    var kernelFlags: UInt {
-        var flags: UInt = 0
-        if contains(.nosuid) { flags |= UInt(MS_NOSUID) }
-        if contains(.nodev) { flags |= UInt(MS_NODEV) }
-        if contains(.noexec) { flags |= UInt(MS_NOEXEC) }
-        if contains(.strictatime) { flags |= UInt(MS_STRICTATIME) }
+    var kernelFlags: MountFlags {
+        var flags: MountFlags = []
+        if contains(.nosuid) { flags.insert(.noSetUserID) }
+        if contains(.nodev) { flags.insert(.noDevices) }
+        if contains(.noexec) { flags.insert(.noExecute) }
+        if contains(.strictatime) { flags.insert(.strictAccessTime) }
         return flags
     }
 }
@@ -104,8 +86,8 @@ extension OCIRunPlan {
                     lastCapability: lastCapability, resourceLimits: resourceLimits, foreground: !hooks.detached)
                 return unsafe try NamespaceLauncher.run(unsharing: namespaces, hooks: hooks, context: context) { report, commit, launcher in
                     // Preserve caller descriptors before any rootfs setup opens temporary handles.
-                    guard linux_mark_descriptors_cloexec(firstInternal) == 0 else {
-                        return LaunchRecord.reportFailure(to: report, at: .markDescriptors)
+                    if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.markDescriptorsCloseOnExec(from: firstInternal) }) {
+                        return LaunchRecord.reportFailure(to: report, at: .markDescriptors, error: error)
                     }
                     if let status = unsafe root.prepare(report: report) { return status }
                     // Init hands off its pidfd inside the root, before credentials and readiness.

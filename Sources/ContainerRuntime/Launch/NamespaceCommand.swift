@@ -1,11 +1,4 @@
-#if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
-#endif
+import SystemPackage
 
 /// A namespace experiment. This does not isolate the root filesystem or privileges.
 public struct NamespaceCommand: Sendable {
@@ -59,14 +52,17 @@ extension NamespaceCommand {
         hostname: UnsafePointer<CChar>,
         arguments: UnsafePointer<UnsafeMutablePointer<CChar>?>
     ) throws -> Int32 {
-        let hostnameLength = unsafe strlen(hostname)
-        return unsafe try NamespaceLauncher.run(unsharing: [.uts, .pid, .mount]) { report, _, _ in
-            guard unsafe mount("proc", "/proc", "proc", UInt(MS_NOSUID | MS_NODEV | MS_NOEXEC), nil) == 0 else {
-                return LaunchRecord.reportFailure(to: report, at: .procMount)
+        unsafe try NamespaceLauncher.run(unsharing: [.uts, .pid, .mount]) { report, _, _ in
+            if let error = Errno.failure({ () throws(Errno) in
+                try unsafe Kernel.Mount.mount(source: "proc", target: "/proc", type: "proc", flags: [.noSetUserID, .noDevices, .noExecute])
+            }) {
+                return LaunchRecord.reportFailure(to: report, at: .procMount, error: error)
             }
-            guard unsafe sethostname(hostname, hostnameLength) == 0 else { return LaunchRecord.reportFailure(to: report, at: .hostname) }
-            _ = unsafe execv(arguments[0]!, arguments)
-            return LaunchRecord.reportFailure(to: report, at: .execute)
+            if let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Process.setHostname(hostname) }) {
+                return LaunchRecord.reportFailure(to: report, at: .hostname, error: error)
+            }
+            let error = unsafe Kernel.Process.execute(arguments[0]!, arguments: arguments)
+            return LaunchRecord.reportFailure(to: report, at: .execute, error: error)
         }
     }
 }

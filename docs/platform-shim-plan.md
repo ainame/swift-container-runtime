@@ -89,9 +89,15 @@ From the 29 importing files:
    `ContainerObservation`, `ProcessTable`, `StartGate`, `PidfdSocket`,
    `PreservedDescriptors`, `OCIRunPlan`, `LinuxDevice` and
    `LinuxRuntimeError` no longer import libc.
-5. Launch, last and most careful: `NamespaceLauncher`, `RootFilesystemSetup`,
-   `WorkloadSetup`, `PathControls`, `ExecLaunch`, `OCILaunch`. Keep runc's
-   step order visible; wrappers replace calls one for one.
+5. **Done.** Launch: `Kernel.Mount` (`MountFlags`, mount, detached unmount,
+   pivot_root, statvfs flags, the descriptor mount API with owned results),
+   `Kernel.Namespace`, `Kernel.Credentials` (groups, IDs, no_new_privs,
+   capabilities, rlimits), more `Kernel.Process` (fork, exit, session,
+   parent-death signal, umask, hostname, chdir/chroot, close-on-exec marking,
+   execv) and C-string `Kernel.File` overloads for the child path.
+   `RootFilesystemSetup.prepare` became named steps in runc's order, and
+   `PathControls` uses `OwnedFileDescriptor` instead of raw descriptors.
+   No runtime file outside `Kernel/` imports libc.
 6. Remove every remaining `#if os(Linux)` and libc import from
    `ContainerRuntime`; public `…OnLinux`/`unsupported` branches call the
    implementation directly.

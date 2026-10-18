@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// Group indices in the launch string vector. Each mount adds two groups:
@@ -29,39 +23,80 @@ struct RootFilesystemSetup {
     /// Returns nil on success, or the child exit status after reporting a failure.
     @unsafe
     func prepare(report: borrowing OwnedFileDescriptor) -> Int32? {
-        let mounts = unsafe self.mounts
-        let populatesDev = unsafe self.populatesDev
-        let readonlyRoot = unsafe self.readonlyRoot
-        let pathControls = unsafe self.pathControls
-        func group(_ index: Int) -> UnsafePointer<UnsafeMutablePointer<CChar>?> {
-            unsafe strings + starts[index]
-        }
+        guard let failure = unsafe prepareSteps() else { return nil }
+        return LaunchRecord.reportFailure(to: report, failure)
+    }
+
+    /// The setup steps in runc's order; each returns its failure.
+    @unsafe
+    private func prepareSteps() -> LaunchFailure? {
         let rootfs = unsafe group(InitStringGroup.rootfs)[0]!
-
-        // The rootfs is trusted input that must not change during setup. Pin the
-        // canonical directory, bind it onto its own path (pivot_root needs a mount
-        // point; propagation is already rprivate), and confirm that the bind at
-        // that path is the pinned directory. This detects a replaced final
-        // component; it does not make setup race-free against host processes.
-        let pinnedRaw = unsafe linux_open_path(AT_FDCWD, rootfs, O_DIRECTORY | O_NOFOLLOW)
-        guard pinnedRaw >= 0 else { return LaunchRecord.reportFailure(to: report, at: .openRootfs) }
-        var pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: pinnedRaw))
-        let bound = (try? pinned.withDescriptor { descriptor in
-            "/proc/self/fd/\(descriptor.rawValue)".withCString { source in
-                unsafe LinuxAPI.mount(source, rootfs, nil, UInt(MS_BIND | MS_REC), nil)
-            }
-        }) ?? -1
-        guard bound == 0 else { return LaunchRecord.reportFailure(to: report, at: .bindRootfs) }
-        let rootRaw = unsafe linux_open_path(AT_FDCWD, rootfs, O_DIRECTORY | O_NOFOLLOW)
-        guard rootRaw >= 0 else { return LaunchRecord.reportFailure(to: report, at: .openRootfs) }
-        var root = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: rootRaw))
-        guard let pinnedIdentity = pinned.identity(), let rootIdentity = root.identity(),
-              pinnedIdentity == rootIdentity else {
-            return LaunchRecord.reportFailure(to: report, at: .verifyRootfs, error: Errno(rawValue: ESTALE))
+        var root = OwnedFileDescriptor()
+        if let failure = unsafe Self.bindRootfs(rootfs, pinningInto: &root) { return failure }
+        if let failure = unsafe mountAll(beneath: root) { return failure }
+        if unsafe populatesDev, let failure = unsafe populateDev(beneath: root) { return failure }
+        if let failure = unsafe Self.switchRoot(to: root) { return failure }
+        if let hostname = unsafe group(InitStringGroup.hostname)[0],
+           let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Process.setHostname(hostname) }) {
+            return LaunchFailure(stage: .hostname, error: error)
         }
-        try? pinned.close()
+        if let failure = unsafe makeWorkingDirectory() { return failure }
+        // runc's finalizeRootfs: with every mount, /dev entry and the cwd in
+        // place, make the root mount read-only. This runs in the container's
+        // mount namespace after pivot_root, so it changes only the private bind
+        // of the rootfs made above, never the host's mount. It is not recursive:
+        // child mounts such as /proc, /dev and a tmpfs keep their own flags.
+        if unsafe readonlyRoot, let error = unsafe Self.makeReadonly() {
+            return LaunchFailure(stage: .readonlyRoot, error: error)
+        }
+        // runc applies linux.readonlyPaths and then linux.maskedPaths right after
+        // finalizeRootfs, and only then enters the cwd and drops privileges, so a
+        // cwd below a masked directory is gone and the full privilege of the init
+        // performs the mounts.
+        return unsafe pathControls.apply()
+    }
 
-        for (index, mount) in mounts.enumerated() {
+    @unsafe
+    private func group(_ index: Int) -> UnsafePointer<UnsafeMutablePointer<CChar>?> {
+        unsafe strings + starts[index]
+    }
+
+    /// The rootfs is trusted input that must not change during setup. Pin the
+    /// canonical directory, bind it onto its own path (pivot_root needs a mount
+    /// point; propagation is already rprivate), and confirm that the bind at
+    /// that path is the pinned directory. This detects a replaced final
+    /// component; it does not make setup race-free against host processes.
+    @unsafe
+    private static func bindRootfs(_ rootfs: UnsafePointer<CChar>, pinningInto root: inout OwnedFileDescriptor) -> LaunchFailure? {
+        var pinned = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in
+            pinned = try unsafe Kernel.File.openPath(rootfs, options: [.directory, .noFollow])
+        }) {
+            return LaunchFailure(stage: .openRootfs, error: error)
+        }
+        let bindError = pinned.failure(in: { descriptor in
+            "/proc/self/fd/\(descriptor.rawValue)".withCString { source in
+                Errno.failure { () throws(Errno) in
+                    try unsafe Kernel.Mount.mount(source: source, target: rootfs, type: nil, flags: [.bind, .recursive])
+                }
+            }
+        })
+        if let bindError { return LaunchFailure(stage: .bindRootfs, error: bindError) }
+        if let error = Errno.failure({ () throws(Errno) in
+            root = try unsafe Kernel.File.openPath(rootfs, options: [.directory, .noFollow])
+        }) {
+            return LaunchFailure(stage: .openRootfs, error: error)
+        }
+        guard let pinnedIdentity = pinned.identity(), let rootIdentity = root.identity(), pinnedIdentity == rootIdentity else {
+            return LaunchFailure(stage: .verifyRootfs, error: .staleNFSFileHandle)
+        }
+        return nil
+    }
+
+    /// The configured mounts in order, each on a destination resolved beneath `root`.
+    @unsafe
+    private func mountAll(beneath root: borrowing OwnedFileDescriptor) -> LaunchFailure? {
+        for (index, mount) in unsafe mounts.enumerated() {
             let filesystem = unsafe group(InitStringGroup.filesystem(index))
             if var failure = unsafe Self.mount(
                 root, unsafe group(InitStringGroup.destination(index)),
@@ -69,59 +104,60 @@ struct RootFilesystemSetup {
                 data: unsafe filesystem[2]!
             ) {
                 failure.detail = Int32(index)
-                return LaunchRecord.reportFailure(to: report, failure)
+                return failure
             }
         }
+        return nil
+    }
 
-        if populatesDev {
-            let hasDevpts = mounts.contains { $0.type == .devpts }
-            let error = root.failure(in: { rootDescriptor in
-                unsafe Self.withDirectory(beneath: rootDescriptor, unsafe group(InitStringGroup.dev)) { dev in
-                    unsafe Self.populateDevices(dev, linkPtmx: hasDevpts)
-                }
-            })
-            if let error { return LaunchRecord.reportFailure(to: report, at: .devices, error: error) }
+    /// Standard device nodes and links in the container's /dev.
+    @unsafe
+    private func populateDev(beneath root: borrowing OwnedFileDescriptor) -> LaunchFailure? {
+        let hasDevpts = unsafe mounts.contains { $0.type == .devpts }
+        let dev = unsafe group(InitStringGroup.dev)
+        let error = root.failure(in: { rootDescriptor in
+            unsafe Self.withDirectory(beneath: rootDescriptor, dev) { dev in
+                unsafe Self.populateDevices(dev, linkPtmx: hasDevpts)
+            }
+        })
+        return error.map { LaunchFailure(stage: .devices, error: $0) }
+    }
+
+    /// pivot_root(".", ".") as in runc: the old root is stacked on the new one
+    /// and detached through a descriptor, without a put_old directory. Both
+    /// descriptors are closed afterwards.
+    private static func switchRoot(to root: consuming OwnedFileDescriptor) -> LaunchFailure? {
+        var oldRoot = OwnedFileDescriptor()
+        let error = Errno.failure { () throws(Errno) in
+            oldRoot = try Kernel.File.openPath("/", options: .directory)
+        } ?? root.failure(in: { root in
+            Errno.failure { () throws(Errno) in try Kernel.Process.changeDirectory(to: root) }
+        }) ?? Errno.failure { () throws(Errno) in
+            try unsafe Kernel.Mount.pivotRoot(".", ".")
+        } ?? oldRoot.failure(in: { oldRoot in
+            Errno.failure { () throws(Errno) in try Kernel.Process.changeDirectory(to: oldRoot) }
+        }) ?? Errno.failure { () throws(Errno) in
+            try unsafe Kernel.Mount.unmountDetached(".")
+            try unsafe Kernel.Process.changeDirectory("/")
         }
-
-        // pivot_root(".", ".") as in runc: the old root is stacked on the new one
-        // and detached through a descriptor, without a put_old directory.
-        let oldRaw = unsafe linux_open_path(AT_FDCWD, "/", O_DIRECTORY)
-        guard oldRaw >= 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
-        var oldRoot = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: oldRaw))
-        guard (try? root.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
-        guard unsafe linux_pivot_root(".", ".") == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
-        guard (try? oldRoot.withDescriptor({ fchdir($0.rawValue) })) == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
-        guard unsafe umount2(".", Int32(MNT_DETACH)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
-        guard unsafe chdir("/") == 0 else { return LaunchRecord.reportFailure(to: report, at: .pivotRoot) }
         try? oldRoot.close()
         try? root.close()
+        return error.map { LaunchFailure(stage: .pivotRoot, error: $0) }
+    }
 
-        if let hostname = unsafe group(InitStringGroup.hostname)[0] {
-            guard unsafe sethostname(hostname, strlen(hostname)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .hostname) }
-        }
-
-        // Like runc, create a missing cwd. Paths now resolve inside the new root.
+    /// Like runc, create a missing cwd. Paths now resolve inside the new root.
+    @unsafe
+    private func makeWorkingDirectory() -> LaunchFailure? {
         var prefix = unsafe group(InitStringGroup.cwdPrefixes)
         while let path = unsafe prefix[0] {
-            guard unsafe mkdir(path, 0o755) == 0 || errno == EEXIST else { return LaunchRecord.reportFailure(to: report, at: .cwd) }
+            do {
+                try unsafe Kernel.File.makeDirectory(path, permissions: FilePermissions(rawValue: 0o755))
+            } catch .fileExists {
+            } catch {
+                return LaunchFailure(stage: .cwd, error: error)
+            }
             unsafe prefix += 1
         }
-
-        // runc's finalizeRootfs: with every mount, /dev entry and the cwd in
-        // place, make the root mount read-only. This runs in the container's
-        // mount namespace after pivot_root, so it changes only the private bind
-        // of the rootfs made above, never the host's mount. It is not recursive:
-        // child mounts such as /proc, /dev and a tmpfs keep their own flags.
-        if readonlyRoot {
-            if let error = unsafe Self.makeReadonly() {
-                return LaunchRecord.reportFailure(to: report, at: .readonlyRoot, error: error)
-            }
-        }
-        // runc applies linux.readonlyPaths and then linux.maskedPaths right after
-        // finalizeRootfs, and only then enters the cwd and drops privileges, so a
-        // cwd below a masked directory is gone and the full privilege of the init
-        // performs the mounts.
-        if let failure = pathControls.apply() { return LaunchRecord.reportFailure(to: report, failure) }
         return nil
     }
 
@@ -134,14 +170,14 @@ struct RootFilesystemSetup {
     /// (no configured mount may cover it), and the rootfs filesystem itself is
     /// untouched. Returns nil or the error.
     private static func makeReadonly() -> Errno? {
-        var status = statvfs()
-        guard unsafe statvfs("/", &status) == 0 else { return .current }
-        var flags = UInt(MS_BIND | MS_REMOUNT | MS_RDONLY)
-        for entry in unsafe preservedMountFlags where UInt(status.f_flag) & entry.reported != 0 {
-            flags |= entry.flag
+        Errno.failure { () throws(Errno) in
+            let reported = try unsafe Kernel.Mount.statusFlags(ofPath: "/")
+            var flags: MountFlags = [.bind, .remount, .readOnly]
+            for entry in unsafe preservedMountFlags where reported & entry.reported != 0 {
+                flags.insert(entry.flag)
+            }
+            try unsafe Kernel.Mount.mount(source: "", target: "/", type: nil, flags: flags)
         }
-        guard unsafe LinuxAPI.mount("", "/", nil, flags, nil) == 0 else { return .current }
-        return nil
     }
 
     /// Mounts a filesystem on a destination resolved beneath `root`.
@@ -150,17 +186,20 @@ struct RootFilesystemSetup {
     private static func mount(
         _ root: borrowing OwnedFileDescriptor,
         _ destination: UnsafePointer<UnsafeMutablePointer<CChar>?>,
-        source: UnsafePointer<CChar>, type: UnsafePointer<CChar>, flags: UInt, data: UnsafePointer<CChar>
+        source: UnsafePointer<CChar>, type: UnsafePointer<CChar>, flags: MountFlags, data: UnsafePointer<CChar>
     ) -> LaunchFailure? {
         var mountError: Errno? = nil
         let walkError = root.failure(in: { rootDescriptor in
             unsafe withDirectory(beneath: rootDescriptor, destination) { target in
                 // Mount through the descriptor's magic link so the kernel uses
                 // exactly the directory resolved above rather than re-walking a path.
-                let result = "/proc/self/fd/\(target.rawValue)".withCString { targetPath in
-                    unsafe LinuxAPI.mount(source, targetPath, type, flags, unsafe data[0] == 0 ? nil : UnsafeRawPointer(data))
+                mountError = "/proc/self/fd/\(target.rawValue)".withCString { targetPath in
+                    Errno.failure { () throws(Errno) in
+                        try unsafe Kernel.Mount.mount(
+                            source: source, target: targetPath, type: type, flags: flags,
+                            data: unsafe data[0] == 0 ? nil : UnsafeRawPointer(data))
+                    }
                 }
-                if result != 0 { mountError = .current }
                 return nil
             }
         })
@@ -170,7 +209,7 @@ struct RootFilesystemSetup {
     }
 
     /// Walks NULL-terminated directory components beneath `parent`, one
-    /// `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)` at a time, creating missing
+    /// O_PATH|O_DIRECTORY|O_NOFOLLOW open at a time, creating missing
     /// directories. A symlink component fails with ENOTDIR or ELOOP, so the walk
     /// never leaves the tree under `parent` (other than through mounts this
     /// runtime placed there). Each intermediate descriptor is owned and closed.
@@ -182,36 +221,52 @@ struct RootFilesystemSetup {
         _ body: (FileDescriptor) -> Errno?
     ) -> Errno? {
         guard let name = unsafe components[0] else { return body(parent) }
-        let flags = O_DIRECTORY | O_NOFOLLOW
-        var raw = unsafe linux_open_path(parent.rawValue, name, flags)
-        if raw < 0 && errno == ENOENT {
-            guard unsafe mkdirat(parent.rawValue, name, 0o755) == 0 || errno == EEXIST else { return .current }
-            raw = unsafe linux_open_path(parent.rawValue, name, flags)
+        var directory = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in directory = try unsafe openOrCreateDirectory(name, in: parent) }) {
+            return error
         }
-        guard raw >= 0 else { return .current }
-        let owner = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-        return owner.failure(in: { directory in
-            unsafe withDirectory(beneath: directory, components + 1, body)
-        })
+        return directory.failure(in: { unsafe withDirectory(beneath: $0, components + 1, body) })
+    }
+
+    /// The directory `name` in `parent`, created first when it is missing.
+    @unsafe
+    private static func openOrCreateDirectory(_ name: UnsafePointer<CChar>, in parent: FileDescriptor) throws(Errno) -> OwnedFileDescriptor {
+        do {
+            return try unsafe Kernel.File.openPath(name, in: parent, options: [.directory, .noFollow])
+        } catch .noSuchFileOrDirectory {
+        }
+        do {
+            try unsafe Kernel.File.makeDirectory(name, in: parent, permissions: FilePermissions(rawValue: 0o755))
+        } catch .fileExists {
+        }
+        return try unsafe Kernel.File.openPath(name, in: parent, options: [.directory, .noFollow])
     }
 
     /// Creates standard device nodes and links in a freshly mounted /dev tmpfs.
     /// Returns nil or the error. Requires CAP_MKNOD; user namespaces are not supported.
     private static func populateDevices(_ dev: FileDescriptor, linkPtmx: Bool) -> Errno? {
-        let previousMask = umask(0)
-        defer { _ = umask(previousMask) }
+        let previousMask = Kernel.Process.setFileCreationMask(0)
+        defer { Kernel.Process.setFileCreationMask(previousMask) }
+        return Errno.failure { () throws(Errno) in try unsafe makeDevices(in: dev, linkPtmx: linkPtmx) }
+    }
+
+    private static func makeDevices(in dev: FileDescriptor, linkPtmx: Bool) throws(Errno) {
         for device in unsafe standardDevices {
-            let mode = mode_t(LinuxAPI.S_IFCHR) | 0o666
-            guard unsafe mknodat(dev.rawValue, device.name, mode, dev_t(LinuxDevice.number(device.major, device.minor))) == 0 || errno == EEXIST else {
-                return .current
+            do {
+                try unsafe Kernel.File.makeCharacterDevice(
+                    device.name, in: dev, permissions: FilePermissions(rawValue: 0o666),
+                    device: LinuxDevice.number(device.major, device.minor))
+            } catch .fileExists {
             }
         }
         var links = unsafe standardDevLinks
         if linkPtmx { links.append((target: "pts/ptmx", name: "ptmx")) }
         for link in links {
-            guard unsafe symlinkat(link.target, dev.rawValue, link.name) == 0 || errno == EEXIST else { return .current }
+            do {
+                try unsafe Kernel.File.makeSymbolicLink(link.name, to: link.target, in: dev)
+            } catch .fileExists {
+            }
         }
-        return nil
     }
 
     /// Standard character devices, matching runc's default device set.
@@ -226,8 +281,8 @@ struct RootFilesystemSetup {
     /// Linux statvfs `f_flag` bits (<linux/statfs.h>) and the mount flags that
     /// restate them. Some bits differ (ST_NOSYMFOLLOW is MS_MOVE's value), so
     /// the reported flags are translated, not passed through as runc does.
-    private static let preservedMountFlags: [(reported: UInt, flag: UInt)] = [
-        (0x2, UInt(MS_NOSUID)), (0x4, UInt(MS_NODEV)), (0x8, UInt(MS_NOEXEC)), (0x2000, 256 /* MS_NOSYMFOLLOW */),
+    private static let preservedMountFlags: [(reported: UInt, flag: MountFlags)] = [
+        (0x2, .noSetUserID), (0x4, .noDevices), (0x8, .noExecute), (0x2000, .noSymbolicLinkFollow),
     ]
 }
 #endif

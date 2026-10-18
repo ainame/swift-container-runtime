@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// Supervisor-side configuration of a launch. Every closure runs in the
@@ -73,9 +67,9 @@ enum NamespaceLauncher {
         try hooks.preserved.verify()
         // Computed before the fork, so the launcher only reads an integer.
         let namespaceFlags = namespaces.reduce(Int32(0)) { $0 | $1.cloneFlag }
-        let supervisor = getpid()
-        let launcher = fork()
-        guard launcher >= 0 else { throw RuntimeError.launch(.forkLauncher) }
+        let supervisor = Kernel.Process.id
+        let launcher: pid_t
+        do { launcher = try Kernel.Process.fork() } catch { throw RuntimeError.launch(.forkLauncher, error) }
         if launcher == 0 {
             runLauncher(
                 channels, supervisor: supervisor, namespaceFlags: namespaceFlags, hooks: hooks,
@@ -100,29 +94,32 @@ enum NamespaceLauncher {
     ) -> Never {
         hooks.closeInChildren()
         try? channels.reportRead.close(); try? channels.releaseWrite.close(); try? channels.commitWrite.close()
-        guard linux_set_parent_death_signal(SIGKILL) == 0 else { _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime)) }
-        guard getppid() == supervisor else { _exit(125) }
+        if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.setParentDeathSignal(Kernel.Signal.kill) }) {
+            Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime, error: error))
+        }
+        guard Kernel.Process.parentID == supervisor else { Kernel.Process.exit(125) }
 
         // Enter the namespaces the init will start in.
-        if let error = prepare() {
-            _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .joinNamespaces, error: error))
-        }
+        if let error = prepare() { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .joinNamespaces, error: error)) }
         if namespaceFlags != 0 {
-            guard unshare(namespaceFlags) == 0 else {
-                _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .namespaces))
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Namespace.unshare(namespaceFlags) }) {
+                Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .namespaces, error: error))
             }
-            guard unsafe mount(nil, "/", nil, UInt(MS_REC | MS_PRIVATE), nil) == 0 else {
-                _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .propagation))
+            if let error = Errno.failure({ () throws(Errno) in
+                try unsafe Kernel.Mount.mount(source: nil, target: "/", type: nil, flags: [.recursive, .privatePropagation])
+            }) {
+                Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .propagation, error: error))
             }
         }
 
         // PID 1 sees getppid()==0 because its parent is outside its namespace.
         // The inherited pidfd detects parent death before PDEATHSIG is set.
-        let parentRawFD = linux_pidfd_open(getpid())
-        guard parentRawFD >= 0 else { _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime)) }
-        var launcherPidfd = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: parentRawFD))
-        let child = fork()
-        guard child >= 0 else { _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .forkInit)) }
+        var launcherPidfd = OwnedFileDescriptor()
+        if let error = Errno.failure({ () throws(Errno) in launcherPidfd = try Kernel.Pidfd.open(Kernel.Process.id) }) {
+            Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime, error: error))
+        }
+        let child: pid_t
+        do { child = try Kernel.Process.fork() } catch { Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .forkInit, error: error)) }
         if child == 0 {
             runInit(channels, launcher: launcherPidfd, detached: hooks.detached, initialize: initialize)
         }
@@ -131,7 +128,7 @@ enum NamespaceLauncher {
         // Report the init while it is an unreaped child of this launcher: its
         // PID cannot be reused until the supervisor has pinned it with a
         // pidfd and released this launcher.
-        guard LaunchRecord(.initProcess, value: Int64(child)).write(to: channels.reportWrite) else { _exit(125) }
+        guard LaunchRecord(.initProcess, value: Int64(child)).write(to: channels.reportWrite) else { Kernel.Process.exit(125) }
         try? channels.reportWrite.close()
         var control = LaunchControl.receive(from: channels.releaseRead)
         if hooks.detached {
@@ -141,13 +138,13 @@ enum NamespaceLauncher {
             // nearest subreaper. An abandon: the supervisor killed the child
             // through its pidfd, so reap it here rather than leave a zombie.
             if control == .proceed { control = LaunchControl.receive(from: channels.releaseRead) }
-            guard control == .abandon else { _exit(0) }
-            _ = wait(child)
-            _exit(125)
+            guard control == .abandon else { Kernel.Process.exit(0) }
+            _ = try? Kernel.Process.wait(child)
+            Kernel.Process.exit(125)
         }
         try? channels.releaseRead.close()
-        guard let status = wait(child) else { _exit(125) }
-        _exit(exitCode(status))
+        guard let status = try? Kernel.Process.wait(child) else { Kernel.Process.exit(125) }
+        Kernel.Process.exit(exitCode(status))
     }
 
     /// The forked init: ties its lifetime to the launcher (foreground) or
@@ -162,21 +159,23 @@ enum NamespaceLauncher {
             // EOF on the commit socket covers a supervisor that dies before
             // committing. Like runc's init, leave the caller's session so
             // its terminal job control does not reach the container.
-            guard setsid() >= 0 else { _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime)) }
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Process.startSession() }) {
+                Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime, error: error))
+            }
             try? launcher.close()
         } else {
             // Keep the launcher pidfd (close-on-exec, like every pidfd)
             // for the rearm after credentials change.
             switch restoreParentDeathSignal(launcher) {
             case true?: break
-            case false?: _exit(125)
-            case nil: _exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime))
+            case false?: Kernel.Process.exit(125)
+            case nil: Kernel.Process.exit(LaunchRecord.reportFailure(to: channels.reportWrite, at: .parentLifetime))
             }
         }
         // Run nothing (and fork nothing) before the supervisor has placed
         // this init in the container's cgroup; EOF means it failed or died.
-        guard LaunchControl.receive(from: channels.commitRead) == .proceed else { _exit(125) }
-        _exit(initialize(channels.reportWrite, channels.commitRead, launcher))
+        guard LaunchControl.receive(from: channels.commitRead) == .proceed else { Kernel.Process.exit(125) }
+        Kernel.Process.exit(initialize(channels.reportWrite, channels.commitRead, launcher))
     }
 
     /// The calling process: follows the reports, then delivers the verdict.
@@ -216,7 +215,7 @@ enum NamespaceLauncher {
         if !succeeded && progress.initPID != 0 {
             // The pidfd names this init even after it exits, so this cannot reach
             // a process that reused its PID.
-            _ = try? progress.pinned.withDescriptor { linux_pidfd_send_signal($0.rawValue, SIGKILL) }
+            try? progress.pinned.withDescriptor { try Kernel.Pidfd.sendSignal(Kernel.Signal.kill, to: $0) }
             _ = progress.pinned.poll(.input, timeout: .seconds(10))
         }
         // A detached launcher still parents the child: after a failure it reaps
@@ -225,20 +224,14 @@ enum NamespaceLauncher {
         try? channels.releaseWrite.close()
         // A detached init that has not received the commit byte sees EOF and exits.
         try? channels.commitWrite.close()
-        guard let status = wait(launcher) else { throw RuntimeError.launch(.wait) }
+        let status: Int32
+        do { status = try Kernel.Process.wait(launcher) } catch { throw RuntimeError.launch(.wait, error) }
         if let thrown { throw thrown }
         if let failure = progress.failure {
             let stage = LaunchStage(rawValue: failure.stage) ?? .protocolRead
             throw RuntimeError.launch(stage, failure.error, context: context(stage, failure.detail))
         }
         return hooks.detached ? 0 : exitCode(status)
-    }
-
-    private static func wait(_ pid: pid_t) -> Int32? {
-        var status: Int32 = 0
-        var result: pid_t
-        repeat { result = unsafe waitpid(pid, &status, 0) } while result < 0 && errno == EINTR
-        return result < 0 ? nil : status
     }
 
     private static func exitCode(_ status: Int32) -> Int32 {
@@ -255,14 +248,11 @@ enum NamespaceLauncher {
     /// namespace cannot use getppid. Returns false when the launcher has exited,
     /// nil when either step fails.
     static func restoreParentDeathSignal(_ launcher: borrowing OwnedFileDescriptor) -> Bool? {
-        guard linux_set_parent_death_signal(SIGKILL) == 0 else { return nil }
-        guard let ready = try? launcher.withDescriptor({ descriptor in
-            var parent = pollfd(fd: descriptor.rawValue, events: Int16(POLLIN), revents: 0)
-            var result: Int32
-            repeat { result = unsafe poll(&parent, 1, 0) } while result < 0 && errno == EINTR
-            return result
-        }), ready >= 0 else { return nil }
-        return ready == 0
+        guard (try? Kernel.Process.setParentDeathSignal(Kernel.Signal.kill)) != nil else { return nil }
+        // A readable pidfd means the launcher has exited.
+        let events = launcher.poll(.input, timeout: .zero)
+        guard !events.contains(.error) else { return nil }
+        return events.isEmpty
     }
 }
 /// The three channels of a launch, created before the fork; each side closes
@@ -290,18 +280,18 @@ struct LaunchChannels: ~Copyable {
         let reportWrite = OwnedFileDescriptor(takingOwnershipOf: report.writeEnd)
         // Sockets rather than pipes: controls are sent with MSG_NOSIGNAL, so a
         // vanished launcher or init cannot raise SIGPIPE in the supervisor.
-        var releasePair: [Int32] = [-1, -1]
-        guard unsafe linux_unix_stream_socketpair(&releasePair) == 0 else { throw RuntimeError.launch(.pipe) }
-        let releaseWrite = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: releasePair[0]))
-        let releaseRead = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: releasePair[1]))
-        var commitPair: [Int32] = [-1, -1]
-        guard unsafe linux_unix_stream_socketpair(&commitPair) == 0 else { throw RuntimeError.launch(.pipe) }
+        let releasePair: (FileDescriptor, FileDescriptor)
+        do { releasePair = try Kernel.Socket.unixStreamPair() } catch { throw RuntimeError.launch(.pipe, error) }
+        let releaseWrite = OwnedFileDescriptor(takingOwnershipOf: releasePair.0)
+        let releaseRead = OwnedFileDescriptor(takingOwnershipOf: releasePair.1)
+        let commitPair: (FileDescriptor, FileDescriptor)
+        do { commitPair = try Kernel.Socket.unixStreamPair() } catch { throw RuntimeError.launch(.pipe, error) }
         self.reportRead = reportRead
         self.reportWrite = reportWrite
         self.releaseWrite = releaseWrite
         self.releaseRead = releaseRead
-        commitWrite = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: commitPair[0]))
-        commitRead = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: commitPair[1]))
+        commitWrite = OwnedFileDescriptor(takingOwnershipOf: commitPair.0)
+        commitRead = OwnedFileDescriptor(takingOwnershipOf: commitPair.1)
     }
 }
 
@@ -354,12 +344,12 @@ private struct LaunchProgress: ~Copyable {
             return
         }
         initPID = pid_t(record.value)
-        let raw = linux_pidfd_open(initPID)
-        guard raw >= 0 else {
-            thrown = RuntimeError.launch(.pinInit)
+        do {
+            pinned = try Kernel.Pidfd.open(initPID)
+        } catch {
+            thrown = RuntimeError.launch(.pinInit, error)
             return
         }
-        pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
         do {
             let identity = try ProcFS.identity(of: initPID)
             try hooks.placeInit(initPID)

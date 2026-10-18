@@ -32,6 +32,18 @@ extension Kernel {
             #endif
         }
 
+        /// socketpair(2) of close-on-exec SOCK_STREAM sockets; the caller takes
+        /// ownership of both ends at once.
+        static func unixStreamPair() throws(Errno) -> (FileDescriptor, FileDescriptor) {
+            var pair: [Int32] = [-1, -1]
+            #if os(Linux)
+            guard unsafe linux_unix_stream_socketpair(&pair) == 0 else { throw .current }
+            #else
+            guard unsafe socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { throw .current }
+            #endif
+            return (FileDescriptor(rawValue: pair[0]), FileDescriptor(rawValue: pair[1]))
+        }
+
         /// bind(2) to `sunPath`, the exact `sun_path` bytes: a filesystem
         /// path with its terminating NUL, or NUL and an abstract name.
         static func bind(_ socket: FileDescriptor, sunPath: [UInt8]) throws(Errno) {

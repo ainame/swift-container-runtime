@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// Process preparation shared by the first workload and later exec processes.
@@ -90,8 +84,8 @@ struct WorkloadSetup {
             guard (LaunchControl.receive(from: commit) == .commit) else { return 125 }
             return unsafe gate.serve(file: file, arguments: argv, environment: environment)
         }
-        _ = unsafe execve(file, argv, environment)
-        return LaunchRecord.reportFailure(to: report, at: .execute)
+        let error = unsafe Kernel.Process.execute(file, arguments: argv, environment: environment)
+        return LaunchRecord.reportFailure(to: report, at: .execute, error: error)
     }
 
     /// Preserve runc's cwd, limit, capability and credential ordering as one phase.
@@ -104,17 +98,21 @@ struct WorkloadSetup {
         // As runc does, enter the cwd with the caller's credentials first and
         // retry after the switch only if they were denied it.
         var enterCwdAsUser = false
-        if let directory = unsafe directory, unsafe chdir(directory) != 0 {
-            guard errno == EACCES || errno == EPERM else { return LaunchRecord.reportFailure(to: report, at: .cwd) }
+        if let directory = unsafe directory,
+           let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Process.changeDirectory(directory) }) {
+            guard error == .permissionDenied || error == .notPermitted else {
+                return LaunchRecord.reportFailure(to: report, at: .cwd, error: error)
+            }
             enterCwdAsUser = true
         }
 
         // runc's order from here: umask (0o022 unless configured), then
         // no_new_privs, then the user (stdio ownership, groups, gid, uid). Every
         // setting is in force before the workload can execute, in either mode.
-        _ = umask(mode_t(security.umask))
-        if security.noNewPrivileges {
-            guard linux_set_no_new_privileges() == 0 else { return LaunchRecord.reportFailure(to: report, at: .noNewPrivileges) }
+        Kernel.Process.setFileCreationMask(UInt32(security.umask))
+        if security.noNewPrivileges,
+           let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.setNoNewPrivileges() }) {
+            return LaunchRecord.reportFailure(to: report, at: .noNewPrivileges, error: error)
         }
         // process.rlimits at runc's point: its parent calls prlimit on the init
         // at procReady, after no_new_privs and before finalizeNamespace changes
@@ -123,8 +121,8 @@ struct WorkloadSetup {
         // with the same privilege. The rest of setup, a created init's wait, and
         // the start handshake then run under the limits, as runc's init does.
         // A failure fails create or run before readiness.
-        if let index = unsafe Self.applyLimits(resourceLimits) {
-            return LaunchRecord.reportFailure(to: report, at: .setResourceLimit, detail: index)
+        if let failure = unsafe Self.applyLimits(resourceLimits) {
+            return LaunchRecord.reportFailure(to: report, at: .setResourceLimit, error: failure.error, detail: failure.index)
         }
         // An explicit process.capabilities follows runc's finalizeNamespace:
         // reduce the bounding set while the init still holds CAP_SETPCAP (the
@@ -135,12 +133,17 @@ struct WorkloadSetup {
             where !capabilities.bounding.contains(Int(capability)) {
                 // Skip capabilities already absent, so a fully reduced bounding
                 // set needs no CAP_SETPCAP.
-                let present = linux_read_bounding_capability(capability)
-                guard present >= 0, present == 0 || linux_drop_bounding_capability(capability) == 0 else {
-                    return LaunchRecord.reportFailure(to: report, at: .dropBoundingCapability, detail: capability)
+                if let error = Errno.failure({ () throws(Errno) in
+                    if try Kernel.Credentials.boundingSetContains(capability) {
+                        try Kernel.Credentials.dropFromBoundingSet(capability)
+                    }
+                }) {
+                    return LaunchRecord.reportFailure(to: report, at: .dropBoundingCapability, error: error, detail: capability)
                 }
             }
-            guard linux_set_keep_capabilities(1) == 0 else { return LaunchRecord.reportFailure(to: report, at: .keepCapabilities) }
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.setKeepCapabilities(true) }) {
+                return LaunchRecord.reportFailure(to: report, at: .keepCapabilities, error: error)
+            }
         }
         if let error = unsafe Self.giveStdio(to: uid_t(security.uid)) {
             return LaunchRecord.reportFailure(to: report, at: .stdioOwnership, error: error)
@@ -148,13 +151,19 @@ struct WorkloadSetup {
         // setgroups always runs, so an empty list clears the caller's groups;
         // setgid must precede setuid, which gives up the right to change groups.
         // Unless keepcaps was set above, a non-zero uid also loses every capability.
-        guard unsafe setgroups(supplementaryGids.count, supplementaryGids.baseAddress) == 0 else {
-            return LaunchRecord.reportFailure(to: report, at: .supplementaryGroups)
+        let groups = unsafe supplementaryGids
+        if let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Credentials.setGroups(groups) }) {
+            return LaunchRecord.reportFailure(to: report, at: .supplementaryGroups, error: error)
         }
-        guard setgid(gid_t(security.gid)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .setGroupID) }
-        guard setuid(uid_t(security.uid)) == 0 else { return LaunchRecord.reportFailure(to: report, at: .setUserID) }
-        if enterCwdAsUser, let directory = unsafe directory {
-            guard unsafe chdir(directory) == 0 else { return LaunchRecord.reportFailure(to: report, at: .cwd) }
+        if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.setGroupID(gid_t(security.gid)) }) {
+            return LaunchRecord.reportFailure(to: report, at: .setGroupID, error: error)
+        }
+        if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.setUserID(uid_t(security.uid)) }) {
+            return LaunchRecord.reportFailure(to: report, at: .setUserID, error: error)
+        }
+        if enterCwdAsUser, let directory = unsafe directory,
+           let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Process.changeDirectory(directory) }) {
+            return LaunchRecord.reportFailure(to: report, at: .cwd, error: error)
         }
 
         // Then runc's ApplyCaps: clear keepcaps so exec semantics are standard,
@@ -163,17 +172,23 @@ struct WorkloadSetup {
         // and replace whatever ambient set remains with the configured one.
         // Without the object, the inherited sets stay as setuid left them.
         if let capabilities {
-            guard linux_set_keep_capabilities(0) == 0 else { return LaunchRecord.reportFailure(to: report, at: .keepCapabilities) }
-            guard linux_set_capabilities(
-                capabilities.effective.mask, capabilities.permitted.mask, capabilities.inheritable.mask
-            ) == 0 else {
-                return LaunchRecord.reportFailure(to: report, at: .setCapabilities)
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.setKeepCapabilities(false) }) {
+                return LaunchRecord.reportFailure(to: report, at: .keepCapabilities, error: error)
             }
-            guard linux_clear_ambient_capabilities() == 0 else { return LaunchRecord.reportFailure(to: report, at: .clearAmbientCapabilities) }
+            if let error = Errno.failure({ () throws(Errno) in
+                try Kernel.Credentials.setCapabilities(
+                    effective: capabilities.effective.mask, permitted: capabilities.permitted.mask,
+                    inheritable: capabilities.inheritable.mask)
+            }) {
+                return LaunchRecord.reportFailure(to: report, at: .setCapabilities, error: error)
+            }
+            if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.clearAmbientCapabilities() }) {
+                return LaunchRecord.reportFailure(to: report, at: .clearAmbientCapabilities, error: error)
+            }
             for capability in stride(from: Int32(0), through: lastCapability, by: 1)
             where capabilities.ambient.contains(Int(capability)) {
-                guard linux_raise_ambient_capability(capability) == 0 else {
-                    return LaunchRecord.reportFailure(to: report, at: .raiseAmbientCapability, detail: capability)
+                if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.raiseAmbientCapability(capability) }) {
+                    return LaunchRecord.reportFailure(to: report, at: .raiseAmbientCapability, error: error, detail: capability)
                 }
             }
         }
@@ -188,16 +203,25 @@ struct WorkloadSetup {
     /// alone, and EPERM and EROFS are ignored. Unlike runc, a closed descriptor
     /// is skipped. Returns nil or the error.
     private static func giveStdio(to uid: uid_t) -> Errno? {
-        for descriptor: Int32 in 0...2 {
-            var status = stat()
-            guard unsafe fstat(descriptor, &status) == 0 else {
-                if errno == EBADF { continue }
-                return .current
+        for raw: Int32 in 0...2 {
+            let descriptor = FileDescriptor(rawValue: raw)
+            let status: FileStatus
+            do {
+                status = try Kernel.File.status(of: descriptor)
+            } catch .badFileDescriptor {
+                continue
+            } catch {
+                return error
             }
-            let isDevNull = status.st_mode & mode_t(LinuxAPI.S_IFMT) == mode_t(LinuxAPI.S_IFCHR)
-                && UInt64(status.st_rdev) == LinuxDevice.number(1, 3)
-            if status.st_uid == uid || isDevNull { continue }
-            guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return .current }
+            let isDevNull = status.isCharacterDevice && status.deviceNumber == LinuxDevice.number(1, 3)
+            if status.owner == uid || isDevNull { continue }
+            do {
+                try Kernel.File.changeOwner(descriptor, to: uid)
+            } catch .notPermitted, .readOnlyFileSystem {
+                continue
+            } catch {
+                return error
+            }
         }
         return nil
     }
@@ -205,11 +229,13 @@ struct WorkloadSetup {
     /// runc's setupRlimits: one prlimit per entry, in order, stopping at the
     /// first the kernel refuses (EPERM for a raised hard limit without
     /// CAP_SYS_RESOURCE or RLIMIT_NOFILE above fs.nr_open). Iterating the
-    /// prepared array does not allocate. Returns the failing entry's index.
-    private static func applyLimits(_ limits: [ResourceLimit]) -> Int32? {
+    /// prepared array does not allocate. Returns the failing entry's index and error.
+    private static func applyLimits(_ limits: [ResourceLimit]) -> (index: Int32, error: Errno)? {
         for (index, limit) in limits.enumerated() {
-            guard linux_set_resource_limit(limit.resource.number, limit.soft, limit.hard) == 0 else {
-                return Int32(index)
+            do {
+                try Kernel.Credentials.setResourceLimit(limit.resource.number, soft: limit.soft, hard: limit.hard)
+            } catch {
+                return (Int32(index), error)
             }
         }
         return nil
@@ -220,11 +246,10 @@ struct WorkloadSetup {
     /// (already switched) credentials. Returns nil or the error.
     @unsafe
     private static func checkExecutable(_ path: UnsafePointer<CChar>) -> Errno? {
-        var status = stat()
-        guard unsafe stat(path, &status) == 0 else { return .current }
-        guard status.st_mode & mode_t(LinuxAPI.S_IFMT) != mode_t(LinuxAPI.S_IFDIR) else { return .isDirectory }
-        guard unsafe access(path, X_OK) == 0 else { return .current }
-        return nil
+        Errno.failure { () throws(Errno) in
+            guard try unsafe !Kernel.File.status(atPath: path).isDirectory else { throw .isDirectory }
+            try unsafe Kernel.File.checkExecutable(path)
+        }
     }
 }
 #endif
