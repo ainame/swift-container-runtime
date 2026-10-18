@@ -65,25 +65,26 @@ public struct ContainerLifecycle: Sendable {
     ///   - preserveDescriptors: How many caller descriptors from 3 up the
     ///     workload inherits, as runc's `--preserve-fds`.
     ///   - pidfdSocket: A Unix socket address that receives the init's pidfd.
-    /// - Returns: The workload's shell-style exit status: its exit code
-    ///   (0...255), or 128 plus the signal number when a signal killed it, as
-    ///   a shell's `$?` reports. A CLI can pass it straight to `exit`.
-    ///   Always 0 when `detach` is set.
+    /// - Returns: The workload's shell-style ``ExitStatus``: its exit code
+    ///   (0...255), or 128 plus the signal number when a signal killed it.
+    ///   Signal interpretation is conventional: an explicit exit code can
+    ///   have the same value. Pass ``ExitStatus/shellStatus`` to a CLI's exit
+    ///   function. Returns ``ExitStatus/success`` when `detach` is set.
     /// - Throws: ``LifecycleError/alreadyExists(_:)`` for a taken ID, or
     ///   `RuntimeError` when setup fails before the workload starts.
     @available(*, noasync, message: "launch containers before starting async work")
     public func run(
         id: ContainerID, plan: OCIRunPlan, detach: Bool, keep: Bool = false, pidFile: String? = nil,
         preserveDescriptors: Int = 0, pidfdSocket: String? = nil
-    ) throws -> Int32 {
+    ) throws -> ExitStatus {
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
         let address = try pidfdSocket.map(PidfdSocketAddress.init)
         if detach {
             try createOnLinux(id: id, plan: plan, start: true, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
-            return 0
+            return .success
         }
-        return try runForegroundOnLinux(
-            id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved, pidfdSocket: address)
+        return ExitStatus(shellStatus: try runForegroundOnLinux(
+            id: id, plan: plan, keep: keep, pidFile: pidFile, preserved: preserved, pidfdSocket: address))
     }
 
     /// runc's `exec`: runs another (non-terminal) process in the namespaces,
@@ -106,10 +107,11 @@ public struct ContainerLifecycle: Sendable {
     ///   - preserveDescriptors: How many caller descriptors from 3 up the
     ///     process inherits, as runc's `--preserve-fds`.
     ///   - pidfdSocket: A Unix socket address that receives the process's pidfd.
-    /// - Returns: The workload's shell-style exit status: its exit code
-    ///   (0...255), or 128 plus the signal number when a signal killed it, as
-    ///   a shell's `$?` reports. A CLI can pass it straight to `exit`.
-    ///   Always 0 when `detach` is set.
+    /// - Returns: The workload's shell-style ``ExitStatus``: its exit code
+    ///   (0...255), or 128 plus the signal number when a signal killed it.
+    ///   Signal interpretation is conventional: an explicit exit code can
+    ///   have the same value. Pass ``ExitStatus/shellStatus`` to a CLI's exit
+    ///   function. Returns ``ExitStatus/success`` when `detach` is set.
     /// - Throws: ``LifecycleError/notFound(_:)`` for a missing container, or
     ///   `RuntimeError` when it is stopped (or paused, without `ignorePaused`)
     ///   or the process cannot be started.
@@ -119,7 +121,7 @@ public struct ContainerLifecycle: Sendable {
         cwd: String? = nil, user: String? = nil, additionalGids: [UInt32] = [], noNewPrivileges: Bool? = nil,
         capabilities: [String] = [], detach: Bool = false, pidFile: String? = nil, processFile: String? = nil,
         ignorePaused: Bool = false, preserveDescriptors: Int = 0, pidfdSocket: String? = nil
-    ) throws -> Int32 {
+    ) throws -> ExitStatus {
         let preserved = try Self.verifiedPreserved(preserveDescriptors)
         let address = try pidfdSocket.map(PidfdSocketAddress.init)
         // Serialize acquisition with delete/start, then pin the recorded init
@@ -183,7 +185,7 @@ public struct ContainerLifecycle: Sendable {
             return try plan.execOnLinux(namespaces: namespaces, hooks: hooks, pidfdSocket: pidfd)
         }
         guard let result else { throw RuntimeError("container init is no longer running") }
-        return result
+        return detach ? .success : ExitStatus(shellStatus: result)
     }
 
     /// Waits, without the state lock, until the recorded cgroup no longer

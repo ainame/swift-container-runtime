@@ -216,11 +216,13 @@ public struct OCIRunPlan: Sendable {
     /// callers. A default-path cgroup gets a name unique to this run and is
     /// removed whenever the run ends.
     ///
-    /// - Returns: The workload's shell-style exit status: its exit code
+    /// - Returns: The workload's shell-style ``ExitStatus``: its exit code
     ///   (0...255), or 128 plus the signal number when a signal killed it.
+    ///   Signal interpretation is conventional: an explicit exit code can
+    ///   have the same value.
     /// - Throws: `RuntimeError` when setup fails before the workload runs.
     @available(*, noasync, message: "launch containers before starting async work")
-    public func run() throws -> Int32 {
+    public func run() throws -> ExitStatus {
         // A transient ID from this process and a monotonic timestamp, so a
         // leftover group of an earlier run with a reused PID is not adopted.
         let now = Kernel.Process.monotonicTime()
@@ -241,7 +243,7 @@ public struct OCIRunPlan: Sendable {
         if let warning = try CgroupLeaf.remove(leaf.identity, killRemaining: true) {
             RuntimeDiagnostics.writeError("swift-container-runtime: warning: \(warning)")
         }
-        return status
+        return ExitStatus(shellStatus: status)
     }
 
     init(_ configuration: OCIConfiguration, bundle: FilePath, rootfs: FilePath) throws {

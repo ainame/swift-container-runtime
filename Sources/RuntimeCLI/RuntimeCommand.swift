@@ -352,7 +352,7 @@ struct Run: ParsableCommand {
     }
 
     mutating func run() throws {
-        let status: Int32
+        let status: ExitStatus
         do {
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             status = try globals.lifecycle().run(
@@ -363,7 +363,7 @@ struct Run: ParsableCommand {
             throw CommandFailure.report(error, status: 125)
         }
         // Keep this outside the catch: a workload may itself choose exit 125.
-        throw ExitCode(status)
+        throw ExitCode(status.shellStatus)
     }
 }
 
@@ -394,7 +394,7 @@ struct NamespaceRun: ParsableCommand {
     }
 
     mutating func run() throws {
-        let status: Int32
+        let status: ExitStatus
         do {
             status = try NamespaceCommand(hostname: hostname, arguments: workloadArguments).run()
         } catch {
@@ -402,6 +402,6 @@ struct NamespaceRun: ParsableCommand {
             throw ExitCode(125)
         }
         // Keep this outside the catch: a workload may itself choose exit 125.
-        throw ExitCode(status)
+        throw ExitCode(status.shellStatus)
     }
 }

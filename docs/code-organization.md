@@ -94,6 +94,12 @@ the meaning, and add a small type only when values are easy to mix up:
 - errno values are `Errno?` (nil on success) or a thrown `Errno`; read
   `Errno.current` right after the failing call. Child-side launch steps return
   `Errno?` or `LaunchFailure?` so each step reports and exits explicitly.
+- Public command APIs return `ExitStatus`, carrying the same shell-style
+  number (exit code, or 128 plus the signal number). Internally this status
+  remains `Int32`; convert only when returning from a public method. The
+  shell convention cannot distinguish an explicit exit code from signal death.
+  Child-side values passed to `_exit` also remain `Int32`, including launch
+  failure status 125.
 - Timeouts are `Duration`; `Duration.pollTimeout` converts at the poll(2) call.
 - PIDs are libc's `pid_t`. It is an alias, but it matches the man pages.
 - Namespaces are `OCIRunPlan.Namespace`; `cloneFlag` converts before fork.

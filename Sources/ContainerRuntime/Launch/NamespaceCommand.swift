@@ -25,17 +25,20 @@ public struct NamespaceCommand: Sendable {
     /// `/proc` and `hostname`, and waits for it. Call this before starting
     /// background work: the launch rejects multithreaded callers.
     ///
-    /// - Returns: The command's shell-style exit status: its exit code
+    /// - Returns: The command's shell-style ``ExitStatus``: its exit code
     ///   (0...255), or 128 plus the signal number when a signal killed it.
+    ///   Signal interpretation is conventional: an explicit exit code can
+    ///   have the same value.
     /// - Throws: `RuntimeError` when the namespaces cannot be set up.
     @available(*, noasync, message: "launch namespaces before starting async work")
-    public func run() throws -> Int32 {
+    public func run() throws -> ExitStatus {
         var argv = try CStringVector(arguments)
-        return try hostname.withCString { hostname in
+        let status = try hostname.withCString { hostname in
             unsafe try argv.withPointers { pointers in
                 unsafe try Self.launch(hostname: hostname, arguments: pointers)
             }
         }
+        return ExitStatus(shellStatus: status)
     }
 }
 

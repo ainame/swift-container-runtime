@@ -57,7 +57,7 @@ struct Exec: ParsableCommand {
     }
 
     mutating func run() throws {
-        let status: Int32
+        let status: ExitStatus
         do {
             status = try globals.lifecycle().exec(
                 id: ContainerID(id), arguments: arguments, environment: env, cwd: cwd, user: user,
@@ -66,6 +66,6 @@ struct Exec: ParsableCommand {
                 ignorePaused: ignorePaused, preserveDescriptors: descriptors.preserveFDs,
                 pidfdSocket: descriptors.pidfdSocket)
         } catch { throw CommandFailure.report(error) }
-        throw ExitCode(status)
+        throw ExitCode(status.shellStatus)
     }
 }
