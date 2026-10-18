@@ -373,21 +373,25 @@ cgroup v2 and Ubuntu 26.04.
 
 How far each exclusion group is justified:
 
-- **cgroup v1 (16):** a scope decision, not an upstream defect. The suites read
-  v1 controller paths and srunc supports only cgroup v2. They were classified
-  from source and have not been run on 26.04; the cgroup v2 integration suites
-  above cover these controllers instead.
+- **cgroup v1 (16):** a scope decision, not an upstream defect. Rerun by name
+  on `srunc-dev`, every one fails under srunc, runc 1.4.0 and runc v1.5.2: the
+  validators read v1 controller files and report "cgroupv2 is not supported
+  yet". In eight of them (`blkio`, `hugetlb`, `memory`, `network`, each plain
+  and relative) srunc stops earlier, rejecting resource fields that runc
+  accepts: block I/O weight/throttling and hugepage limits are
+  [roadmap gaps](roadmap.md); `blockIO.leafWeight`, legacy memory fields and
+  network classes are not targets. The cgroup v2 integration suites above cover
+  the implemented controllers.
 - **Upstream defects (6):** each reason explains why the test is wrong, and all
   six were rerun by name on arm64 against runc 1.4.0-0ubuntu1, upstream runc
   v1.5.2 and srunc; every runtime fails every one. runc v1.5.2 stops
   `hooks_stdin` and `pidfile` earlier on the suite's missing `faccessat2`
-  seccomp rule, so on v1.5.2 the `pidfile` defect itself is masked; runc 1.4.0
-  reproduces it. The rerun was not repeated on x86_64.
+  seccomp rule; with a wrapper that adds only that rule to each bundle, it
+  fails both on the documented defects (prestart sees `creating`, and killing
+  the exited pidfile workload fails). The rerun was not repeated on x86_64.
 - **Host LSM (1–2):** applied only when the policy is missing. AppArmor runs
   and passes in CI. SELinux is unavailable on both hosts, so `linux_mount_label`
   has not run against srunc anywhere.
 
-Open follow-ups, cheapest first: run the cgroup v1 suites on `srunc-dev` to
-confirm they fail only on v1 paths; rerun `pidfile` and `hooks_stdin` against
-runc v1.5.2 with a copied config that adds `faccessat2`; repeat the six-test
-rerun on x86_64; and find an SELinux-enforcing host for `linux_mount_label`.
+Open follow-ups: repeat the upstream-defect rerun on x86_64, and find an
+SELinux-enforcing host for `linux_mount_label`.

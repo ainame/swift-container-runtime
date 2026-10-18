@@ -1,87 +1,87 @@
 {
   "delete_only_create_resources": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable tests removal of cgroup v1 controller directories.",
+    "reason": "This upstream executable tests removal of cgroup v1 controller directories; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/delete_only_create_resources/delete_only_create_resources.go"
   },
   "delete_resources": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable tests removal of cgroup v1 controller directories.",
+    "reason": "This upstream executable tests removal of cgroup v1 controller directories; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/delete_resources/delete_resources.go"
   },
   "hooks_stdin": {
     "category": "upstream",
-    "reason": "Expects prestart state created, while runc sends creating (libcontainer/process_linux.go procHooks); runc 1.4.0 and v1.5.2 fail this test too.",
+    "reason": "Expects prestart state created, while runc sends creating (libcontainer/process_linux.go procHooks); runc 1.4.0 and v1.5.2 fail this test too (v1.5.2 also needs faccessat2 in the suite's seccomp allowlist to get that far).",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/hooks_stdin/hooks_stdin.go"
   },
   "linux_cgroups_blkio": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects linux.resources.blockIO (weight/throttling is a roadmap gap; leafWeight is not a target).",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_blkio/linux_cgroups_blkio.go"
   },
   "linux_cgroups_cpus": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_cpus/linux_cgroups_cpus.go"
   },
   "linux_cgroups_devices": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_devices/linux_cgroups_devices.go"
   },
   "linux_cgroups_hugetlb": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects linux.resources.hugepageLimits, a roadmap gap.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_hugetlb/linux_cgroups_hugetlb.go"
   },
   "linux_cgroups_memory": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects legacy memory fields (disableOOMKiller, kernel, kernelTCP, swappiness), which are not targets.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_memory/linux_cgroups_memory.go"
   },
   "linux_cgroups_network": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects linux.resources.network, a v1-only class that is not a target.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_network/linux_cgroups_network.go"
   },
   "linux_cgroups_pids": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_pids/linux_cgroups_pids.go"
   },
   "linux_cgroups_relative_blkio": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects linux.resources.blockIO (weight/throttling is a roadmap gap; leafWeight is not a target).",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_blkio/linux_cgroups_relative_blkio.go"
   },
   "linux_cgroups_relative_cpus": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_cpus/linux_cgroups_relative_cpus.go"
   },
   "linux_cgroups_relative_devices": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_devices/linux_cgroups_relative_devices.go"
   },
   "linux_cgroups_relative_hugetlb": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects linux.resources.hugepageLimits, a roadmap gap.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_hugetlb/linux_cgroups_relative_hugetlb.go"
   },
   "linux_cgroups_relative_memory": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects legacy memory fields (disableOOMKiller, kernel, kernelTCP, swappiness), which are not targets.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_memory/linux_cgroups_relative_memory.go"
   },
   "linux_cgroups_relative_network": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host. srunc first rejects linux.resources.network, a v1-only class that is not a target.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_network/linux_cgroups_relative_network.go"
   },
   "linux_cgroups_relative_pids": {
     "category": "cgroup-v1",
-    "reason": "This upstream executable probes v1 controller paths; the declared srunc host profile is cgroup v2.",
+    "reason": "This upstream executable probes v1 controller paths and reports cgroup v2 as unsupported; srunc, runc 1.4.0 and v1.5.2 all fail it on a v2 host.",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/linux_cgroups_relative_pids/linux_cgroups_relative_pids.go"
   },
   "linux_devices": {
@@ -97,7 +97,7 @@
   "pidfile": {
     "category": "upstream",
     "issue": "https://github.com/opencontainers/runtime-tools/issues/805",
-    "reason": "PreDelete sends a signal after the true workload exited; signaling a stopped container errors. See upstream issue 805; runc 1.4.0 fails the same way, and v1.5.2 fails earlier because the suite's seccomp allowlist lacks faccessat2.",
+    "reason": "PreDelete sends a signal after the true workload exited; signaling a stopped container errors. See upstream issue 805; runc 1.4.0 and v1.5.2 fail the same way (v1.5.2 only once faccessat2 is added to the suite's seccomp allowlist, which otherwise stops its created init first).",
     "source": "https://github.com/opencontainers/runtime-tools/blob/bd3b0bd00f44e15f0f1ff4130c61dbea1b1c56cc/validation/pidfile/pidfile.go"
   },
   "process_rlimits": {
