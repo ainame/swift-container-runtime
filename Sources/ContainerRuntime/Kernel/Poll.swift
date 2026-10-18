@@ -5,6 +5,9 @@ import Glibc
 #elseif canImport(Darwin)
 import Darwin
 #endif
+#if os(Linux)
+import LinuxAPI
+#endif
 import SystemPackage
 
 /// poll(2) event bits.
@@ -14,11 +17,18 @@ struct PollEvents: OptionSet, Sendable {
     static let input = PollEvents(rawValue: Int16(POLLIN))
     static let hangup = PollEvents(rawValue: Int16(POLLHUP))
     static let error = PollEvents(rawValue: Int16(POLLERR))
+    #if os(Linux)
+    /// The peer shut down its writing side (POLLRDHUP).
+    static let peerHangup = PollEvents(rawValue: Int16(POLLRDHUP))
+    #else
+    static let peerHangup: PollEvents = []
+    #endif
 }
 
 extension OwnedFileDescriptor {
     /// Polls with a monotonic deadline, so interruption cannot restart the full
-    /// timeout. Empty on timeout or for an invalid or unusable descriptor.
+    /// timeout. Empty on timeout; `.error` when poll fails or the descriptor
+    /// is invalid or unusable.
     func poll(_ events: PollEvents, timeout: Duration) -> PollEvents {
         let clock = ContinuousClock()
         let deadline = clock.now + timeout
@@ -28,11 +38,12 @@ extension OwnedFileDescriptor {
             while true {
                 var target = pollfd(fd: descriptor.rawValue, events: events.rawValue, revents: 0)
                 let result = unsafe pollOne(&target, clock.now.duration(to: deadline).pollTimeout)
-                if result > 0 { return target.revents & Int16(POLLNVAL) == 0 ? PollEvents(rawValue: target.revents) : [] }
-                if result == 0 || errno != EINTR { return [] }
+                if result > 0 { return target.revents & Int16(POLLNVAL) == 0 ? PollEvents(rawValue: target.revents) : .error }
+                if result == 0 { return [] }
+                if errno != EINTR { return .error }
                 guard clock.now < deadline else { return [] }
             }
-        }) ?? []
+        }) ?? .error
     }
 }
 

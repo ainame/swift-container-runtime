@@ -21,6 +21,7 @@ struct FileStatus: Equatable, Sendable {
     /// The device number of a device node (`st_rdev`).
     let deviceNumber: UInt64
     let owner: UInt32
+    let linkCount: UInt64
 
     fileprivate init(_ status: stat) {
         identity = FileIdentity(
@@ -28,6 +29,7 @@ struct FileStatus: Equatable, Sendable {
         mode = UInt32(truncatingIfNeeded: status.st_mode)
         deviceNumber = UInt64(truncatingIfNeeded: status.st_rdev)
         owner = UInt32(truncatingIfNeeded: status.st_uid)
+        linkCount = UInt64(truncatingIfNeeded: status.st_nlink)
     }
 }
 

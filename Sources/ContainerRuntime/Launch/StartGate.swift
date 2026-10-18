@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 
 /// The start handshake between `start` and a created init.
@@ -53,25 +47,26 @@ final class StartGate {
     private(set) var marker: OwnedFileDescriptor
 
     init(_ container: LockedContainer) throws {
-        let socketRaw = linux_unix_seqpacket_socket()
-        guard socketRaw >= 0 else { throw RuntimeError.launch(.startSocket) }
-        let listener = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: socketRaw))
+        let listener: OwnedFileDescriptor
+        do { listener = try Kernel.Socket.unixSequencedPacket() } catch { throw RuntimeError.launch(.startSocket, error) }
         // sun_path is short; address the socket through the directory handle
         // so long --root paths and IDs work. The new socket file and the
         // handle on it are made under the container lock, in the private
         // directory, so both name the same inode.
-        let bound = try container.directory.descriptor.withDescriptor { directoryDescriptor in
-            try listener.withDescriptor { socket in
-                StartProtocol.addressCall(socket, path: "/proc/self/fd/\(directoryDescriptor.rawValue)/\(StateFile.startSocket)", connecting: false)
-            }
+        let marker: OwnedFileDescriptor
+        do {
+            let directory = try container.directory.descriptor.withDescriptor { $0.rawValue }
+            let path = StartProtocol.sunPath("/proc/self/fd/\(directory)/\(StateFile.startSocket)")
+            try listener.withDescriptor { try Kernel.Socket.bind($0, sunPath: path) }
+            marker = try Kernel.File.openPath(StateFile.startSocket, in: container.directory.descriptor, noFollow: true)
+        } catch {
+            throw RuntimeError.launch(.startSocket, (error as? Errno) ?? .badFileDescriptor)
         }
-        guard bound == 0 else { throw RuntimeError.launch(.startSocket) }
-        let markerRaw = try container.directory.descriptor.withDescriptor {
-            unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
+        do {
+            try listener.withDescriptor { try Kernel.Socket.listen($0, backlog: 16) }
+        } catch {
+            throw RuntimeError.launch(.startSocket, (error as? Errno) ?? .badFileDescriptor)
         }
-        guard markerRaw >= 0 else { throw RuntimeError.launch(.startSocket) }
-        let marker = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: markerRaw))
-        guard try listener.withDescriptor({ listen($0.rawValue, 16) }) == 0 else { throw RuntimeError.launch(.startSocket) }
         self.listener = listener
         self.marker = marker
     }
@@ -86,16 +81,18 @@ final class StartGate {
     ) -> Int32 {
         while true {
             // Steps 1-2: a live client's request, acknowledged.
-            let raw = (try? listener.withDescriptor { linux_accept_cloexec($0.rawValue) }) ?? -1
-            guard raw >= 0 else {
+            let connection: OwnedFileDescriptor
+            do {
+                connection = try Kernel.Socket.accept(listener)
+            } catch .interrupted, .connectionAbort {
+                continue
+            } catch {
                 // Anything else ends the init at once; its exit closes the
                 // queued connection, so start fails promptly. A configured
                 // RLIMIT_NOFILE with no free descriptor fails create instead
                 // (acceptCapacityError).
-                if errno == EINTR || errno == ECONNABORTED { continue }
                 return 125
             }
-            let connection = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
             guard receiveRequest(connection), peerIsConnected(connection) else { continue }
             guard LaunchRecord(.accepted).write(to: connection, socket: true) else { continue }
 
@@ -105,10 +102,13 @@ final class StartGate {
             // here could race with that unlink and leave a running status
             // with nothing executed.
             let committed = StartProtocol.receivePacket(connection) == StartProtocol.commit
-            var status = stat()
-            let inspected = (try? marker.withDescriptor { unsafe fstat($0.rawValue, &status) }) ?? -1
-            guard inspected == 0 else { return LaunchRecord.reportFailure(to: connection, at: .startSocket, socket: true) }
-            if status.st_nlink > 0 {
+            let status: FileStatus
+            do {
+                status = try marker.withDescriptor { try Kernel.File.status(of: $0) }
+            } catch {
+                return LaunchRecord.reportFailure(to: connection, at: .startSocket, error: (error as? Errno) ?? .badFileDescriptor, socket: true)
+            }
+            if status.linkCount > 0 {
                 // Not consumed: still created. A commit without the unlink
                 // is a protocol error reported to that client.
                 if committed { _ = LaunchRecord.reportFailure(to: connection, at: .startSocket, error: .protocolError, socket: true) }
@@ -122,8 +122,8 @@ final class StartGate {
             // close-on-exec lifetime reports the outcome.
             try? marker.close()
             try? listener.close()
-            _ = unsafe execve(file, arguments, environment)
-            return LaunchRecord.reportFailure(to: connection, at: .execute, socket: true)
+            let error = unsafe Kernel.Process.execute(file, arguments: arguments, environment: environment)
+            return LaunchRecord.reportFailure(to: connection, at: .execute, error: error, socket: true)
         }
     }
 
@@ -136,10 +136,13 @@ final class StartGate {
     /// init opens no other descriptor before serving, and serve releases each
     /// connection before its next accept. Returns nil or the error.
     func acceptCapacityError() -> Errno? {
-        guard let raw = try? listener.withDescriptor({ dup($0.rawValue) }) else { return .badFileDescriptor }
-        guard raw >= 0 else { return .current }
-        _ = close(raw)
-        return nil
+        do {
+            let duplicate = try listener.withDescriptor { try $0.duplicate() }
+            try? duplicate.close()
+            return nil
+        } catch {
+            return (error as? Errno) ?? .badFileDescriptor
+        }
     }
 
     private func receiveRequest(_ connection: borrowing OwnedFileDescriptor) -> Bool {
@@ -150,46 +153,20 @@ final class StartGate {
     /// False once the client has hung up, so a start whose caller died
     /// before this point leaves the container created.
     private func peerIsConnected(_ connection: borrowing OwnedFileDescriptor) -> Bool {
-        let revents = (try? connection.withDescriptor { descriptor -> Int16 in
-            var peer = pollfd(fd: descriptor.rawValue, events: Int16(POLLRDHUP), revents: 0)
-            var result: Int32
-            repeat { result = unsafe poll(&peer, 1, 0) } while result < 0 && errno == EINTR
-            return result < 0 ? Int16(POLLERR) : peer.revents
-        }) ?? Int16(POLLERR)
-        return revents & Int16(POLLRDHUP | POLLHUP | POLLERR) == 0
+        connection.poll(.peerHangup, timeout: .zero).isDisjoint(with: [.peerHangup, .hangup, .error])
     }
 }
 
 extension StartProtocol {
-    /// Binds or connects `socket` to a filesystem path shorter than `sun_path`.
-    fileprivate static func addressCall(_ socket: FileDescriptor, path: String, connecting: Bool) -> Int32 {
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
-            errno = ENAMETOOLONG
-            return -1
-        }
-        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
-            for (index, byte) in bytes.enumerated() { unsafe buffer[index] = byte }
-        }
-        let length = socklen_t(MemoryLayout<sockaddr_un>.size)
-        return withUnsafePointer(to: &address) { pointer in
-            unsafe pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
-                unsafe connecting ? connect(socket.rawValue, generic, length) : bind(socket.rawValue, generic, length)
-            }
-        }
+    /// The `sun_path` bytes of a filesystem socket path, NUL-terminated.
+    fileprivate static func sunPath(_ path: String) -> [UInt8] {
+        Array(path.utf8) + [0]
     }
 
     /// Sends one whole packet without raising SIGPIPE on a vanished peer.
     fileprivate static func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) -> Bool {
         (try? owner.withDescriptor { descriptor in
-            packet.withUnsafeBytes { bytes in
-                var result: Int
-                repeat { result = unsafe send(descriptor.rawValue, bytes.baseAddress!, bytes.count, Int32(MSG_NOSIGNAL)) }
-                while result < 0 && errno == EINTR
-                return result == bytes.count
-            }
+            try packet.withUnsafeBytes { bytes in unsafe try Kernel.Socket.send(descriptor, bytes) == bytes.count }
         }) ?? false
     }
 
@@ -213,23 +190,19 @@ extension StartProtocol {
         // Step 1: open the socket file itself without following a symlink, then
         // connect through that handle with a separate, close-on-exec connection
         // whose lifetime in the init reports the exec result.
-        let socketFileRaw = try container.directory.descriptor.withDescriptor {
-            unsafe linux_open_path($0.rawValue, StateFile.startSocket, O_NOFOLLOW)
+        let socketFile: OwnedFileDescriptor
+        do {
+            socketFile = try Kernel.File.openPath(StateFile.startSocket, in: container.directory.descriptor, noFollow: true)
+        } catch {
+            throw RuntimeError("container \(id) init is not waiting for start: \(error)")
         }
-        guard socketFileRaw >= 0 else {
-            throw RuntimeError("container \(id) init is not waiting for start: \(Errno.current)")
-        }
-        let socketFile = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: socketFileRaw))
-        let connectionRaw = linux_unix_seqpacket_socket()
-        guard connectionRaw >= 0 else { throw RuntimeError.launch(.startRequest) }
-        let connection = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: connectionRaw))
-        let connected = try socketFile.withDescriptor { file in
-            try connection.withDescriptor { socket in
-                StartProtocol.addressCall(socket, path: "/proc/self/fd/\(file.rawValue)", connecting: true)
-            }
-        }
-        guard connected == 0 else {
-            throw RuntimeError("connect to container \(id) init: \(Errno.current)")
+        let connection: OwnedFileDescriptor
+        do { connection = try Kernel.Socket.unixSequencedPacket() } catch { throw RuntimeError.launch(.startRequest, error) }
+        do {
+            let file = try socketFile.withDescriptor { $0.rawValue }
+            try connection.withDescriptor { try Kernel.Socket.connect($0, sunPath: sunPath("/proc/self/fd/\(file)")) }
+        } catch {
+            throw RuntimeError("connect to container \(id) init: \(error)")
         }
         guard StartProtocol.sendPacket(connection, StartProtocol.request) else {
             throw RuntimeError("send start request to container \(id): \(Errno.current)")
@@ -248,8 +221,11 @@ extension StartProtocol {
         guard let current, let connectedIdentity = socketFile.identity(), connectedIdentity == current.identity else {
             throw RuntimeError("container \(id) start socket changed during start")
         }
-        let unlinked = try container.directory.descriptor.withDescriptor { unsafe unlinkat($0.rawValue, StateFile.startSocket, 0) }
-        guard unlinked == 0 else { throw RuntimeError.launch(.startSocket) }
+        do {
+            try container.directory.descriptor.withDescriptor { try Kernel.File.remove(StateFile.startSocket, in: $0) }
+        } catch {
+            throw RuntimeError.launch(.startSocket, (error as? Errno) ?? .badFileDescriptor)
+        }
         guard StartProtocol.sendPacket(connection, StartProtocol.commit) else {
             throw RuntimeError("container \(id) init vanished before the start commit: \(Errno.current)")
         }

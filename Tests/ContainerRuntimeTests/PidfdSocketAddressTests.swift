@@ -5,10 +5,10 @@ import Testing
     let longest = String(repeating: "a", count: 107)
     let address = try PidfdSocketAddress(longest)
     #expect(!address.isAbstract)
-    #expect(address.sunPath == Array(longest.utf8))
+    #expect(address.sunPath == Array(longest.utf8) + [0])
     // The terminating NUL is part of the address length.
-    #expect(address.sunPathLength == 108)
-    #expect(try PidfdSocketAddress("relative/pidfd.sock").sunPathLength == 20)
+    #expect(address.sunPath.count == 108)
+    #expect(try PidfdSocketAddress("relative/pidfd.sock").sunPath.count == 20)
     #expect(try PidfdSocketAddress("/run/pidfd.sock").path == "/run/pidfd.sock")
 }
 
@@ -16,9 +16,9 @@ import Testing
     let address = try PidfdSocketAddress("@runtime-pidfd")
     #expect(address.isAbstract)
     #expect(address.sunPath == [0] + Array("runtime-pidfd".utf8))
-    #expect(address.sunPathLength == 14)
+    #expect(address.sunPath.count == 14)
     let longest = try PidfdSocketAddress("@" + String(repeating: "b", count: 107))
-    #expect(longest.sunPathLength == 108)
+    #expect(longest.sunPath.count == 108)
 }
 
 @Test func classifiesRelativePaths() throws {

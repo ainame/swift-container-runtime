@@ -1,10 +1,4 @@
 #if os(Linux)
-#if canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
-import LinuxAPI
 import SystemPackage
 #endif
 
@@ -36,16 +30,14 @@ public struct PidfdSocketAddress: Sendable, Equatable {
     /// A filesystem path that does not start with `/`.
     public var isRelative: Bool { !isAbstract && path.utf8.first != UInt8(ascii: "/") }
 
-    /// The `sun_path` bytes: an abstract name's `@` becomes its leading NUL.
+    /// The exact `sun_path` bytes passed to connect: a filesystem path with
+    /// its terminating NUL, or an abstract name whose `@` becomes the leading
+    /// NUL and which counts exactly its bytes (as in runc).
     var sunPath: [UInt8] {
         var bytes = Array(path.utf8)
-        if isAbstract { bytes[0] = 0 }
+        if isAbstract { bytes[0] = 0 } else { bytes.append(0) }
         return bytes
     }
-
-    /// The `sun_path` length passed to connect: a filesystem path counts its
-    /// terminating NUL, an abstract name counts exactly its bytes (as in runc).
-    var sunPathLength: Int { path.utf8.count + (isAbstract ? 0 : 1) }
 }
 
 /// The label sent with the pidfd, naming runc's init type: `standard` for a
@@ -86,21 +78,23 @@ final class PidfdSocket {
     /// short `/proc/self/fd/N` name, so the 107-byte limit applies to `path`
     /// alone, as in runc, and never to `base`.
     init(connectingTo address: PidfdSocketAddress, relativeTo base: String?) throws {
-        let raw = linux_unix_stream_socket()
-        guard raw >= 0 else { throw RuntimeError("create --pidfd-socket connection: \(Errno.current)") }
-        let connection = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+        let connection: OwnedFileDescriptor
+        do { connection = try Kernel.Socket.unixStream() } catch { throw RuntimeError("create --pidfd-socket connection: \(error)") }
         var target = address
         var pinned = OwnedFileDescriptor()
         if let base, address.isRelative {
             let resolved = base.hasSuffix("/") ? base + address.path : base + "/" + address.path
-            let handle = resolved.withCString { unsafe linux_open_path(AT_FDCWD, $0, 0) }
-            guard handle >= 0 else {
-                throw RuntimeError("connect to --pidfd-socket \(address.path) in \(base): \(Errno.current)")
+            do {
+                pinned = try Kernel.File.openPath(resolved, noFollow: false)
+            } catch {
+                throw RuntimeError("connect to --pidfd-socket \(address.path) in \(base): \(error)")
             }
-            pinned = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: handle))
+            let handle = try pinned.withDescriptor { $0.rawValue }
             target = try PidfdSocketAddress("/proc/self/fd/\(handle)")
         }
-        let error = connection.failure(in: { Self.connect($0, to: target) })
+        let error = connection.failure(in: { socket in
+            Errno.failure { () throws(Errno) in try Kernel.Socket.connect(socket, sunPath: target.sunPath) }
+        })
         try? pinned.close()
         if let error { throw RuntimeError("connect to --pidfd-socket \(address.path): \(error)") }
         self.connection = connection
@@ -119,13 +113,22 @@ final class PidfdSocket {
     /// closes the pidfd and the connection on every path. Returns nil or the failure.
     func handOff(label: PidfdLabel) -> LaunchFailure? {
         defer { try? connection.close() }
-        let raw = linux_pidfd_open(getpid())
-        guard raw >= 0 else { return LaunchFailure(stage: .pidfdOpen, error: .current) }
-        let pidfd = OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
-        let error = connection.failure(in: { socket in
-            pidfd.failure(in: { Self.send($0, over: socket, label: Array(label.rawValue.utf8)) })
-        })
-        return error.map { LaunchFailure(stage: .pidfdSend, error: $0) }
+        let sendError: Errno?
+        do {
+            // Initialized in place: a deferred initialization of this owner
+            // trips a Swift 6.4.1 noncopyable-copy diagnostic.
+            let pidfd = try Kernel.Pidfd.open(Kernel.Process.id)
+            sendError = connection.failure(in: { socket in
+                pidfd.failure(in: { descriptor in
+                    Errno.failure { () throws(Errno) in
+                        try Kernel.Socket.sendDescriptor(descriptor, over: socket, payload: Array(label.rawValue.utf8))
+                    }
+                })
+            })
+        } catch {
+            return LaunchFailure(stage: .pidfdOpen, error: error)
+        }
+        return sendError.map { LaunchFailure(stage: .pidfdSend, error: $0) }
     }
 
     var isClosed: Bool { (try? connection.withDescriptor { _ in }) == nil }
@@ -135,64 +138,4 @@ final class PidfdSocket {
     }
 }
 
-private extension PidfdSocket {
-    /// Connects a blocking stream socket to `address`. Returns nil or the error.
-    static func connect(_ socket: FileDescriptor, to address: PidfdSocketAddress) -> Errno? {
-        var storage = sockaddr_un()
-        storage.sun_family = sa_family_t(AF_UNIX)
-        let path = address.sunPath
-        withUnsafeMutableBytes(of: &storage.sun_path) { buffer in
-            for (index, byte) in path.enumerated() { unsafe buffer[index] = byte }
-        }
-        // sun_path directly follows the two-byte sun_family.
-        let length = socklen_t(MemoryLayout<sa_family_t>.size + address.sunPathLength)
-        let result = withUnsafePointer(to: &storage) { pointer in
-            unsafe pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { generic in
-                unsafe LinuxAPI.connect(socket.rawValue, generic, length)
-            }
-        }
-        return result == 0 ? nil : .current
-    }
-
-    /// Sends `label` and one SCM_RIGHTS descriptor in a single message, as runc's
-    /// `cmsg.SendRawFd`: no length prefix or encoding, the label bytes are the
-    /// whole payload. MSG_NOSIGNAL turns a vanished listener into EPIPE instead
-    /// of SIGPIPE, and EINTR retries. A short send (not expected for a few bytes
-    /// on a stream) is EIO. Returns nil or the error.
-    static func send(_ descriptor: FileDescriptor, over socket: FileDescriptor, label: [UInt8]) -> Errno? {
-        let payloadSize = MemoryLayout<Int32>.size
-        let space = linux_cmsg_space(payloadSize)
-        // CMSG_LEN(0) is the aligned header size, where CMSG_DATA begins.
-        let dataOffset = linux_cmsg_len(0)
-        guard dataOffset + payloadSize <= space else { return .invalidArgument }
-        var header = cmsghdr()
-        header.cmsg_len = numericCast(linux_cmsg_len(payloadSize))
-        header.cmsg_level = Int32(SOL_SOCKET)
-        header.cmsg_type = Int32(SCM_RIGHTS)
-        var payload = label
-        return payload.withUnsafeMutableBytes { bytes in
-            // Raw control bytes with cmsghdr's alignment, zeroed so padding is
-            // defined. The header value and the descriptor are copied in as plain
-            // bytes at disjoint offsets; the memory is never bound to cmsghdr.
-            withUnsafeTemporaryAllocation(byteCount: space, alignment: MemoryLayout<cmsghdr>.alignment) { control in
-                unsafe control.initializeMemory(as: UInt8.self, repeating: 0)
-                unsafe control.storeBytes(of: header, toByteOffset: 0, as: cmsghdr.self)
-                unsafe control.storeBytes(of: descriptor.rawValue, toByteOffset: dataOffset, as: Int32.self)
-                var vector = unsafe iovec(iov_base: bytes.baseAddress, iov_len: bytes.count)
-                return withUnsafeMutablePointer(to: &vector) { vectorPointer in
-                    var message = unsafe msghdr()
-                    unsafe message.msg_iov = vectorPointer
-                    unsafe message.msg_iovlen = 1
-                    unsafe message.msg_control = control.baseAddress
-                    unsafe message.msg_controllen = numericCast(space)
-                    var sent: Int
-                    repeat { sent = unsafe sendmsg(socket.rawValue, &message, Int32(MSG_NOSIGNAL)) }
-                    while sent < 0 && errno == EINTR
-                    guard sent >= 0 else { return .current }
-                    return sent == bytes.count ? nil : .ioError
-                }
-            }
-        }
-    }
-}
 #endif

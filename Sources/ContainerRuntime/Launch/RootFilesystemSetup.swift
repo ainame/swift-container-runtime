@@ -202,7 +202,7 @@ struct RootFilesystemSetup {
         defer { _ = umask(previousMask) }
         for device in unsafe standardDevices {
             let mode = mode_t(LinuxAPI.S_IFCHR) | 0o666
-            guard unsafe mknodat(dev.rawValue, device.name, mode, LinuxDevice.number(device.major, device.minor)) == 0 || errno == EEXIST else {
+            guard unsafe mknodat(dev.rawValue, device.name, mode, dev_t(LinuxDevice.number(device.major, device.minor))) == 0 || errno == EEXIST else {
                 return .current
             }
         }

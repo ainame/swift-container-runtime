@@ -98,7 +98,7 @@ extension PathControls {
         guard let devNullStatus = Self.fileStatus(devNull) else {
             return LaunchFailure(stage: .openDevNull, error: .current)
         }
-        guard Self.isType(devNullStatus, LinuxAPI.S_IFCHR), devNullStatus.st_rdev == LinuxDevice.number(1, 3) else {
+        guard Self.isType(devNullStatus, LinuxAPI.S_IFCHR), UInt64(devNullStatus.st_rdev) == LinuxDevice.number(1, 3) else {
             return LaunchFailure(stage: .openDevNull, error: Errno(rawValue: ENODEV))
         }
 

@@ -82,8 +82,13 @@ From the 29 importing files:
    `Kernel.Math` wraps libm. `StateStore`, `PIDFile`, `BundleConfiguration`,
    `DefaultSpecification`, `Cgroup` and `CgroupPlan` no longer import libc.
 3. **Done.** Events: `Kernel.Notify` (open, watch, drain) with `NotifyEvents`; `EventWatch` waits through `OwnedFileDescriptor.poll`.
-4. Lifecycle and supervision: `ContainerLifecycle`, `ContainerObservation`,
-   `ProcessTable` (`posix_spawnp`), `StartGate`, `PidfdSocket`.
+4. **Done.** Lifecycle and supervision: `Kernel.Socket` (Unix sockets,
+   exact `sun_path` addresses, MSG_NOSIGNAL sends, SCM_RIGHTS),
+   `Kernel.Process` (spawn, wait, signal, exec, monotonic time) and
+   `Kernel.Signal`; `poll` reports `.error` on failure. `ContainerLifecycle`,
+   `ContainerObservation`, `ProcessTable`, `StartGate`, `PidfdSocket`,
+   `PreservedDescriptors`, `OCIRunPlan`, `LinuxDevice` and
+   `LinuxRuntimeError` no longer import libc.
 5. Launch, last and most careful: `NamespaceLauncher`, `RootFilesystemSetup`,
    `WorkloadSetup`, `PathControls`, `ExecLaunch`, `OCILaunch`. Keep runc's
    step order visible; wrappers replace calls one for one.

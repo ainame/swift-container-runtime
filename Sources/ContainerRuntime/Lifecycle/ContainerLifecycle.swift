@@ -1,10 +1,3 @@
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
 import SystemPackage
 
 /// Persistent OCI lifecycle commands over one state root, following runc.
@@ -288,7 +281,7 @@ public struct ContainerLifecycle: Sendable {
               try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace, { try $0.signal(signal) }) == true else {
             throw LifecycleError.invalidTransition(id: id, operation: "kill", status: .stopped)
         }
-        if signal == SIGKILL, let identity = record.cgroup {
+        if signal == Kernel.Signal.kill, let identity = record.cgroup {
             try? CgroupLeaf.setFrozen(identity, frozen: false)
         }
         #else
@@ -388,7 +381,7 @@ extension ContainerLifecycle {
     private static func killInit(_ record: ContainerRecord?) throws -> Bool {
         guard let record, let process = record.initProcess else { return true }
         let gone = try ProcessHandle.withVerified(process, separatePIDNamespace: record.pidNamespace) { handle in
-            _ = try handle.signal(SIGKILL)
+            _ = try handle.signal(Kernel.Signal.kill)
             // runc thaws a paused container after SIGKILL. Identity checks
             // keep this best-effort thaw away from a replacement cgroup.
             if let identity = record.cgroup { try? CgroupLeaf.setFrozen(identity, frozen: false) }

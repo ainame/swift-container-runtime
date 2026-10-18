@@ -1,10 +1,3 @@
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Musl)
-import Musl
-#else
-import Glibc
-#endif
 
 /// Caller descriptors 3..<3+count that reach the workload at the same
 /// numbers, as runc's `--preserve-fds`. The runtime never wraps, closes,
@@ -54,7 +47,7 @@ public struct PreservedDescriptors: Sendable, Equatable {
             guard let value = flags(descriptor) else {
                 throw RuntimeError("unable to stat preserved-fd \(offset) (of \(count)): descriptor \(descriptor) is not open")
             }
-            guard value & FD_CLOEXEC == 0 else {
+            guard value & Kernel.File.closeOnExecFlag == 0 else {
                 throw RuntimeError("preserved-fd \(offset) (of \(count)): descriptor \(descriptor) is close-on-exec; preserved descriptors must be inheritable")
             }
             offset += 1
@@ -62,7 +55,6 @@ public struct PreservedDescriptors: Sendable, Equatable {
     }
 
     public static func descriptorFlags(_ descriptor: Int32) -> Int32? {
-        let value = fcntl(descriptor, F_GETFD)
-        return value < 0 ? nil : value
+        Kernel.File.descriptorFlags(descriptor)
     }
 }

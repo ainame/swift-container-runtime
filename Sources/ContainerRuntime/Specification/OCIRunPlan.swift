@@ -1,10 +1,3 @@
-#if canImport(Musl)
-import Musl
-#elseif canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
 import SystemPackage
 
 /// A container ID with runc's accepted character set. Lifecycle commands use
@@ -207,9 +200,8 @@ public struct OCIRunPlan: Sendable {
         #if os(Linux)
         // A transient ID from this process and a monotonic timestamp, so a
         // leftover group of an earlier run with a reused PID is not adopted.
-        var now = timespec()
-        _ = unsafe clock_gettime(CLOCK_MONOTONIC, &now)
-        let id = try ContainerID("transient-\(getpid())-\(now.tv_sec)-\(now.tv_nsec)")
+        let now = Kernel.Process.monotonicTime()
+        let id = try ContainerID("transient-\(Kernel.Process.id)-\(now.seconds)-\(now.nanoseconds)")
         let leaf = try CgroupLeaf.prepare(cgroup, id: id)
 
         // The init has exited (or never started) when runOnLinux returns, so

@@ -13,18 +13,9 @@ private let pendingMigration: Set<String> = [
     "Launch/NamespaceCommand.swift",
     "Launch/NamespaceLauncher.swift",
     "Launch/OCILaunch.swift",
-    "Launch/PidfdSocket.swift",
-    "Launch/PreservedDescriptors.swift",
     "Launch/RootFilesystemSetup.swift",
-    "Launch/StartGate.swift",
     "Launch/WorkloadSetup.swift",
-    "Lifecycle/ContainerLifecycle.swift",
-    "Lifecycle/ContainerObservation.swift",
-    "Lifecycle/ProcessTable.swift",
-    "Specification/OCIRunPlan.swift",
     "Specification/PathControls.swift",
-    "System/LinuxDevice.swift",
-    "System/LinuxRuntimeError.swift",
 ]
 
 /// Only `Kernel/` may import libc or `LinuxAPI`; the rest of the runtime uses

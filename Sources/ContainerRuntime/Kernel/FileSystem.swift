@@ -37,6 +37,33 @@ extension Kernel.File {
         return OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
     }
 
+    /// A close-on-exec O_PATH handle (Linux): it names the file without
+    /// opening it for I/O. `noFollow` keeps a final symbolic link itself.
+    static func openPath(_ path: String, in directory: borrowing OwnedFileDescriptor, noFollow: Bool) throws(Errno) -> OwnedFileDescriptor {
+        let raw: Int32
+        do {
+            raw = try directory.withDescriptor { try openPathRaw(path, in: $0.rawValue, noFollow: noFollow) }
+        } catch {
+            throw (error as? Errno) ?? .badFileDescriptor
+        }
+        return OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: raw))
+    }
+
+    /// `openPath` relative to the current directory.
+    static func openPath(_ path: String, noFollow: Bool) throws(Errno) -> OwnedFileDescriptor {
+        OwnedFileDescriptor(takingOwnershipOf: FileDescriptor(rawValue: try openPathRaw(path, in: AT_FDCWD, noFollow: noFollow)))
+    }
+
+    private static func openPathRaw(_ path: String, in directory: Int32, noFollow: Bool) throws(Errno) -> Int32 {
+        #if os(Linux)
+        let raw = unsafe linux_open_path(directory, path, noFollow ? O_NOFOLLOW : 0)
+        guard raw >= 0 else { throw .current }
+        return raw
+        #else
+        throw .noFunction
+        #endif
+    }
+
     private static func openRaw(
         _ path: String, in directory: Int32, _ access: FileDescriptor.AccessMode,
         _ options: FileDescriptor.OpenOptions, _ permissions: FilePermissions
@@ -91,6 +118,15 @@ extension Kernel.File {
         #endif
     }
 
+    /// fcntl(F_GETFD): the descriptor flags, or nil when it is not open.
+    static func descriptorFlags(_ descriptor: Int32) -> Int32? {
+        let value = libcGetDescriptorFlags(descriptor)
+        return value < 0 ? nil : value
+    }
+
+    /// FD_CLOEXEC in `descriptorFlags`.
+    static let closeOnExecFlag = FD_CLOEXEC
+
     enum LockMode {
         case shared, exclusive
     }
@@ -105,3 +141,6 @@ extension Kernel.File {
         _ = flock(descriptor.rawValue, LOCK_UN)
     }
 }
+
+/// fcntl is variadic in C; the libc overlay's fixed form is reached here.
+private func libcGetDescriptorFlags(_ descriptor: Int32) -> Int32 { fcntl(descriptor, F_GETFD) }

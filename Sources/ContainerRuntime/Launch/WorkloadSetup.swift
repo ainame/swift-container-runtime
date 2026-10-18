@@ -195,7 +195,7 @@ struct WorkloadSetup {
                 return .current
             }
             let isDevNull = status.st_mode & mode_t(LinuxAPI.S_IFMT) == mode_t(LinuxAPI.S_IFCHR)
-                && status.st_rdev == LinuxDevice.number(1, 3)
+                && UInt64(status.st_rdev) == LinuxDevice.number(1, 3)
             if status.st_uid == uid || isDevNull { continue }
             guard fchown(descriptor, uid, gid_t.max) == 0 || errno == EPERM || errno == EROFS else { return .current }
         }
