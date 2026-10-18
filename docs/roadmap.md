@@ -157,7 +157,9 @@ logging/error extraction, shared-PID SIGKILL cleanup, filesystem mounts, enforce
 device rules, and file/directory bind mounts. The cgroupfs directory-rootfs
 scenario passes pipes/EOF and lifecycle cleanup; a pinned Alpine image now also
 passes native-snapshotter run/exec with readonly configuration and writable
-volume binds, PID files, exit status and snapshot/state/cgroup cleanup.
-This is still a constrained profile, not ordinary Docker support or closure of
-the broader milestone gates. Next: supplied namespace joins, then the remaining
-security and console gates. Never discard requested security fields to advance it.
+volume binds, PID files, exit status and snapshot/state/cgroup cleanup. A supplied
+network namespace now also passes namespace identity and private loopback TCP
+through the same image/shim path. This is still a constrained profile, not ordinary
+Docker support or closure of the broader milestone gates. Next: a supported
+seccomp profile, followed by the remaining requested security and console gates.
+Never discard requested security fields to advance it.

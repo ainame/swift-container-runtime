@@ -1,0 +1,16 @@
+Client:
+  Version:  2.2.2
+  Revision:
+  Go version: go1.24.13
+
+Server:
+  Version:  2.2.2
+  Revision:
+  UUID: 5f44dc5b-f9d5-45f2-bf23-87a753be1815
+image: docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+network namespace inode: 4026532401
+network TCP reply: joined-network
+3.23.6
+time="2026-10-18T16:07:37Z" level=warning msg="task sct-image-8682 exit with non-zero exit code 137"
+containerd-image: PASS (native snapshot, readonly config, writable volume, init/exec, PID files, exit status and cleanup)
+containerd-network: PASS (supplied namespace identity, private TCP, image exec, caller isolation and cleanup)

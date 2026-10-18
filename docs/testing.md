@@ -42,6 +42,7 @@ suite because a shared file was touched:
 | --- | --- |
 | Launch/start/exit, process identity or cleanup | `oci lifecycle`; add `kill` for signal/cgroup-subtree cleanup; add suites for changed setup or descriptor invariants. |
 | Mount/rootfs/path controls | `oci readonly path-controls`; add `filesystems` for sysfs/mqueue/shm and `bind` for bind sources/targets/flags; add `lifecycle` for readiness/cleanup changes. |
+| Supplied network namespace | `network-namespace oci lifecycle preserve-fds`. |
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
 | Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`, `devices`), plus `update`; add `freezer ps events` if membership/reporting changes. |
@@ -197,3 +198,20 @@ It checks image-backed readonly config and writable volume mounts, init/exec,
 PID publication, nonzero exit, reaping and native-snapshot cleanup. Set
 `ENGINE_CAPTURE_DIRECTORY` only when intentionally capturing the real create
 JSON; inspect image-provided environment values before sharing that artifact.
+
+`scripts/network-namespace-integration.sh` compares absolute proc and nsfs network
+paths with runc using a private loopback listener. It checks create-time namespace
+identity, init/exec TCP, exec after the source path disappears, descriptor closure,
+caller isolation, and cleanup. Missing, ordinary-file, FIFO, wrong-type and
+privilege-denied paths must fail without running the workload or leaking state.
+It uses the existing static clang fixture and util-linux `unshare`/`setpriv`.
+
+The opt-in image/network gate wraps the same image test with an externally
+prepared private namespace and checks actual TCP from engine exec:
+
+```sh
+sh scripts/containerd-network-integration.sh .build/linux-6.4.1/debug/swift-container-runtime /tmp/sct-engine/containerd.sock sct-image-baseline docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+The wrapper owns and removes the listener; the image gate owns task/snapshot
+cleanup. This tests supplied namespace consumption, not bridge/NAT/DNS provisioning.

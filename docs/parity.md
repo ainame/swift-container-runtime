@@ -50,7 +50,7 @@ Evidence: target `Main.kt`, `command/*.kt`, `state/State.kt`, and `config/Kontai
 | Area | Remaining target behavior |
 | --- | --- |
 | Process setup | HOME resolution; empty/omitted-process behavior; OOM score; scheduling, I/O priority, exec CPU affinity, NUMA memory policy |
-| Namespaces | Join supplied namespace paths; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
+| Namespaces | Join supplied paths for types other than network; host/shared combinations; user, cgroup, time namespaces; UID/GID mapping handshake and mapping-helper fallback; time offsets |
 | Rootfs and mounts | No-pivot; cgroup mounts; explicit remount and broader propagation; dangling target symlinks and protected-proc bind handling; recursive attributes; idmapped mounts; custom character/block/FIFO devices with ownership/mode; sysctl |
 | UTS and networking | Domainname; loopback setup; moving and renaming host interfaces. Hostname and new, unconfigured network namespaces already exist |
 | Cgroup v2 | Only a subset is implemented: `linux.cgroupsPath`, memory `limit`/`reservation`/`swap`/`checkBeforeUpdate`, pids `limit`, CPU `shares`/`quota`/`period`/`burst`/`idle`/`cpus`/`mems`, adoption of one supplied path by at most one concurrent container, and cleanup at delete and on failure (see [runtime reference](runtime-reference.md)). Remaining implemented-target gaps: hugepages, unified controls, block-I/O weight/throttles, device-rule updates, update support for the other remaining controls, and sub-cgroups for `exec`. Track safe cleanup of owned ancestor cgroups as an integration task, not a target feature claim. Legacy memory fields, CPU realtime, network/RDMA resources and `blockIO.leafWeight` are not implemented-target requirements; see the exclusions below. Unsupported Swift resource fields are rejected, not ignored. |
@@ -94,8 +94,8 @@ Sysfs, mqueue and tmpfs-based `/dev/shm`, including `ro`/`rw` mount flags, now
 have focused Linux debug evidence through run/create/start/exec against runc.
 The probe checks sysfs's private network view, private IPC message queues,
 read-only enforcement, safe failure on a symlinked sysfs target and cleanup.
-See [engine baseline](engine-baseline.md); cgroup mounts, bind mounts and supplied
-namespace paths remain separate gaps.
+See [engine baseline](engine-baseline.md). Bind mounts and supplied network paths
+have follow-up evidence below; cgroup mounts and other namespace paths remain gaps.
 
 Nonempty `linux.resources.devices` now produces an enforced cgroup-device BPF
 filter before init joins its cgroup. The rule normalizer preserves runc's reset,
@@ -118,4 +118,9 @@ suite compares ordinary cases with runc and checks host mount tables, descriptor
 closure and failure cleanup. Early source pinning and prevention of device-node
 creation in a host-backed `/dev` have Swift-specific regressions. A pinned Alpine
 3.23.6 native-snapshotter run through containerd also passes file/volume binds and
-init/exec cleanup; supplied namespace joins remain open.
+init/exec cleanup. Absolute supplied network paths now work through proc links
+and bind-mounted nsfs files, with type validation and launcher-only joining.
+Linux comparisons cover private TCP, create-time namespace identity, exec after
+source-path removal, caller isolation, descriptor closure and failed-join cleanup.
+The pinned Alpine image also passes containerd-provided network joining and TCP
+through exec. Other namespace joins, cgroup namespaces and bridge/DNS remain open.

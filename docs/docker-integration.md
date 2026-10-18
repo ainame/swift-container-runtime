@@ -6,7 +6,8 @@ bundles. Registering its path with Docker alone will not make it usable.
 The original assessment was source-based. The subsequent [engine baseline](engine-baseline.md)
 records a real containerd/runc capture and a successful Swift containerd 2.2.2
 cgroupfs directory-rootfs scenario plus a pinned Alpine image using the native
-snapshotter and file/volume binds. Docker remains unverified.
+snapshotter, file/volume binds and a supplied private network namespace. Docker
+remains unverified.
 
 ## Integration route
 
@@ -50,9 +51,9 @@ no user remapping, and an explicit host security profile.
 | --- | --- | --- |
 | Launch/control lifecycle | create/start/state/delete, PID files, detached exec with process JSON, process identity protection, update, pause/resume and stats exist. The constrained directory-rootfs shim test verifies PID publication/reaping, pipes/EOF, exit codes and failure cleanup. | Remaining integration work includes concurrent exec/control, richer image/namespace profiles, forced-removal variations and richer host profiles. Check PID-file publication failures after launcher exit. |
 | CLI and diagnostics | Global `--root`; command options cover much of go-runc's basic API. Global log/debug options and text/JSON error logging are implemented. | The real containerd 2.2.2 shim extracts failed create/exec errors from Swift JSON logs. Captured create/exec bundles and argv are recorded in the engine baseline. Audit optional `--no-new-keyring`, `--no-pivot`, `--rootless` and `--systemd-cgroup` against the chosen versions. |
-| Engine-generated OCI JSON | Strict decoding accepts a deliberately narrow subset, including annotations. Directory-rootfs and pinned Alpine create/exec JSON now work through containerd. | Large for richer engine bundles: add applying support for requested fields such as namespace paths, custom device entries, seccomp, hooks and process security settings. Null/empty/default objects from engine serializers need explicit tests; never silently drop requested restrictions. |
+| Engine-generated OCI JSON | Strict decoding accepts a deliberately narrow subset, including annotations. Directory-rootfs and pinned Alpine create/exec JSON now work through containerd. | Large for richer engine bundles: add applying support for requested fields such as non-network namespace paths, custom device entries, seccomp, hooks and process security settings. Null/empty/default objects from engine serializers need explicit tests; never silently drop requested restrictions. |
 | Rootfs/mounts | proc/tmpfs/devpts/sysfs/mqueue, shm, file/directory bind/rbind, ro/rw and explicit VFS flags, private/rprivate propagation, default devices, pivot_root, readonly root and path controls. Pinned-image file/volume binds pass. | Remaining: cgroup mounts, broader propagation/remount flags, dangling target symlinks and protected-proc bind handling. Docker's supplied hosts/resolv.conf/hostname and volume mounts must work. Snapshotter rootfs preparation remains upstream. |
-| Namespaces/network | New mount/pid/uts/ipc/network namespaces; exec joins the recorded init's namespaces. | Large immediate blocker: OCI `namespace.path` is rejected on create. Add external namespace joins and cgroup namespaces plus tested host/shared combinations. Default Docker networking needs the engine's network namespace, not an empty isolated namespace. |
+| Namespaces/network | New mount/pid/uts/ipc/network namespaces; absolute supplied network paths join on create/run, and exec joins the live init. The pinned image passes namespace identity and private loopback TCP through the shim. | Remaining: other namespace joins, cgroup namespaces and broader host/shared combinations. Engine-provisioned bridge, routes and DNS still need real Docker evidence. |
 | Security | Credentials, capabilities, rlimits, no-new-privileges, path controls and enforced device BPF rules exist. | Large gate for ordinary use: seccomp, custom devices, OOM adjustment, session keyring and requested AppArmor/SELinux handling. A run with security disabled proves only that explicit profile. Hooks are also needed when an engine/integration supplies them. |
 | Console | Nonterminal stdio and descriptor/pidfd handoff exist. | Large for interactive use: PTY allocation, controlling terminal, console master FD handoff and initial size. The shim owns attached I/O and resize after handoff; direct foreground CLI forwarding is a separate responsibility. |
 | Cgroups/resources | v2 memory/pids/CPU/cpuset, updates, stats, freezer and identity-safe cleanup. | Moderate to large: integration with an engine-created hierarchy, I/O limits, live device-rule updates and owned ancestor cleanup. Shared-PID SIGKILL subtree cleanup and `--all` compatibility now have focused Linux evidence; the constrained nonterminal shim lifecycle passes, with broader image/profile acceptance still open. Current support does not include systemd cgroup management. Never interpret a systemd slice tuple as a filesystem path. |
@@ -62,8 +63,9 @@ no user remapping, and an explicit host security profile.
 feature increments away from ordinary Docker use. The strongest reusable pieces
 are lifecycle, credentials and basic cgroups. The live containerd baseline now
 runs directory-rootfs and pinned-image workloads with enforced device rules,
-binds and exec. Supplied namespace paths, normal Docker security and consoles
-remain gates. This is a constrained containerd result, not a Docker execution result.
+binds, supplied network paths and exec. Other namespace paths, normal Docker
+security and consoles remain gates. This is a constrained containerd result,
+not a Docker execution result.
 
 Kontainer already documents a `ctr --runc-binary` example using an Alpine image,
 seccomp, read-only rootfs, UID/GID mappings and resource controls. Reproducing that

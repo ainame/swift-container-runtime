@@ -4,8 +4,10 @@ Captured on 2026-10-18. This began with a **real containerd/runc capture** and a
 Swift failed-create logging check. The device-policy follow-up at `6344146` now
 passes a constrained Swift containerd directory-rootfs scenario through the same
 shim. The bind follow-up at `62f04f2` also passes a pinned Alpine image with the
-native snapshotter. See the final sections for evidence and exclusions. Docker
-was not run; broader namespace/security/console gates remain open.
+native snapshotter. The network follow-up at `1226be9` also joins a supplied
+network namespace and reaches its private TCP listener through image exec.
+See the final sections for evidence and exclusions. Docker was not run; broader
+namespace/security/console gates remain open.
 
 ## Profile and provenance
 
@@ -338,3 +340,57 @@ TTYs, requested LSM/seccomp/hooks and session-keyring isolation remain unverifie
 or unimplemented as listed earlier. Native-snapshotter success does not certify
 Docker's ordinary storage/network/security profile. No release/full-matrix or
 second-architecture validation was repeated for this increment.
+
+## Supplied network namespace follow-up
+
+Implementation `1226be9`, checked in the same rootful arm64 Linux debug guest,
+containerd 2.2.2/runc 1.4.0 and pinned Alpine image described above. The preceding
+bind checkpoint used a fresh unconfigured network; this follow-up consumes an
+externally prepared one. No security restrictions were removed from the image
+bundle: its device policy and file/volume bind restrictions remain applied.
+
+Only nonempty **absolute network paths** are supported. Both proc namespace
+links and bind-mounted nsfs files are pinned and type-checked before fork. The
+launcher joins before creating the remaining namespaces or mounting sysfs; the
+supervisor stays in its original network. Empty/null paths keep create semantics.
+Relative paths and joins for other namespace types are explicitly rejected.
+
+Fresh verification:
+
+- 191 Linux runtime unit tests passed during implementation; final focused
+  namespace-planning tests and the captured-image test passed after the absolute
+  path restriction and error assertions were finalized. The same final focused
+  tests passed on macOS with Swift 6.4.
+- `network-namespace` passes Swift and runc foreground/create/start/exec cases:
+  proc links, bind-mounted nsfs paths, exact created-init namespace identity,
+  private loopback TCP and exec after the original path is unmounted/removed.
+  Caller isolation, workload descriptor closure and cgroup cleanup are checked.
+- Swift failures for missing paths, ordinary files, FIFOs, wrong namespace type
+  and missing setns privileges leave no running workload, state or cgroup, and
+  preserve the caller and namespace owner. The FIFO check cannot block opening.
+- Focused Linux debug `oci`, `lifecycle` and `preserve-fds` suites passed against
+  runc after this change. No release/full-matrix validation was repeated.
+
+The engine wrapper creates a private namespace, brings up its loopback interface,
+and starts a TCP listener there. Containerd supplies `/proc/PID/ns/net` through
+`ctr --with-ns`; the test checks init's namespace inode and uses image-backed
+`ctr tasks exec` to receive `joined-network`. A connection from the caller's
+network fails before and after. Existing image assertions also pass: readonly
+config, writable volume, PID files, exec exit status, kill/delete, shim reaping,
+and snapshot/state/cgroup cleanup. The wrapper then removes its listener.
+
+```sh
+ENGINE_CAPTURE_DIRECTORY=/workspace/docs/engine-baseline/image-network \
+  sh scripts/containerd-network-integration.sh \
+  .build/linux-6.4.1/debug/swift-container-runtime \
+  /tmp/sct-engine/containerd.sock sct-image-baseline \
+  docker.io/library/alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+```
+
+[Captured result](engine-baseline/image-network/result.txt) and
+[original create JSON](engine-baseline/image-network/create.config.json) preserve
+the actual ephemeral path and bundle values (JSON formatting only changed).
+The public image supplied PATH only; no environment secrets were found.
+This proves supplied namespace consumption with private loopback I/O. It does not
+verify Docker, bridge/NAT/DNS provisioning, cgroup/other supplied namespace types,
+rootless operation, requested seccomp/LSM/hooks, TTYs or another architecture.
