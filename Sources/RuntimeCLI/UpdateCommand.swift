@@ -2,7 +2,7 @@ import ArgumentParser
 import ContainerRuntime
 import SystemPackage
 
-struct Update: ParsableCommand {
+struct Update: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(commandName: "update", abstract: "Update a live container's resource limits.", discussion: "A resources file (or - for stdin) takes precedence over individual flags, as in runc.")
     @OptionGroup var globals: GlobalOptions
     @Option(name: [.customShort("r"), .long]) var resources: String?

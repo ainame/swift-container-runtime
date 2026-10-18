@@ -7,7 +7,7 @@ enum VersionOutput {
     static var text: String { RuntimeMetadata.versionText }
 }
 
-struct Spec: ParsableCommand {
+struct Spec: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "spec",
         abstract: "Write a starter config.json into a bundle.",
@@ -41,7 +41,7 @@ struct Spec: ParsableCommand {
     }
 }
 
-struct Features: ParsableCommand {
+struct Features: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "features",
         abstract: "Show the OCI features this build implements.",

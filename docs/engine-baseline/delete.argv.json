@@ -1,0 +1,10 @@
+[
+  "--root",
+  "/run/containerd/runc/default",
+  "--log",
+  "/tmp/sct-engine/state/io.containerd.runtime.v2.task/default/baseline/log.json",
+  "--log-format",
+  "json",
+  "delete",
+  "baseline"
+]

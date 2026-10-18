@@ -3,7 +3,9 @@
 Assessment date: 2026-10-18. **Not supported or verified yet.** The runtime has a
 useful lifecycle core, but several independent gaps block normal engine-generated
 bundles. Registering its path with Docker alone will not make it usable.
-This assessment is source-based; no containerd or Docker workload was run for it.
+The original assessment was source-based. The subsequent [engine baseline](engine-baseline.md)
+records a real containerd/runc capture and Swift failed-create logging check;
+no Swift engine workload or Docker workload has succeeded.
 
 ## Integration route
 
@@ -46,8 +48,8 @@ no user remapping, and an explicit host security profile.
 | Contract | Current evidence | Gap and priority |
 | --- | --- | --- |
 | Launch/control lifecycle | create/start/state/delete, PID files, detached exec with process JSON, process identity protection, update, pause/resume and stats exist. Detached processes are designed to reparent to a caller's subreaper. | Moderate integration work: prove shim reaping, FIFO/stdin ownership and EOF, exit codes, concurrent exec/control, forced removal and failure cleanup. Check PID-file publication failures after launcher exit. |
-| CLI and diagnostics | Global `--root`; command options cover much of go-runc's basic API. No global log/debug options. | Immediate blocker: the inspected shim always configures `--log` and `--log-format json`. Implement the log record contract used for error extraction; keep JSON command output clean. Audit optional `--no-new-keyring`, `--no-pivot`, `--rootless` and `--systemd-cgroup` against the chosen versions. |
-| Engine-generated OCI JSON | Strict decoding accepts a deliberately narrow subset, including annotations. | Large: capture real create and exec JSON. Add applying support for requested fields such as namespace paths, devices, seccomp, hooks and process security settings. Null/empty/default objects from engine serializers need explicit tests; never silently drop requested restrictions. |
+| CLI and diagnostics | Global `--root`; command options cover much of go-runc's basic API. Global log/debug options and text/JSON error logging are implemented. | The real containerd 2.2.2 shim now extracts the Swift failed-create error from JSON logs. Captured create/exec bundles and argv are recorded in the engine baseline. Audit optional `--no-new-keyring`, `--no-pivot`, `--rootless` and `--systemd-cgroup` against the chosen versions. |
+| Engine-generated OCI JSON | Strict decoding accepts a deliberately narrow subset, including annotations. Real containerd create/exec JSON is captured. | Large: the captured create first rejects device rules. Add applying support for requested fields such as namespace paths, devices, seccomp, hooks and process security settings. Null/empty/default objects from engine serializers need explicit tests; never silently drop requested restrictions. |
 | Rootfs/mounts | proc/tmpfs/devpts, default devices, pivot_root, readonly root and path controls. | Large immediate blocker: file/directory bind mounts, sysfs, shm/mqueue/cgroup mounts, remount/propagation flags and safe in-root symlink resolution. Docker's supplied hosts/resolv.conf/hostname and volume mounts must work. Snapshotter rootfs preparation remains upstream. |
 | Namespaces/network | New mount/pid/uts/ipc/network namespaces; exec joins the recorded init's namespaces. | Large immediate blocker: OCI `namespace.path` is rejected on create. Add external namespace joins and cgroup namespaces plus tested host/shared combinations. Default Docker networking needs the engine's network namespace, not an empty isolated namespace. |
 | Security | Credentials, capabilities, rlimits, no-new-privileges and path controls exist. | Large gate for ordinary use: seccomp, device BPF rules, custom devices, OOM adjustment, session keyring and requested AppArmor/SELinux handling. A run with security disabled proves only that explicit profile. Hooks are also needed when an engine/integration supplies them. |
@@ -57,10 +59,9 @@ no user remapping, and an explicit host security profile.
 
 **Overall:** this is beyond a namespace demo, but still multiple substantial
 feature increments away from ordinary Docker use. The strongest reusable pieces
-are lifecycle, credentials and basic cgroups. The first failures are likely CLI
-logging and strict OCI decoding, before the workload executes. Fixing those will
-expose mount and namespace gaps; it will not by itself complete integration.
-This is an inference from source inspection, not an observed Docker failure trace.
+are lifecycle, credentials and basic cgroups. The live containerd baseline now
+passes CLI logging and fails strict OCI decoding on `linux.resources.devices`, before any workload executes. Mount and namespace
+gaps remain. This is an observed containerd failure, not a Docker execution result.
 
 Kontainer already documents a `ctr --runc-binary` example using an Alpine image,
 seccomp, read-only rootfs, UID/GID mappings and resource controls. Reproducing that

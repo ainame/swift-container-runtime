@@ -3,7 +3,7 @@ import ContainerRuntime
 
 /// Parse runtime options before the ID; everything after it belongs to the
 /// workload, including flags such as --help, --env and --root.
-struct Exec: ParsableCommand {
+struct Exec: RuntimeDescriptorCommand {
     static let configuration = CommandConfiguration(
         commandName: "exec", abstract: "Run another nonterminal process in a container.",
         discussion: "Inherits process settings from the source bundle. Options must precede the container ID. "
@@ -11,6 +11,7 @@ struct Exec: ParsableCommand {
             + "terminal, socket activation, and console socket options are not implemented."
     )
     @ParentCommand var parent: RuntimeCommand
+    @OptionGroup var logging: PassthroughLoggingOptions
     @Option(name: .customLong("root"), help: "Directory holding container state.") var stateRoot: String?
     @Option(name: [.customShort("e"), .long], help: "Add or replace an environment entry NAME=value.") var env: [String] = []
     @Option(help: "Working directory inside the container.") var cwd: String?
@@ -33,7 +34,7 @@ struct Exec: ParsableCommand {
     var id: String { positionals.first ?? "" }
     var arguments: [String] { Array(positionals.dropFirst()) }
     var globals: GlobalOptions {
-        var result = parent.globals
+        var result = logging.applying(to: parent.globals)
         if let stateRoot { result.root = stateRoot }
         return result
     }

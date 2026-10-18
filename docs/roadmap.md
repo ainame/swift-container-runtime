@@ -152,6 +152,9 @@ separate Docker-driven extension and make the scope decision explicitly.
    reference versions and skipped cases. Keep implementation, old evidence and
    newly passing execution results distinguishable. Commit each meaningful change.
 
-Next implementation slice: milestone 1's invocation/bundle capture and logging
-contract, followed by milestone 2's bind mounts and supplied network-namespace
-join. These remove concrete engine blockers while keeping changes reviewable.
+The [engine baseline](engine-baseline.md) now records real containerd 2.2.2
+create/exec captures and working global logging/error extraction. The Swift
+engine run still fails on device restrictions; milestone 1 remains open for
+kill-all and shim-owned PID/cleanup validation. Next: the requested rootfs mounts
+and device policy, followed by bind mounts and supplied namespace joins for the
+selected scenario. Do not silently discard security fields to advance it.

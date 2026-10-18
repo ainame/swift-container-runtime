@@ -45,7 +45,7 @@ suite because a shared file was touched:
 | Credentials/capabilities/rlimits | `credentials capabilities rlimits`; add `lifecycle lookup` for ordering/exec changes. |
 | Inherited FDs or socket handoff | `preserve-fds pidfd-socket lifecycle`. |
 | Cgroup resources | The changed controller's suite (`cgroup`, `cpu`, `cpuset`), plus `update`; add `freezer ps events` if membership/reporting changes. |
-| Metadata/CLI output | `metadata` and affected unit tests. |
+| Metadata/CLI output | `metadata`, `logging` and affected unit tests. |
 
 These are starting selections, not mandatory bundles for every edit. Add one
 regression case for the new behavior and relevant failure/cleanup paths. Expand
@@ -142,3 +142,7 @@ OOM events are reported for each new kill rather than for every `memory.events` 
 Under `RLIMIT_NOFILE` 3, this runtime's `create` must fail synchronously with the start-descriptor diagnosis and leave nothing behind. A created init that dies before it can be sampled is recorded as stopped. Leftover checks match bundle command lines, and also any process whose `/proc/PID/root` is the test rootfs. For `RLIMIT_AS`, the workload reports its own `getrlimit` value. It then reserves 1536 MiB and 1 MiB of address space with real `PROT_NONE`/`MAP_NORESERVE` `mmap` calls, which touch no memory, and unmaps them. Under the 1 GiB limit the large reservation must fail with `ENOMEM`. A control without `RLIMIT_AS` must report unlimited, and there the same reservation must succeed. Foreground parent-death cleanup is checked under `RLIMIT_NOFILE` 3.
 
 The local development environment has Apple `container` 0.9.0 and a cached `swift:6.4.1` image. That installation has no `container machine` subcommand. A successful Swift build inside an Apple container checks Linux compilation; a namespace smoke test must separately demonstrate that its guest environment grants the required kernel capabilities.
+
+The [engine baseline](engine-baseline.md) records pinned live capture evidence and
+its limits. `scripts/logging-integration.sh` also runs on macOS: its synthetic
+failure probes exercise the CLI/log contract without launching a container.

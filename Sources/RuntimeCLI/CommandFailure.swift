@@ -1,11 +1,11 @@
 import ArgumentParser
-import ContainerRuntime
 
-enum CommandFailure {
-    /// Prints a runtime failure and exits with `status`: 1 for lifecycle
-    /// commands as in runc, 125 for `run` so it stays distinct from workload exits.
-    static func report(_ error: any Error, status: Int32 = 1) -> ExitCode {
-        RuntimeDiagnostics.writeError("swift-container-runtime: \(error)")
-        return ExitCode(status)
+/// Keep runtime failures distinct from workload exit codes until the CLI boundary.
+struct CommandFailure: Error {
+    let message: String
+    let status: Int32
+
+    static func report(_ error: any Error, status: Int32 = 1) -> CommandFailure {
+        CommandFailure(message: String(describing: error), status: status)
     }
 }

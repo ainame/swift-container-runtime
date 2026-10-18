@@ -1,0 +1,15 @@
+[
+  "--root",
+  "/run/containerd/runc/default",
+  "--log",
+  "/tmp/sct-engine/state/io.containerd.runtime.v2.task/default/baseline/log.json",
+  "--log-format",
+  "json",
+  "exec",
+  "--process",
+  "/tmp/runc-process3150573313",
+  "--detach",
+  "--pid-file",
+  "/tmp/sct-engine/state/io.containerd.runtime.v2.task/default/baseline/extra.pid",
+  "baseline"
+]

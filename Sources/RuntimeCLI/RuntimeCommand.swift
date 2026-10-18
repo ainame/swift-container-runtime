@@ -3,7 +3,7 @@ import ContainerRuntime
 import SystemPackage
 
 @main
-struct RuntimeCommand: ParsableCommand {
+struct RuntimeCommand: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "swift-container-runtime",
         abstract: "An educational Linux container runtime.",
@@ -26,23 +26,7 @@ struct RuntimeCommand: ParsableCommand {
     }
 }
 
-/// Options accepted before or after the subcommand name, like runc's `--root`.
-struct GlobalOptions: ParsableArguments {
-    @Option(help: ArgumentHelp("Directory holding container state.", valueName: "path"))
-    var root = ContainerLifecycle.defaultRoot
-
-    func validate() throws {
-        guard !root.isEmpty, !root.utf8.contains(0) else {
-            throw ValidationError("--root must be non-empty and contain no NUL")
-        }
-    }
-
-    func lifecycle() throws -> ContainerLifecycle {
-        try ContainerLifecycle(root: root)
-    }
-}
-
-struct Create: ParsableCommand {
+struct Create: RuntimeDescriptorCommand {
     static let configuration = CommandConfiguration(
         commandName: "create",
         abstract: "Create a container whose workload waits for start.",
@@ -83,7 +67,7 @@ struct Create: ParsableCommand {
     }
 }
 
-struct Start: ParsableCommand {
+struct Start: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "start",
         abstract: "Execute the workload of a created container.",
@@ -108,7 +92,7 @@ struct Start: ParsableCommand {
     }
 }
 
-struct State: ParsableCommand {
+struct State: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "state",
         abstract: "Print the OCI state of a container as JSON.",
@@ -136,7 +120,7 @@ struct State: ParsableCommand {
     }
 }
 
-struct Kill: ParsableCommand {
+struct Kill: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "kill",
         abstract: "Send a signal (default TERM) to the init of a created, running, or paused container.",
@@ -170,7 +154,7 @@ struct Kill: ParsableCommand {
     }
 }
 
-struct Pause: ParsableCommand {
+struct Pause: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(commandName: "pause", abstract: "Freeze all processes in a created or running container.")
     @OptionGroup var globals: GlobalOptions
     @Argument(help: "Container ID.") var id: String
@@ -183,7 +167,7 @@ struct Pause: ParsableCommand {
     }
 }
 
-struct Resume: ParsableCommand {
+struct Resume: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(commandName: "resume", abstract: "Thaw a paused container.")
     @OptionGroup var globals: GlobalOptions
     @Argument(help: "Container ID.") var id: String
@@ -196,7 +180,7 @@ struct Resume: ParsableCommand {
     }
 }
 
-struct Delete: ParsableCommand {
+struct Delete: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "delete",
         abstract: "Delete a stopped container's state.",
@@ -229,7 +213,7 @@ enum ListFormat: String, ExpressibleByArgument, CaseIterable {
     case table, json
 }
 
-struct Ps: ParsableCommand {
+struct Ps: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "ps", abstract: "List host processes belonging to a container.",
         discussion: "Options after the container ID are passed verbatim to host ps. The default is ps -ef."
@@ -238,10 +222,11 @@ struct Ps: ParsableCommand {
     // parent's OptionGroup would reuse an already-decoded default and
     // leave --root after the subcommand unconsumed.
     @ParentCommand var parent: RuntimeCommand
+    @OptionGroup var logging: PassthroughLoggingOptions
     @Option(name: .customLong("root"), help: "Directory holding container state.")
     var stateRoot: String?
     var globals: GlobalOptions {
-        var result = parent.globals
+        var result = logging.applying(to: parent.globals)
         if let stateRoot { result.root = stateRoot }
         return result
     }
@@ -279,7 +264,7 @@ struct Ps: ParsableCommand {
     }
 }
 
-struct List: ParsableCommand {
+struct List: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "list",
         abstract: "List containers under the state root.",
@@ -316,7 +301,7 @@ struct List: ParsableCommand {
     }
 }
 
-struct Run: ParsableCommand {
+struct Run: RuntimeDescriptorCommand {
     static let configuration = CommandConfiguration(
         commandName: "run",
         abstract: "Create and start a container.",
@@ -367,13 +352,15 @@ struct Run: ParsableCommand {
     }
 }
 
-struct NamespaceRun: ParsableCommand {
+struct NamespaceRun: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "namespace-run",
         abstract: "Run a command in new UTS, PID, and mount namespaces.",
         discussion: "Shares the caller's filesystem, network, user identity, and privileges. "
             + "Use -- before the absolute executable path."
     )
+
+    @OptionGroup var globals: GlobalOptions
 
     @Option(help: "Hostname in the new UTS namespace.")
     var hostname = "swiftbox"
@@ -398,8 +385,7 @@ struct NamespaceRun: ParsableCommand {
         do {
             status = try NamespaceCommand(hostname: hostname, arguments: workloadArguments).run()
         } catch {
-            RuntimeDiagnostics.writeError("swift-container-runtime: \(error)")
-            throw ExitCode(125)
+            throw CommandFailure.report(error, status: 125)
         }
         // Keep this outside the catch: a workload may itself choose exit 125.
         throw ExitCode(status.shellStatus)

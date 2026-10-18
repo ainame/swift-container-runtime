@@ -2,7 +2,7 @@ import ArgumentParser
 import ContainerRuntime
 import SystemPackage
 
-struct Events: ParsableCommand {
+struct Events: RuntimeLoggingCommand {
     static let configuration = CommandConfiguration(
         commandName: "events",
         abstract: "Display container events such as OOM notifications and resource usage statistics.",
