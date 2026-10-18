@@ -233,7 +233,7 @@ public struct ContainerLifecycle: Sendable {
 
     /// A snapshot of host PIDs in the recorded cgroup and its descendants.
     /// The state lock is released before invoking the external ps program.
-    public func processIDs(id: ContainerID) throws -> [Int32] {
+    public func processIDs(id: ContainerID) throws -> [pid_t] {
         #if os(Linux)
         let container = try lock(id)
         guard let record = try container.readRecord(), let identity = record.cgroup else {

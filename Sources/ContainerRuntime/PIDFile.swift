@@ -10,7 +10,7 @@ import SystemPackage
 /// Publish a decimal host PID without exposing a partially written file.
 /// The sibling temporary name and replacement semantics follow runc.
 enum PIDFile {
-    static func write(_ pid: Int32, to path: String) throws {
+    static func write(_ pid: pid_t, to path: String) throws {
         // An empty option means no PID file, as in runc. Reject embedded NUL
         // before passing either name to a C filesystem interface.
         guard !path.isEmpty else { return }

@@ -3,6 +3,13 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import SystemPackage
 
 /// Runtime status, including runc's cgroup-freezer `paused` extension.
@@ -101,7 +108,7 @@ public enum LifecycleError: Error, Equatable, CustomStringConvertible, Sendable 
 /// (clock ticks since boot) and the kernel boot ID. A PID alone can be reused
 /// by an unrelated process after the init exits; the triple cannot.
 struct InitIdentity: Codable, Sendable, Equatable {
-    var pid: Int32
+    var pid: pid_t
     var startTime: UInt64
     var bootID: String
 }
@@ -194,7 +201,7 @@ public struct ContainerStateReport: Sendable, Equatable {
     public let id: String
     public let status: ContainerStatus
     /// The init PID, retained while paused; 0 when stopped, as in runc.
-    public let pid: Int32
+    public let pid: pid_t
     public let bundle: String
     public let rootfs: String
     public let created: String

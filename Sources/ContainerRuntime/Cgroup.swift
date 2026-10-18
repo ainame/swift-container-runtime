@@ -559,12 +559,12 @@ final class CgroupLeaf {
 
     /// Includes descendant cgroups, as runc's GetAllPids does. A stale
     /// identity contributes no PIDs from the group now at the recorded path.
-    static func processes(_ identity: CgroupIdentity) throws -> [Int32] {
+    static func processes(_ identity: CgroupIdentity) throws -> [pid_t] {
         guard let directory = try recordedDirectory(identity) else { return [] }
-        var pids: [Int32] = []
+        var pids: [pid_t] = []
         func collect(_ group: CgroupDirectory) throws {
             for field in (try group.read("cgroup.procs") ?? "").split(whereSeparator: { $0.isWhitespace }) {
-                guard let pid = Int32(field), pid > 0 else { throw RuntimeError("invalid PID in cgroup.procs") }
+                guard let pid = pid_t(field), pid > 0 else { throw RuntimeError("invalid PID in cgroup.procs") }
                 pids.append(pid)
             }
             for name in try group.subdirectories().sorted() {
