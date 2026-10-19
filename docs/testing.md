@@ -187,7 +187,9 @@ cleanup behavior. Its static `hook-io-probe.c` also checks 512 KiB state deliver
 to hooks that ignore stdin, write 256 KiB before reading it, or close it early,
 in both supervisor (`createRuntime`) and init (`startContainer`) execution.
 The one-second timeout includes blocked input delivery; a continuously writing
-descendant must not extend final diagnostic draining.
+descendant must not extend final diagnostic draining. Real-pipe unit tests check
+that start-handshake send/read errors remain distinct from EOF and timeout, and
+that the hook poll reports ready input and output together.
 
 `scripts/filesystems-integration.sh` mounts sysfs, mqueue, tmpfs-based shm and a
 read-only tmpfs in new network/IPC namespaces. It compares run/create/start/exec

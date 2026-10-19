@@ -101,7 +101,14 @@ final class StartGate {
             // closes, so the link count read afterwards is final. A timeout
             // here could race with that unlink and leave a running status
             // with nothing executed.
-            let committed = StartProtocol.receivePacket(connection) == StartProtocol.commit
+            let committed: Bool
+            var receiveError: Errno?
+            do {
+                committed = try StartProtocol.receivePacket(connection) == StartProtocol.commit
+            } catch {
+                committed = false
+                receiveError = error
+            }
             let status: FileStatus
             do {
                 status = try marker.withDescriptor { try Kernel.File.status(of: $0) }
@@ -111,12 +118,19 @@ final class StartGate {
             if status.linkCount > 0 {
                 // Not consumed: still created. A commit without the unlink
                 // is a protocol error reported to that client.
-                if committed { _ = LaunchRecord.reportFailure(to: connection, at: .startSocket, error: .protocolError, socket: true) }
+                if let receiveError {
+                    _ = LaunchRecord.reportFailure(to: connection, at: .startSocket, error: receiveError, socket: true)
+                } else if committed {
+                    _ = LaunchRecord.reportFailure(to: connection, at: .startSocket, error: .protocolError, socket: true)
+                }
                 continue
             }
             // Consumed without a commit: the start was abandoned after its
             // commit point. Exit rather than run a workload nobody started.
-            guard committed else { return 125 }
+            guard committed else {
+                if let receiveError { return LaunchRecord.reportFailure(to: connection, at: .startSocket, error: receiveError, socket: true) }
+                return 125
+            }
 
             // Close every gate descriptor except the connection, whose
             // close-on-exec lifetime reports the outcome.
@@ -148,8 +162,13 @@ final class StartGate {
     }
 
     private func receiveRequest(_ connection: borrowing OwnedFileDescriptor) -> Bool {
-        guard StartProtocol.waitReadable(connection, timeout: StartProtocol.requestTimeout) else { return false }
-        return StartProtocol.receivePacket(connection) == StartProtocol.request
+        do {
+            guard try StartProtocol.waitReadable(connection, timeout: StartProtocol.requestTimeout) else { return false }
+            return try StartProtocol.receivePacket(connection) == StartProtocol.request
+        } catch {
+            _ = LaunchRecord.reportFailure(to: connection, at: .startRequest, error: error, socket: true)
+            return false
+        }
     }
 
     /// False once the client has hung up, so a start whose caller died
@@ -166,26 +185,33 @@ extension StartProtocol {
     }
 
     /// Sends one whole packet without raising SIGPIPE on a vanished peer.
-    fileprivate static func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) -> Bool {
-        (try? owner.withDescriptor { descriptor in
-            try Kernel.Socket.send(descriptor, packet.span.bytes) == packet.count
-        }) ?? false
+    static func sendPacket(_ owner: borrowing OwnedFileDescriptor, _ packet: [UInt8]) throws(Errno) {
+        let count = try owner.borrowDescriptor { descriptor throws(Errno) in
+            try Kernel.Socket.send(descriptor, packet.span.bytes)
+        }
+        guard count == packet.count else { throw .ioError }
     }
 
-    /// Reads one packet of at most 16 bytes; nil on EOF or error.
-    fileprivate static func receivePacket(_ owner: borrowing OwnedFileDescriptor) -> [UInt8]? {
+    /// Reads one packet of at most 16 bytes; nil only on EOF. Transport errors
+    /// remain distinct from a peer closing the connection before commit.
+    static func receivePacket(_ owner: borrowing OwnedFileDescriptor) throws(Errno) -> [UInt8]? {
         // Stack storage: the created init reads here under its resource limits.
         var buffer = InlineArray<16, UInt8>(repeating: 0)
-        let count = (try? owner.withDescriptor { descriptor in
+        let count = try owner.borrowDescriptor { descriptor throws(Errno) in
             var span = buffer.mutableSpan
             return try Kernel.File.read(descriptor, into: &span)
-        }) ?? 0
+        }
         guard count > 0 else { return nil }
         return (0..<count).map { buffer[$0] }
     }
 
-    fileprivate static func waitReadable(_ owner: borrowing OwnedFileDescriptor, timeout: Duration) -> Bool {
-        !owner.poll(.input, timeout: timeout).isEmpty
+    /// False only on timeout. Poll failures throw, while hangup wakes the read
+    /// so it can distinguish EOF from a socket error.
+    static func waitReadable(_ owner: borrowing OwnedFileDescriptor, timeout: Duration) throws(Errno) -> Bool {
+        try owner.borrowDescriptor { descriptor throws(Errno) in
+            let events = try Kernel.Poll.wait(reading: descriptor, writing: nil, timeout: timeout)
+            return !events.read.isEmpty
+        }
     }
 
     /// Asks a created init to exec its workload and waits for the outcome.
@@ -209,8 +235,10 @@ extension StartProtocol {
         } catch {
             throw RuntimeError("connect to container \(id) init: \(error)")
         }
-        guard StartProtocol.sendPacket(connection, StartProtocol.request) else {
-            throw RuntimeError("send start request to container \(id): \(Errno.current)")
+        do {
+            try StartProtocol.sendPacket(connection, StartProtocol.request)
+        } catch {
+            throw RuntimeError("send start request to container \(id): \(error)")
         }
 
         // Step 2: until the acknowledgement, any failure leaves the marker and
@@ -231,8 +259,10 @@ extension StartProtocol {
         } catch {
             throw RuntimeError.launch(.startSocket, (error as? Errno) ?? .badFileDescriptor)
         }
-        guard StartProtocol.sendPacket(connection, StartProtocol.commit) else {
-            throw RuntimeError("container \(id) init vanished before the start commit: \(Errno.current)")
+        do {
+            try StartProtocol.sendPacket(connection, StartProtocol.commit)
+        } catch {
+            throw RuntimeError("container \(id) init vanished before the start commit: \(error)")
         }
 
         // Step 4: EOF means execve closed the connection.
@@ -242,7 +272,13 @@ extension StartProtocol {
     /// Waits a bounded time for the init's next record: `expected`, or EOF when
     /// `expected` is nil. A failure record becomes its launch error.
     private static func waitForInit(_ connection: borrowing OwnedFileDescriptor, id: String, expecting expected: LaunchRecord.Kind?) throws {
-        guard StartProtocol.waitReadable(connection, timeout: StartProtocol.resultTimeout) else {
+        let ready: Bool
+        do {
+            ready = try StartProtocol.waitReadable(connection, timeout: StartProtocol.resultTimeout)
+        } catch {
+            throw RuntimeError.launch(.startRequest, error)
+        }
+        guard ready else {
             throw RuntimeError("container \(id) init did not answer the start request within 30 seconds")
         }
         switch LaunchRecord.read(from: connection) {
