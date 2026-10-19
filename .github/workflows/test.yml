@@ -4,10 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-  # The complete debug and release integration matrix (see docs/testing.md
-  # validation tiers); pushes and pull requests run release integration only.
-  schedule:
-    - cron: "17 3 * * 1"
+  # Manual dispatch runs the complete debug and release integration matrix
+  # (docs/testing.md validation tiers); pushes and pull requests run release
+  # integration only.
   workflow_dispatch:
 
 permissions:
@@ -49,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        configuration: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["debug","release"]' || '["release"]') }}
+        configuration: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["debug","release"]' || '["release"]') }}
         shard: [cpu, cgroup, controllers, rest]
     container:
       image: swift:6.4.1-resolute

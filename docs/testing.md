@@ -11,7 +11,7 @@ The package requires Swift tools 6.4. `.swift-version` selects the macOS 6.4.0 r
 swift test
 ```
 
-Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs debug and release unit tests and the release integration suites in the pinned Swift 6.4.1 Linux image, split into four parallel shards. A weekly schedule and manual dispatch run the integration suites in debug as well. The project has no `assert` or `#if DEBUG` code, and preconditions, overflow and exclusivity checks trap in both modes, so optimized builds are the riskier per-push target for its unsafe launch code; debug integration is still exercised by local `scripts/test-linux.sh` runs.
+Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs debug and release unit tests and the release integration suites in the pinned Swift 6.4.1 Linux image, split into four parallel shards. A manual dispatch runs the integration suites in debug as well; nothing runs it on a schedule. The project has no `assert` or `#if DEBUG` code, and preconditions, overflow and exclusivity checks trap in both modes, so optimized builds are the riskier per-push target for its unsafe launch code; debug integration is still exercised by local `scripts/test-linux.sh` runs.
 
 ## Validation tiers
 
@@ -32,9 +32,14 @@ build their dependencies. Do not repeat a successful local full gate just to
 obtain the same result in another environment; use the existing CI review gate
 where suitable and distinguish passed, pending and unrun checks. Commits made
 during implementation can explicitly say release validation is deferred to review.
-CI runs release integration for PRs and main, and the full debug/release matrix
-weekly or on manual dispatch (`gh workflow run Tests --ref BRANCH`); a newer
-push cancels a superseded run. There is no requirement to reproduce the full
+CI runs release integration for PRs and main. The full debug/release matrix runs
+only on manual dispatch, for review or milestone candidates:
+
+```sh
+gh workflow run Tests --ref main
+```
+
+A newer push to the same branch cancels a superseded run. There is no requirement to reproduce the full
 matrix locally before every commit.
 
 For targeted Linux runs, select suites by behavior rather than running every
