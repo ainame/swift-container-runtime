@@ -71,6 +71,14 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc libseccomp-dev uidmap
       - name: Build srunc with strict memory safety
         run: swift build -c ${{ matrix.configuration }} --disable-automatic-resolution --product srunc
+      - name: Allow unprivileged user namespaces for the rootless suite
+        # Ubuntu's AppArmor denies unconfined unprivileged processes a
+        # usable user namespace; rootless-integration.sh runs as uid 1000.
+        # The privileged job container shares the disposable runner VM's
+        # sysctls, so this lasts only for the job.
+        run: |
+          restrict=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$restrict" ]; then echo 0 > "$restrict"; fi
       - name: Integration suites
         run: sh scripts/run-integration.sh .build/${{ matrix.configuration }}/srunc --shard ${{ matrix.shard }}
 
