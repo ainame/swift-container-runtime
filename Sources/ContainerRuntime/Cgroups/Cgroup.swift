@@ -227,21 +227,47 @@ private final class CgroupDirectory {
 /// resources need are enabled in the ancestors' `cgroup.subtree_control`
 /// (runc enables every available one), and they are never disabled again,
 /// because sibling cgroups may depend on them. Ancestors are never removed.
+///
+/// Under the systemd driver the cgroup cannot exist before the init does:
+/// systemd refuses a scope without processes. `prepare` then only validates
+/// and records the scope, and `join` asks systemd to create it around the
+/// blocked init (as runc's systemd Apply does with the init's PID) before
+/// the limits are written, still before the workload runs.
 final class CgroupLeaf {
-    let identity: CgroupIdentity
-    private let directory: CgroupDirectory
+    private(set) var identity: CgroupIdentity
+    /// Nil only for a systemd scope that `join` has not created yet.
+    private var directory: CgroupDirectory?
     /// memory.events oom_kill when prepared; an adopted cgroup may already
     /// count earlier kills.
-    private let oomKillBaseline: UInt64
+    private var oomKillBaseline: UInt64
     /// The exclusive flock on the leaf held from validation until the init
     /// is a member (or setup fails); empty afterwards.
     private var setupLock: OwnedFileDescriptor
+    /// The scope `join` creates under the systemd driver, with its unit
+    /// properties and the limits to write afterwards.
+    private let pendingScope: PendingScope?
+
+    /// A validated systemd scope awaiting the init's PID.
+    private struct PendingScope {
+        let scope: SystemdScope
+        let properties: [(String, DBusValue)]
+        let resources: CgroupResources
+    }
 
     private init(identity: CgroupIdentity, directory: CgroupDirectory, setupLock: consuming OwnedFileDescriptor) {
         self.identity = identity
         self.directory = directory
         self.oomKillBaseline = Self.oomKillCount(directory)
         self.setupLock = setupLock
+        self.pendingScope = nil
+    }
+
+    private init(identity: CgroupIdentity, pendingScope: PendingScope) {
+        self.identity = identity
+        self.directory = nil
+        self.oomKillBaseline = 0
+        self.setupLock = OwnedFileDescriptor()
+        self.pendingScope = pendingScope
     }
 
     deinit {
@@ -263,6 +289,9 @@ final class CgroupLeaf {
     /// The lock is not held after the join, since membership itself then
     /// marks the group as used.
     static func prepare(_ plan: CgroupPlan, id: ContainerID) throws -> CgroupLeaf {
+        if case let .systemd(request) = plan.location {
+            return try prepareScope(request, resources: plan.resources, id: id)
+        }
         let components = plan.components(for: id)
         let resources = plan.resources
         let required = resources.requiredControllers
@@ -337,15 +366,92 @@ final class CgroupLeaf {
         }
     }
 
+    /// Validates a systemd scope and everything systemd will be told, so a
+    /// bad name or value fails before any init exists. Nothing is created.
+    private static func prepareScope(_ request: SystemdScopeRequest, resources: CgroupResources, id: ContainerID) throws -> CgroupLeaf {
+        let scope = try request.scope(id: id)
+        // Fail early on a host without a cgroup v2 mount.
+        _ = try CgroupDirectory.openRoot()
+        // runc's base properties for a container scope: systemd delegates
+        // the cgroup (enabling every delegatable controller down to it) and
+        // accounts for the controllers' usage; no default dependencies, so a
+        // shutdown ordering never involves the container's scope.
+        var properties: [(String, DBusValue)] = [
+            ("Description", .string("srunc container \(id.rawValue)")),
+            ("Slice", .string(scope.slice)),
+            ("Delegate", .boolean(true)),
+            ("DefaultDependencies", .boolean(false)),
+            ("MemoryAccounting", .boolean(true)),
+            ("CPUAccounting", .boolean(true)),
+            ("TasksAccounting", .boolean(true)),
+            ("IOAccounting", .boolean(true)),
+        ]
+        properties += try SystemdResourceProperties.properties(for: resources)
+        let identity = CgroupIdentity(
+            path: "/" + scope.components.joined(separator: "/"), inode: 0, bootID: try ProcFS.bootID(), created: true,
+            systemdUnit: scope.unit)
+        return CgroupLeaf(identity: identity, pendingScope: PendingScope(scope: scope, properties: properties, resources: resources))
+    }
+
     /// Moves the init into the cgroup through `cgroup.procs`. The caller
     /// guarantees `pid` cannot be reused meanwhile (it is an unreaped child
     /// of a blocked launcher) and that the init has not started setup.
-    /// Membership ends the setup lock's critical section.
+    /// Membership ends the setup lock's critical section. Under the systemd
+    /// driver, systemd creates the scope with the init in it instead, and
+    /// `identity` gains the scope's inode for the caller to record.
     func join(_ pid: pid_t) throws {
+        if let pendingScope, directory == nil {
+            try startScope(pendingScope, pid: pid)
+            return
+        }
+        guard let directory else { throw RuntimeError("container cgroup is not prepared") }
         if let error = directory.write("cgroup.procs", String(pid)) {
             throw RuntimeError("join container init \(pid) to cgroup \(directory.displayPath): \(error)")
         }
         releaseSetupLock()
+    }
+
+    /// Creates the transient scope around `pid`, then opens it, checks that
+    /// systemd delegated the controllers the limits need, and writes the
+    /// limits and device filter as for a cgroupfs leaf. A failure after the
+    /// unit started stops it again, so a failed create leaves no unit.
+    private func startScope(_ pending: PendingScope, pid: pid_t) throws {
+        let manager = try SystemdManager.connect()
+        let unit = pending.scope.unit
+        try manager.startTransientUnit(unit, properties: pending.properties + [("PIDs", .array(element: "u", [.uint32(UInt32(pid))]))])
+        do {
+            var leaf = try CgroupDirectory.openRoot()
+            for name in pending.scope.components {
+                guard let child = try leaf.child(name) else {
+                    throw RuntimeError("systemd started \(unit) but its cgroup \(leaf.displayPath)/\(name) does not exist")
+                }
+                leaf = child
+            }
+            guard try leaf.words("cgroup.procs").contains(String(pid)) else {
+                throw RuntimeError("systemd started \(unit) without container init \(pid) in \(leaf.displayPath)")
+            }
+            let delegated = try leaf.words("cgroup.controllers")
+            for controller in pending.resources.requiredControllers where !delegated.contains(controller) {
+                throw RuntimeError(
+                    "systemd did not delegate the \(controller) controller to \(unit) (cgroup.controllers: \(delegated.joined(separator: " ")))"
+                )
+            }
+            try Self.apply(pending.resources, to: leaf)
+            guard let inode = leaf.inode, inode > 0 else {
+                throw RuntimeError("inspect cgroup \(leaf.displayPath): \(Errno.current)")
+            }
+            let programID = try pending.resources.devicePolicy.map { policy in
+                try leaf.descriptor.withDescriptor { try DeviceFilter.install(policy, in: $0) }
+            }
+            identity = CgroupIdentity(
+                path: leaf.path, inode: inode, bootID: identity.bootID, created: true, deviceProgramID: programID, systemdUnit: unit)
+            oomKillBaseline = Self.oomKillCount(leaf)
+            directory = leaf
+        } catch {
+            _ = try? manager.stopUnit(unit)
+            manager.resetFailedUnit(unit)
+            throw error
+        }
     }
 
     /// The forked init shares the lock's open file description until it
@@ -358,7 +464,7 @@ final class CgroupLeaf {
 
     /// Whether the kernel OOM-killed a process in this cgroup (or below it)
     /// since it was prepared.
-    var oomKilledSincePrepare: Bool { Self.oomKillCount(directory) > oomKillBaseline }
+    var oomKilledSincePrepare: Bool { directory.map { Self.oomKillCount($0) > oomKillBaseline } ?? false }
 
     /// The kernel's OOM kill count (0 without memory.events).
     private static func oomKillCount(_ directory: CgroupDirectory) -> UInt64 {
@@ -436,6 +542,9 @@ final class CgroupLeaf {
         guard try ProcFS.bootID() == identity.bootID else {
             return "cgroup \(CgroupDirectory.mountPoint)\(identity.path) was recorded before a reboot; left untouched"
         }
+        if let unit = identity.systemdUnit {
+            return try removeScope(identity, unit: unit, killRemaining: killRemaining)
+        }
 
         // Reopen the recorded path beneath the mount root, without creating.
         let components = identity.components
@@ -480,6 +589,75 @@ final class CgroupLeaf {
             if let error = parent.removeChild(components[components.count - 1]) { throw RuntimeError("remove cgroup \(current.displayPath): \(error)") }
         }
         return nil
+    }
+
+    /// `remove` for a systemd scope. A scope systemd never created for this
+    /// container (still pending in the record) is not touched, since a unit
+    /// of that name would belong to someone else. Otherwise the remaining
+    /// processes are killed as for a cgroupfs cgroup, then the unit is
+    /// stopped, which makes systemd remove the cgroup and delegated child
+    /// cgroups (with the device filter attached to it), and a failed unit
+    /// is reset so the name can be used again. systemd also removes a scope
+    /// by itself once it is empty, so a missing unit or cgroup is success.
+    private static func removeScope(_ identity: CgroupIdentity, unit: String, killRemaining: Bool) throws -> String? {
+        guard !identity.isPendingSystemdScope else { return nil }
+        guard let current = try recordedDirectory(identity) else {
+            // Gone or replaced; a leftover failed unit of this name is reset
+            // (a no-op for a unit that is not failed).
+            if try openPath(identity.components) != nil {
+                return "cgroup \(CgroupDirectory.mountPoint)\(identity.path) is no longer the container's scope; left untouched"
+            }
+            (try? SystemdManager.connect())?.resetFailedUnit(unit)
+            return nil
+        }
+        // systemd may remove the emptied cgroup at any moment from here on,
+        // so a cgroup without cgroup.events counts as empty.
+        func populated() throws -> Bool { try current.keyedValue("cgroup.events", "populated").map { $0 != "0" } ?? false }
+        if try populated() {
+            guard killRemaining else {
+                throw RuntimeError(
+                    "container's cgroup \(current.displayPath) still has processes that this runtime cannot attribute to the container; they were not killed"
+                )
+            }
+            if let error = current.write("cgroup.kill", "1") {
+                // A cgroup systemd removed meanwhile is empty, not a failure.
+                let remaining = try populated()
+                if error != .noSuchFileOrDirectory || remaining {
+                    throw RuntimeError("kill processes in cgroup \(current.displayPath) through cgroup.kill: \(error) (requires Linux 5.14+)")
+                }
+            }
+            var waited: Int32 = 0
+            while try populated() {
+                guard waited < 10_000 else {
+                    throw RuntimeError("processes in cgroup \(current.displayPath) remain 10 seconds after cgroup.kill")
+                }
+                Kernel.Process.sleep(for: .milliseconds(10))
+                waited += 10
+            }
+        }
+        let manager = try SystemdManager.connect()
+        try manager.stopUnit(unit)
+        manager.resetFailedUnit(unit)
+        // systemd normally removes the cgroup; finish the job if it did not.
+        if let left = try recordedDirectory(identity) {
+            try removeDescendants(of: left)
+            let components = identity.components
+            if let parent = try openPath(Array(components.dropLast())),
+               let error = parent.removeChild(components[components.count - 1]) {
+                throw RuntimeError("remove cgroup \(left.displayPath) after stopping \(unit): \(error)")
+            }
+        }
+        return nil
+    }
+
+    /// The existing cgroup at `components` below the mount root, or nil.
+    private static func openPath(_ components: [String]) throws -> CgroupDirectory? {
+        var directory = try CgroupDirectory.openRoot()
+        for name in components {
+            guard let child = try directory.child(name) else { return nil }
+            directory = child
+        }
+        return directory
     }
 
     /// Exec's child is unreaped and blocked until this write succeeds.
@@ -554,6 +732,18 @@ final class CgroupLeaf {
     static func update(_ identity: CgroupIdentity, resources: CgroupResources) throws {
         guard let leaf = try recordedDirectory(identity) else {
             throw RuntimeError("container's recorded cgroup is missing, replaced, or from another boot")
+        }
+        if let unit = identity.systemdUnit {
+            // systemd owns the slices' controller settings; it delegated
+            // what it can at creation. As runc does, systemd's stored
+            // properties change first, so a later rewrite keeps the update.
+            let delegated = try leaf.words("cgroup.controllers")
+            for controller in resources.requiredControllers where !delegated.contains(controller) {
+                throw RuntimeError("systemd did not delegate the \(controller) controller to \(unit)")
+            }
+            try SystemdManager.connect().setUnitProperties(unit, try SystemdResourceProperties.properties(for: resources))
+            try apply(resources, to: leaf)
+            return
         }
         var directory = try CgroupDirectory.openRoot()
         var ancestors: [CgroupDirectory] = []

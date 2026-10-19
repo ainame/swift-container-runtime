@@ -1,7 +1,8 @@
 #!/bin/sh
 # Opt-in Docker acceptance gate (docs/docker-integration.md gates 3 and 4) on a
-# disposable rootful host with the cgroupfs driver. RUNTIME names a registered
-# Docker runtime; run it once with runc to validate the gate itself.
+# disposable rootful host with the cgroupfs or systemd cgroup driver. RUNTIME
+# names a registered Docker runtime; run it once with runc to validate the gate
+# itself.
 # Usage: sudo sh scripts/docker-integration.sh RUNTIME IMAGE@sha256:DIGEST
 # The image must provide BusyBox applets (Alpine does) and be pulled already.
 set -eu
@@ -27,7 +28,8 @@ pass() { echo "$runtime: $*"; }
 expect_equal() { [ "$1" = "$2" ] || fail "$3: got '$1', expected '$2'"; }
 
 docker version --format 'docker {{.Server.Version}}, containerd {{range .Server.Components}}{{if eq .Name "containerd"}}{{.Version}}{{end}}{{end}}'
-expect_equal "$(docker info --format '{{.CgroupDriver}}')" cgroupfs 'cgroup driver'
+driver=$(docker info --format '{{.CgroupDriver}}')
+case "$driver" in cgroupfs | systemd) echo "cgroup driver $driver" ;; *) fail "unsupported cgroup driver $driver" ;; esac
 
 # Provenance: the container was created by the named runtime. Docker passes
 # --root /run/docker/runtime-runc/moby to every runtime; only the Swift
@@ -41,9 +43,21 @@ if [ "$runtime" = runc ]; then
 else
     grep -q '"format"' "$state_root/$id/state.json" || fail 'state was not written by the Swift runtime'
 fi
+# With the systemd driver Docker passes cgroupsPath system.slice:docker:ID, so
+# the init must be in the transient docker-ID.scope that systemd created.
+scope=docker-$id.scope
+if [ "$driver" = systemd ]; then
+    pid=$(docker inspect --format '{{.State.Pid}}' "$id")
+    grep -qx "0::/system.slice/$scope" "/proc/$pid/cgroup" || fail "init is not in $scope: $(cat "/proc/$pid/cgroup")"
+    systemctl is-active --quiet "$scope" || fail "$scope is not an active systemd unit"
+fi
 docker rm -f "$prefix-provenance" > /dev/null
 [ ! -e "$state_root/$id" ] || fail 'removed container left runtime state'
-pass 'provenance and state cleanup'
+if [ "$driver" = systemd ]; then
+    [ ! -e "/sys/fs/cgroup/system.slice/$scope" ] || fail "removed container left its scope cgroup"
+    [ -z "$(systemctl list-units --all --plain --no-legend "$scope")" ] || fail "removed container left unit $scope"
+fi
+pass "provenance and state cleanup ($driver driver)"
 
 # Nonterminal workloads, exit status, logs and a failing executable.
 set +e

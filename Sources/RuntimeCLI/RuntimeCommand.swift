@@ -62,7 +62,7 @@ struct Create: RuntimeDescriptorCommand {
             // Check caller descriptors before loading the plan can open any.
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             try globals.lifecycle().create(
-                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), pidFile: pidFile,
+                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle), cgroupDriver: globals.cgroupDriver), pidFile: pidFile,
                 preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring,
                 consoleSocket: descriptors.consoleSocket)
         } catch {
@@ -353,7 +353,7 @@ struct Run: RuntimeDescriptorCommand {
         do {
             try PreservedDescriptors(count: descriptors.preserveFDs).verify()
             status = try globals.lifecycle().run(
-                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle)), detach: detach, keep: keep, pidFile: pidFile,
+                id: ContainerID(id), plan: OCIRunPlan.load(bundle: FilePath(bundle), cgroupDriver: globals.cgroupDriver), detach: detach, keep: keep, pidFile: pidFile,
                 preserveDescriptors: descriptors.preserveFDs, pidfdSocket: descriptors.pidfdSocket, noNewKeyring: noNewKeyring,
                 consoleSocket: descriptors.consoleSocket
             )

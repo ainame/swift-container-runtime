@@ -221,7 +221,7 @@ private func decode(_ bytes: [UInt8]) throws -> DefaultSpecification {
     let section = try #require(linux.linux)
     #expect(section.namespaces == ["pid", "mount", "uts", "ipc", "network", "cgroup", "user"])
     #expect(section.capabilities == CapabilitySet.knownNames)
-    #expect(section.cgroup == .init(v1: false, v2: true, systemd: false, systemdUser: false, rdma: false))
+    #expect(section.cgroup == .init(v1: false, v2: true, systemd: true, systemdUser: false, rdma: false))
     for surface in [section.seccomp, section.apparmor, section.selinux] {
         #expect(surface?.enabled == true)
     }

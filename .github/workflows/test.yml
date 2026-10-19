@@ -76,8 +76,10 @@ jobs:
 
   docker:
     # x86_64 engine profile on the hosted runner: its Docker, AppArmor and
-    # kernel, with the daemon switched to the cgroupfs driver this runtime
-    # manages. The runtime is built for the runner's Ubuntu 26.04 glibc.
+    # kernel, gated first with the daemon switched to the cgroupfs driver,
+    # then with its systemd driver (transient scopes through systemd's
+    # private D-Bus socket). The runtime is built for the runner's Ubuntu
+    # 26.04 glibc.
     runs-on: ubuntu-26.04
     env:
       IMAGE: alpine@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
@@ -110,6 +112,18 @@ jobs:
           sudo sh scripts/docker-integration.sh swift "$IMAGE"
       - name: AppArmor confinement gate
         run: sudo sh scripts/apparmor-integration.sh /usr/local/bin/srunc
+      - name: Switch Docker to the systemd cgroup driver
+        run: |
+          config=/etc/docker/daemon.json
+          sudo jq '.["exec-opts"] = ["native.cgroupdriver=systemd"]' "$config" | sudo tee "$config.new" > /dev/null
+          sudo mv "$config.new" "$config"
+          sudo systemctl restart docker
+          docker info --format '{{.ServerVersion}} {{.CgroupDriver}}'
+          systemctl --version | head -1
+      - name: Docker acceptance gate with the systemd driver
+        run: |
+          sudo sh scripts/docker-integration.sh runc "$IMAGE"
+          sudo sh scripts/docker-integration.sh swift "$IMAGE"
 
   runtime-tools:
     name: OCI runtime-tools validation

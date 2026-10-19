@@ -218,6 +218,8 @@ public struct CgroupPlan: Sendable, Equatable {
         case relative([String])
         /// Absolute: relative to the cgroup v2 mount root.
         case absolute([String])
+        /// A transient scope created by systemd (`--systemd-cgroup`).
+        case systemd(SystemdScopeRequest)
     }
 
     /// The runtime's subtree below the cgroup v2 mount root.
@@ -234,18 +236,29 @@ public struct CgroupPlan: Sendable, Equatable {
         self.resources = resources
     }
 
-    /// Components below the mount root for `id`; never empty.
+    /// Components below the mount root for `id`. Never empty, except for an
+    /// unusable systemd scope name, which `prepare` reports.
     public func components(for id: ContainerID) -> [String] {
         switch location {
         case .runtimeDefault: [Self.runtimePrefix, id.rawValue]
         case let .relative(parts): [Self.runtimePrefix] + parts
         case let .absolute(parts): parts
+        case let .systemd(request): (try? request.scope(id: id))?.components ?? []
         }
     }
 
-    /// Validates `linux.cgroupsPath` and `linux.resources`.
-    static func validated(path: String?, resources: OCIConfiguration.Resources?) throws -> CgroupPlan {
-        CgroupPlan(location: try location(path), resources: try converted(resources))
+    /// Validates `linux.cgroupsPath` for `driver` and `linux.resources`.
+    static func validated(path: String?, resources: OCIConfiguration.Resources?, driver: CgroupDriver = .cgroupfs) throws -> CgroupPlan {
+        let location: Location = switch driver {
+        case .cgroupfs: try location(path)
+        case .systemd:
+            if let path, !path.isEmpty {
+                .systemd(try SystemdScopeRequest.parse(path))
+            } else {
+                .systemd(SystemdScopeRequest(slice: SystemdScopeRequest.defaultSlice, prefix: runtimePrefix, name: nil))
+            }
+        }
+        return CgroupPlan(location: location, resources: try converted(resources))
     }
 
     /// Unlike runc, which cleans `.` and `..` lexically, such components are
@@ -393,14 +406,23 @@ struct CgroupIdentity: Codable, Sendable, Equatable {
     var created: Bool
     /// Only this program is detached when an adopted cgroup is cleaned up.
     var deviceProgramID: UInt32? = nil
+    /// The transient scope unit under the systemd driver, which systemd
+    /// creates and removes; nil for a cgroupfs cgroup. Until systemd has
+    /// started the unit (with the init in it), `inode` is 0: the record then
+    /// names a unit this container never owned and cleanup leaves it alone.
+    var systemdUnit: String? = nil
 
     var components: [String] { path.split(separator: "/").map(String.init) }
+
+    /// A systemd scope recorded before systemd created it.
+    var isPendingSystemdScope: Bool { systemdUnit != nil && inode == 0 }
 
     /// Rejects anything a malformed record could use to reach the mount
     /// root or leave the hierarchy.
     var isValid: Bool {
         let parts = components
-        return path.hasPrefix("/") && inode > 0 && !parts.isEmpty
+        let unitMatches = systemdUnit.map { !$0.isEmpty && !$0.contains("/") && parts.last == $0 } ?? true
+        return path.hasPrefix("/") && (inode > 0 || systemdUnit != nil) && unitMatches && !parts.isEmpty
             && !path.utf8.contains(0) && !path.utf8.contains(UInt8(ascii: "\n"))
             && !parts.contains { $0 == "." || $0 == ".." }
             && InitIdentity.isValidBootID(bootID)

@@ -389,3 +389,17 @@ func killAcceptsShimCompatibilityFlag(_ flag: String) throws {
     #expect(command.all)
     #expect(command.signal == "9")
 }
+
+@Test func systemdCgroupFlagWorksBeforeOrAfterSubcommandLikeRunc() throws {
+    // go-runc puts global options before the subcommand, for every command.
+    let create = try #require(RuntimeCommand.parseAsRoot(["--systemd-cgroup", "create", "--bundle", "/b", "box"]) as? Create)
+    #expect(create.globals.cgroupDriver == .systemd)
+    let run = try #require(RuntimeCommand.parseAsRoot(["run", "--systemd-cgroup", "box"]) as? Run)
+    #expect(run.globals.cgroupDriver == .systemd)
+    let delete = try #require(RuntimeCommand.parseAsRoot(["--systemd-cgroup", "delete", "box"]) as? Delete)
+    #expect(delete.globals.systemdCgroup)
+    let ps = try #require(RuntimeCommand.parseAsRoot(["ps", "--systemd-cgroup", "box"]) as? Ps)
+    #expect(ps.globals.systemdCgroup)
+    let defaulted = try #require(RuntimeCommand.parseAsRoot(["create", "box"]) as? Create)
+    #expect(defaulted.globals.cgroupDriver == .cgroupfs)
+}

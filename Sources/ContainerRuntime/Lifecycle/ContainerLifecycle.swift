@@ -642,7 +642,8 @@ extension ContainerLifecycle {
             hooks.detached = true
             hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
-            hooks.placeInit = { try cgroup.join($0) }
+            // A systemd scope exists only from the join on; record it then.
+            hooks.placeInit = { try cgroup.join($0); record.cgroup = cgroup.identity }
             hooks.initStarted = { record.initProcess = $0 }
             // Recorded before the commit: an init that outlives this command
             // is always findable by later commands.
@@ -700,7 +701,8 @@ extension ContainerLifecycle {
             var hooks = LaunchHooks()
             hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
-            hooks.placeInit = { try cgroup.join($0) }
+            // A systemd scope exists only from the join on; record it then.
+            hooks.placeInit = { try cgroup.join($0); record.cgroup = cgroup.identity }
             hooks.initStarted = { record.initProcess = $0 }
             hooks.executed = {
                 if let pidFile, let process = record.initProcess {

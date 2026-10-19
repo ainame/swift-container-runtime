@@ -177,7 +177,8 @@ public struct OCIRunPlan: Sendable {
     let resourceConfiguration: OCIConfiguration.Resources
 
     /// Loads `config.json` from a bundle directory and resolves the rootfs.
-    public static func load(bundle: FilePath) throws -> OCIRunPlan {
+    /// `cgroupDriver` decides how `linux.cgroupsPath` is read.
+    public static func load(bundle: FilePath, cgroupDriver: CgroupDriver = .cgroupfs) throws -> OCIRunPlan {
         let bundle = try BundleConfiguration.resolveDirectory(bundle, role: "bundle")
         let bytes = try BundleConfiguration.read(bundle.appending("config.json"))
         let configuration = try OCIConfiguration.decode(bytes)
@@ -188,7 +189,7 @@ public struct OCIRunPlan: Sendable {
         }
         let rootPath = FilePath(rootString)
         let rootfs = try BundleConfiguration.resolveDirectory(rootPath.isAbsolute ? rootPath : bundle.pushing(rootPath), role: "root.path")
-        return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs)
+        return try OCIRunPlan(configuration, bundle: bundle, rootfs: rootfs, cgroupDriver: cgroupDriver)
     }
 
     /// Like runc's command-based exec, reread the bundle's process settings.
@@ -298,7 +299,7 @@ public struct OCIRunPlan: Sendable {
         return ExitStatus(shellStatus: status)
     }
 
-    init(_ configuration: OCIConfiguration, bundle: FilePath, rootfs: FilePath) throws {
+    init(_ configuration: OCIConfiguration, bundle: FilePath, rootfs: FilePath, cgroupDriver: CgroupDriver = .cgroupfs) throws {
         guard bundle.isAbsolute, rootfs.isAbsolute else {
             throw RuntimeError("bundle and rootfs paths must be absolute")
         }
@@ -370,7 +371,7 @@ public struct OCIRunPlan: Sendable {
             }
             userNamespace = nil
         }
-        let cgroup = try CgroupPlan.validated(path: configuration.linux.cgroupsPath, resources: configuration.linux.resources)
+        let cgroup = try CgroupPlan.validated(path: configuration.linux.cgroupsPath, resources: configuration.linux.resources, driver: cgroupDriver)
 
         self.ociVersion = version
         self.bundle = bundle

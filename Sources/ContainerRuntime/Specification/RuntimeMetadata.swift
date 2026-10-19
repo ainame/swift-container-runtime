@@ -91,7 +91,7 @@ public struct RuntimeFeatures: Codable, Equatable, Sendable {
                 ? Linux(
                     namespaces: OCIRunPlan.Namespace.allCases.map(\.rawValue),
                     capabilities: CapabilitySet.knownNames,
-                    cgroup: Linux.Cgroup(v1: false, v2: true, systemd: false, systemdUser: false, rdma: false),
+                    cgroup: Linux.Cgroup(v1: false, v2: true, systemd: true, systemdUser: false, rdma: false),
                     seccomp: Linux.Enabled(enabled: true),
                     // Implemented, as runc reports them; a requested module the
                     // host does not enable fails when the container starts.
