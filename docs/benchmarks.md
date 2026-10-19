@@ -5,6 +5,73 @@ runtime startup, namespace/rootfs setup, workload execution, wait and state
 cleanup. It is a small launch benchmark, not a Docker or application throughput
 benchmark.
 
+## Four-runtime comparison, including kontainer
+
+Rerun on the same ARM64 VM after all build experiments finished, using 10
+warmups and 20 measured runs per runtime with the same bundle and native probe:
+
+| Runtime | Median run (ms) | Median peak process RSS (MiB) | Binary size (MB) |
+| --- | ---: | ---: | ---: |
+| srunc `7e63ab9` | 7.657 | 17.652 | 59.494 |
+| kontainer-runtime 0.6.1 | 3.408 | 5.027 | 4.107 |
+| Ubuntu runc 1.4.0-0ubuntu1 | 6.194 | 11.814 | 10.925 |
+| Upstream runc 1.5.2 | 6.341 | 10.188 | 10.092 |
+
+The srunc executable is byte-identical to the original baseline. The runner's
+source commit is `1088476`; the runtime source is still `7e63ab9`.
+[Raw samples and binary identities](benchmarks/2026-10-19-arm64-kontainer.json)
+retain all 80 measurements. No build was running during this sampling session.
+
+Kontainer is the upstream [0.6.1 ARM64 release asset](https://github.com/ternbusty/kontainer-runtime/releases/tag/v0.6.1),
+commit `1cddebadcdce181626749241c7ef0ab13d97d40a`, fully static and stripped.
+Its SHA-256 matches GitHub's asset digest:
+`77e936f076a079a8a7052ba2e812d0e9acd4caa261962c3edd8bfe75396e6850`.
+The tag's `gradle.properties` sets `kotlin.native.binary.pagedAllocator=false`,
+so this includes the allocator tuning described in the supplied slides.
+
+Kontainer leaves an empty `.exeseal` directory under its state root for its
+executable-sealing overlayfs lowerdir. The runner now allows explicitly named,
+empty support directories; any nonempty, symlinked or undeclared entry still
+fails cleanup verification. This directory persists through warmups and samples
+and is removed with the benchmark's private temporary root afterwards.
+
+To include the downloaded binary in a run, add:
+
+```sh
+--runtime kontainer-runtime=/path/to/kontainer-runtime_0.6.1_linux_arm64 \
+--allow-empty-state-directory kontainer-runtime=.exeseal
+```
+
+## Why srunc's binary is large
+
+ELF/symbol inspection of the original binary identifies **33,976,096 bytes
+(33.98 MB)** in the single ICU data symbol `icudt76_dat`: approximately **57% of
+the entire stripped executable**. Its `.rodata` section totals 37.20 MB, and
+`.text` totals 15.29 MB. These are embedded bytes, not peak resident memory.
+
+Two files unconditionally import full Foundation:
+`Sources/RuntimeCLI/RuntimeLog.swift` and
+`Sources/ContainerRuntime/Lifecycle/ContainerLifecycle.swift`. In this static
+Swift build, their Foundation dependency brings in internationalization/ICU
+and other Foundation code. Most other files already prefer FoundationEssentials
+where available.
+
+A controlled experiment in a separate guest-local source copy changed only
+those two imports to `FoundationEssentials`, then rebuilt with the same release
+and static-Swift settings and stripped the executable. Size fell from
+**59,494,168 to 15,483,000 bytes**, a **44.01 MB / 74% reduction**. No tracked
+runtime sources were changed. This establishes a removable Foundation dependency
+cost; it is not a claim that all remaining size belongs to our runtime code.
+The remainder still includes the Swift standard library, FoundationEssentials,
+ArgumentParser, swift-system, metadata and unwind information.
+
+The experiment passed compilation only; behavior and Linux integrations have
+not been validated for that source change. The comparison table uses the
+original, unchanged executable. [Size evidence and exact import changes](benchmarks/2026-10-19-binary-size.json)
+record the two binary hashes and section sizes. Debug information is not the
+explanation for the reported 59.49 MB: the original unstripped binary is larger,
+and all benchmarked srunc sizes were measured after `strip`.
+
 ## 2026-10-19 ARM64 baseline
 
 Apple `container` machine `srunc-dev`: 5 vCPUs, 32 GiB configured RAM, Ubuntu
@@ -61,7 +128,8 @@ Other limits:
   parent immediately before fork and ends after wait4.
 - Warm caches, a shared development VM, no CPU affinity/frequency isolation,
   one short sampling session. Small differences need more controlled follow-up.
-- Kontainer, youki and crun were not measured. No runtime tuning was applied.
+- This original session did not measure kontainer, youki or crun. The later
+  four-runtime session above adds kontainer. No srunc tuning was applied.
 
 ## Reproduce
 

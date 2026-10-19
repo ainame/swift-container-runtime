@@ -1,0 +1,41 @@
+{
+  "source_commit": "108847694f1bb67a38936e4f554ff4cf9d9f9349",
+  "swift_version": "Swift version 6.4.1 (swift-6.4.1-RELEASE)\nTarget: aarch64-unknown-linux-gnu",
+  "baseline": {
+    "size_bytes": 59494168,
+    "sha256": "f9857e16b120d0e42e622f42ee4931a8a28ccb0d26829d5a1489639be7e7c072",
+    "sections": "/var/tmp/srunc-benchmark-bin/srunc  :\nsection                            size       addr\n.interp                              27        624\n.note.ABI-tag                        32        652\n.note.gnu.build-id                   36        684\n.dynsym                           83088        720\n.dynstr                          185014      83808\n.gnu.hash                         22260     268824\n.gnu.version                       6924     291084\n.gnu.version_r                      528     298008\n.rela.dyn                       1986768     298536\n.rela.plt                         10488    2285304\n.init                                28    2295792\n.plt                               7024    2295824\n.text                          15290292    2302848\n.fini                                24   17593140\nswift5_protocols                   1024   17593164\nswift5_protocol_conformances      25604   17594188\nswift5_type_metadata               9680   17619792\nswift5_fieldmd                   129716   17629472\nswift5_builtin                     5280   17759188\nswift5_assocty                    53472   17764468\nswift5_capture                    14676   17817940\nswift5_reflstr                    90726   17832624\nswift5_typeref                   136482   17923360\nswift5_mpenum                      1208   18059844\nswift5_replace                       32   18061056\nswift5_replac2                        0   18061088\nswift5_accessible_functions           0   18061088\nswift5_runtime_attributes             0   18061088\nswift5_tests                          0   18061088\n.swift_modhash                     7152   18061088\nswift5_entry                          8   18068240\nswift5_type_metadata_2              112   18068248\n.lldbsummaries                       70   18068360\n.gcc_except_table                100372   18068432\n.eh_frame                       2473820   18168808\n.eh_frame_hdr                    553484   20642628\n.tbss                               153   21282288\n.fini_array                           8   21282288\n.init_array                          96   21282296\n.data.rel.ro                     651880   21282392\n.dynamic                            592   21934272\n.got                              19672   21934864\n.got.plt                           3520   21954536\n.data                            315784   21958080\n.rodata                        37197504   22273872\n.tm_clone_table                       0   59471376\nswift5_backtrace                  65536   59473920\n.cfstr.data                       15880   59539456\n.bss                             881266   59555840\n.ARM.attributes                      36          0\n.comment                            149          0\n.note.gnu.gold-version               28          0\nTotal                          60347555\n\n\n",
+    "icu_data_symbol": "000000000178c590 0000000002066f20 d icudt76_dat",
+    "icu_data_bytes": 33976096,
+    "unstripped_size_bytes": 82995016
+  },
+  "experiment": {
+    "scope": "isolated copy; no tracked runtime sources changed; compilation only, not behavioral validation",
+    "changes": [
+      {
+        "file": "Sources/RuntimeCLI/RuntimeLog.swift",
+        "from": "import Foundation",
+        "to": "import FoundationEssentials"
+      },
+      {
+        "file": "Sources/ContainerRuntime/Lifecycle/ContainerLifecycle.swift",
+        "from": "import Foundation",
+        "to": "import FoundationEssentials"
+      }
+    ],
+    "command": [
+      "swift",
+      "build",
+      "-c",
+      "release",
+      "--product",
+      "srunc",
+      "--static-swift-stdlib",
+      "--package-path",
+      "/var/tmp/srunc-size-experiment"
+    ],
+    "size_bytes": 15483000,
+    "sha256": "5614db2ef34cb701badf40aef377f6ee82675be42b00278abce4afcf2f7ec669",
+    "sections": "/var/tmp/srunc-size-experiment/.build/release/srunc  :\nsection                            size       addr\n.interp                              27        624\n.note.ABI-tag                        32        652\n.note.gnu.build-id                   36        684\n.dynsym                           80424        720\n.dynstr                          183406      81144\n.gnu.hash                         22260     264552\n.gnu.version                       6702     286812\n.gnu.version_r                      448     293516\n.rela.dyn                       1064784     293968\n.rela.plt                          8016    1358752\n.init                                28    1366768\n.plt                               5376    1366800\n.text                           9565536    1372224\n.fini                                24   10937760\nswift5_protocols                    860   10937784\nswift5_protocol_conformances      18112   10938644\nswift5_type_metadata               7164   10956756\nswift5_fieldmd                    98228   10963920\nswift5_builtin                     4560   11062148\nswift5_assocty                    41680   11066708\nswift5_capture                    12084   11108388\nswift5_reflstr                    64524   11120480\nswift5_typeref                   100151   11185008\nswift5_mpenum                       972   11285160\nswift5_replace                        0   11286132\nswift5_replac2                        0   11286132\nswift5_accessible_functions           0   11286132\nswift5_runtime_attributes             0   11286132\nswift5_tests                          0   11286132\n.swift_modhash                     4544   11286132\nswift5_entry                          8   11290676\nswift5_type_metadata_2              108   11290684\n.lldbsummaries                       70   11290792\n.eh_frame                       1448812   11290864\n.eh_frame_hdr                    357012   12739676\n.tbss                               160   13168944\n.fini_array                           8   13168944\n.init_array                          88   13168952\n.data.rel.ro                     385200   13169040\n.dynamic                            592   13554240\n.got                              11096   13554832\n.got.plt                           2696   13565928\n.data                            154000   13568640\n.rodata                         1753600   13722640\n.tm_clone_table                       0   15476240\nswift5_backtrace                  65536   15478784\n.bss                             631553   15544320\n.ARM.attributes                      36          0\n.comment                            149          0\n.note.gnu.gold-version               28          0\nTotal                          16100730\n\n\n"
+  }
+}

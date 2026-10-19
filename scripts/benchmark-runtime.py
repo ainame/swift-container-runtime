@@ -46,6 +46,9 @@ def main():
     parser.add_argument('--runs', type=int, default=20)
     parser.add_argument('--busybox', type=Path, default=Path('/bin/busybox'))
     parser.add_argument('--build-report', type=Path)
+    parser.add_argument('--allow-empty-state-directory', action='append', default=[],
+                        metavar='NAME=DIRECTORY',
+                        help='Allow one declared empty runtime support directory after cleanup')
     args = parser.parse_args()
     if platform.system() != 'Linux' or os.geteuid() != 0:
         parser.error('Run as root on Linux with namespace and mount privileges')
@@ -66,6 +69,12 @@ def main():
             'linkage': capture('ldd', str(binary)),
             'samples': [],
         }
+    allowed_directories = {name: [] for name in runtimes}
+    for item in args.allow_empty_state_directory:
+        name, directory = item.split('=', 1)
+        if name not in runtimes or Path(directory).name != directory or directory in ('.', '..'):
+            parser.error(f'invalid support directory declaration: {item}')
+        allowed_directories[name].append(directory)
 
     # Guest-local storage avoids measuring metadata operations over macOS virtiofs.
     with tempfile.TemporaryDirectory(prefix='srunc-bench-', dir='/var/tmp') as temporary:
@@ -115,10 +124,14 @@ def main():
                     sample['round'] = index - args.warmups + 1
                     runtimes[name]['samples'].append(sample)
                 print(f'{name}: {index + 1}/{args.warmups + args.runs}', flush=True)
-            for command in commands.values():
+            for name, command in commands.items():
                 state = Path(command[2])
-                if state.exists() and any(state.iterdir()):
-                    raise RuntimeError(f'Runtime left container state in {state}')
+                if state.exists():
+                    for entry in state.iterdir():
+                        if (entry.name in allowed_directories[name] and not entry.is_symlink()
+                                and entry.is_dir() and not any(entry.iterdir())):
+                            continue
+                        raise RuntimeError(f'Runtime left unexpected container state: {entry}')
 
     for runtime in runtimes.values():
         samples = runtime['samples']
@@ -134,6 +147,7 @@ def main():
                    'timing': 'native probe CLOCK_MONOTONIC fork through wait4; foreground OCI run including cleanup',
                    'rss': 'wait4 ru_maxrss (KiB); largest process high-water mark, not aggregate',
                    'storage': 'guest /var/tmp; warm caches; runtime order shuffled per round'},
+        'allowed_empty_state_directories': allowed_directories,
         'bundle_config': config,
         'busybox_sha256': hashlib.sha256(args.busybox.read_bytes()).hexdigest(),
         'runtimes': runtimes,
