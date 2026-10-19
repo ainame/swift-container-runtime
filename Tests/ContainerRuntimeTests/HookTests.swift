@@ -42,6 +42,7 @@ private func hookPlan(_ hooks: String) throws -> OCIRunPlan {
 
 @Test(arguments: [
     HookOutcome.exited(3), .signaled(9), .timedOut(seconds: 2), .spawnFailed(.noSuchFileOrDirectory),
+    .ioFailed(.brokenPipe), .waitFailed(.noChildProcess),
 ])
 func containerHookFailuresSurviveTheLaunchRecord(_ outcome: HookOutcome) {
     let failure = outcome.failure(at: .startContainerHook, index: 7)

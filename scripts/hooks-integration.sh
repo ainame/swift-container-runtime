@@ -9,6 +9,7 @@ runtime=${1:-.build/debug/srunc}
 case "$runtime" in /*) ;; *) runtime="$PWD/$runtime" ;; esac
 busybox=${BUSYBOX:-/bin/busybox}
 compare=${RUNC_COMPARE:-0}
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 scratch=$(mktemp -d)
 scratch=$(cd "$scratch" && pwd -P)
 ours="timeout -k 2 60 $runtime --root $scratch/state"
@@ -17,6 +18,15 @@ cleanup() {
     for rt in "$ours" "$theirs"; do
         for id in $($rt list -q 2>/dev/null); do $rt delete --force "$id" >/dev/null 2>&1 || :; done
     done
+    # Only this fixture's inherited-output writer may outlive a failed hook.
+    if [ -f "$scratch/log/descendant" ]; then
+        writer_pid=$(cat "$scratch/log/descendant")
+        if [ "$(readlink "/proc/$writer_pid/exe" 2>/dev/null)" = "$scratch/rootfs/hook-io-probe" ]; then kill "$writer_pid" 2>/dev/null || :; fi
+    fi
+    if [ -f "$scratch/log/hooks-io-createRuntime-blocked" ]; then
+        hook_pid=$(cat "$scratch/log/hooks-io-createRuntime-blocked")
+        if [ "$(readlink "/proc/$hook_pid/exe" 2>/dev/null)" = "$scratch/rootfs/hook-io-probe" ]; then kill "$hook_pid" 2>/dev/null || :; fi
+    fi
     rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -164,4 +174,68 @@ if $ours create --bundle "$scratch/$tag" "$tag" < /dev/null > /dev/null 2> "$scr
 grep -qF 'error running createRuntime hook #0: timeout after 1s' "$scratch/$tag.err" || { cat "$scratch/$tag.err"; fail "$tag: wrong error"; }
 if pgrep -f "^sleep 10$" > /dev/null; then fail "$tag: timed-out hook survived"; fi
 echo 'swift: prestart/createRuntime/createContainer/startContainer/poststart failures, poststop warning and timeout'
+
+# Large state and bidirectional I/O must use the same deadline in both the
+# supervisor and the post-pivot init. A regular output capture avoids making
+# the harness itself wait on an inherited writer's EOF.
+"${CC:-clang}" -static -O2 -Wall -Wextra -Werror "$here/fixtures/hook-io-probe.c" -o "$rootfs/hook-io-probe"
+for phase in createRuntime startContainer; do
+    for mode in blocked duplex closed; do
+        tag=hooks-io-$phase-$mode
+        probe=$rootfs/hook-io-probe report=$scratch/log/$tag
+        if [ "$phase" = startContainer ]; then probe=/hook-io-probe report=/log/$tag; fi
+        seconds=5
+        [ "$mode" != blocked ] || seconds=1
+        hooks=$(printf '{"%s":[{"path":"%s","args":["probe","%s","%s"],"timeout":%s}]}' "$phase" "$probe" "$mode" "$report" "$seconds")
+        config "$tag" '["/bin/echo", "must-not-run"]' "$hooks"
+        sed '$d' "$scratch/$tag/config.json" > "$scratch/large.json"
+        printf ',"annotations":{"large":"' >> "$scratch/large.json"
+        # Below config.json's 1 MiB limit, but above the Unix socket buffer.
+        head -c 524288 /dev/zero | tr '\000' x >> "$scratch/large.json"
+        printf '"}}\n' >> "$scratch/large.json"
+        mv "$scratch/large.json" "$scratch/$tag/config.json"
+        if [ "$phase" = startContainer ]; then
+            $ours create --bundle "$scratch/$tag" "$tag" < /dev/null > /dev/null 2> "$scratch/$tag.err" || { cat "$scratch/$tag.err"; fail "$tag: create failed"; }
+            set -- start "$tag"
+        else
+            set -- create --bundle "$scratch/$tag" "$tag"
+        fi
+        started=$(date +%s)
+        if timeout -k 2 8 "$runtime" --root "$scratch/state" "$@" < /dev/null > "$scratch/$tag.out" 2> "$scratch/$tag.err"; then fail "$tag: hook succeeded"; fi
+        [ $(($(date +%s) - started)) -lt 8 ] || fail "$tag: I/O bypassed the hook deadline"
+        case "$mode" in
+            blocked)
+                grep -qF 'timeout after 1s' "$scratch/$tag.err" || { cat "$scratch/$tag.err"; fail "$tag: wrong timeout"; }
+                # startContainer reports namespace PID 1; its teardown is checked
+                # by lifecycle/OCI integration. Host hooks report a host PID.
+                if [ "$phase" = createRuntime ]; then [ ! -e "/proc/$(cat "$scratch/log/$tag")" ] || fail "$tag: timed-out hook survived"; fi
+                ;;
+            duplex)
+                grep -qF 'exit status 3' "$scratch/$tag.err" || fail "$tag: original failure lost"
+                if [ "$phase" = createRuntime ]; then grep -qF 'output: hook-output-first' "$scratch/$tag.err" || fail "$tag: output lost"; fi
+                [ "$(cat "$scratch/log/$tag")" -gt 524288 ] || fail "$tag: state was truncated"
+                ;;
+            closed)
+                grep -qF 'exit status 3' "$scratch/$tag.err" || fail "$tag: closed stdin hid hook failure"
+                if [ "$phase" = createRuntime ]; then grep -qF 'output: closed-input' "$scratch/$tag.err" || fail "$tag: output lost"; fi
+                ;;
+        esac
+        ! grep -q must-not-run "$scratch/$tag.out" || fail "$tag: workload ran"
+        if [ "$phase" = startContainer ]; then $ours delete --force "$tag"; fi
+        if $ours state "$tag" > /dev/null 2>&1; then fail "$tag: state leaked"; fi
+    done
+done
+
+tag='hooks-io-descendant'
+config "$tag" '["/bin/true"]' "$(printf '{"createRuntime":[{"path":"%s","args":["probe","descendant","%s"]}]}' "$rootfs/hook-io-probe" "$scratch/log/descendant")"
+started=$(date +%s)
+if timeout -k 2 8 "$runtime" --root "$scratch/state" create --bundle "$scratch/$tag" "$tag" > /dev/null 2> "$scratch/$tag.err"; then fail "$tag: hook succeeded"; fi
+[ $(($(date +%s) - started)) -lt 8 ] || fail "$tag: descendant prolonged output drain"
+grep -qF 'exit status 3, output: hook-descendant' "$scratch/$tag.err" || fail "$tag: original failure lost"
+descendant=$(cat "$scratch/log/descendant")
+for _ in $(seq 100); do [ -e "/proc/$descendant" ] || break; sleep 0.05; done
+[ ! -e "/proc/$descendant" ] || fail "$tag: writer survived closed hook output"
+rm "$scratch/log/descendant"
+if $ours state "$tag" > /dev/null 2>&1; then fail "$tag: state leaked"; fi
+echo 'swift: hook stdin deadlines, output-before-input, early stdin close and bounded inherited-output drain'
 echo 'Hooks integration passed.'

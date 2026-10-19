@@ -75,11 +75,13 @@ extension Kernel {
             #endif
         }
 
-        /// One send(2), retried on EINTR; returns the bytes sent.
-        static func send(_ socket: FileDescriptor, _ bytes: RawSpan) throws(Errno) -> Int {
+        /// One send(2), retried on EINTR; returns the bytes sent. Hook state
+        /// delivery uses MSG_DONTWAIT so a full socket cannot bypass its deadline.
+        static func send(_ socket: FileDescriptor, _ bytes: RawSpan, nonBlocking: Bool = false) throws(Errno) -> Int {
+            let flags = noSignal | (nonBlocking ? dontWait : 0)
             let result = bytes.withUnsafeBytes { buffer in
                 var result: Int
-                repeat { result = unsafe libcSend(socket.rawValue, buffer.baseAddress, buffer.count, noSignal) }
+                repeat { result = unsafe libcSend(socket.rawValue, buffer.baseAddress, buffer.count, flags) }
                 while result < 0 && errno == EINTR
                 return result
             }
@@ -129,10 +131,12 @@ extension Kernel {
 
         #if os(Linux)
         private static let noSignal = Int32(MSG_NOSIGNAL)
+        private static let dontWait = Int32(MSG_DONTWAIT)
         private static func controlSpace(_ length: Int) -> Int { linux_cmsg_space(length) }
         private static func controlLength(_ length: Int) -> Int { linux_cmsg_len(length) }
         #else
         private static let noSignal: Int32 = 0
+        private static let dontWait = Int32(MSG_DONTWAIT)
         private static func controlSpace(_ length: Int) -> Int {
             let align = MemoryLayout<UInt32>.size
             return (MemoryLayout<cmsghdr>.size + align - 1) / align * align + (length + align - 1) / align * align

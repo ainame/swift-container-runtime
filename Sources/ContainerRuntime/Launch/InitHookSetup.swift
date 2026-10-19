@@ -33,7 +33,7 @@ struct InitHookSetup: Sendable {
     /// Sends `{"pid":<pid>,` and then `state` after its opening brace, so the
     /// child adds its own PID without building a string. `state` always
     /// holds at least the ID, so the comma joins two members.
-    static func writeState(_ state: [UInt8], pid: pid_t, to socket: FileDescriptor) {
+    static func writeState(_ state: [UInt8], pid: pid_t, send: (RawSpan) -> Bool) {
         var digits = InlineArray<12, UInt8>(repeating: 0)
         var start = 12
         var value = Int64(pid)
@@ -42,10 +42,8 @@ struct InitHookSetup: Sendable {
             digits[start] = UInt8(ascii: "0") + UInt8(value % 10)
             value /= 10
         } while value > 0
-        guard ContainerHooks.sendAll(pidPrefix.span.bytes, to: socket),
-              ContainerHooks.sendAll(digits.span.bytes.extracting(start...), to: socket),
-              ContainerHooks.sendAll(comma.span.bytes, to: socket) else { return }
-        _ = ContainerHooks.sendAll(state.span.bytes.extracting(1...), to: socket)
+        guard send(pidPrefix.span.bytes), send(digits.span.bytes.extracting(start...)), send(comma.span.bytes) else { return }
+        _ = send(state.span.bytes.extracting(1...))
     }
 }
 
@@ -65,7 +63,7 @@ struct InitHooks {
     func run() -> LaunchFailure? {
         let pid = Kernel.Process.id
         for unsafe (index, hook) in unsafe hooks.enumerated() {
-            let outcome = unsafe HookRunner.run(hook, writeState: { unsafe InitHookSetup.writeState(state, pid: pid, to: $0) })
+            let outcome = unsafe HookRunner.run(hook, writeState: { unsafe InitHookSetup.writeState(state, pid: pid, send: $0) })
             if outcome != .success { return unsafe outcome.failure(at: stage, index: index) }
         }
         return nil

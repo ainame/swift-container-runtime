@@ -128,7 +128,12 @@ stdin (`ociVersion`, `id`, `status`, `pid`, `bundle`, `annotations`):
 A hook's argv is its `args`, or just its path. Its environment is its `env`, or
 the runtime's own when unset, except that startContainer hooks without `env` get
 the workload's environment, as in runc. Stdout and stderr are combined and
-included in the error. A `timeout` (seconds, positive) kills the hook. Hooks of
+included in the error. A `timeout` (seconds, positive) covers state delivery,
+output collection and waiting for the hook, and kills the hook when exceeded.
+The synchronous poll loop drains output while delivering state, so a hook can
+write before reading a large state JSON. After the hook exits,
+diagnostic draining is bounded to 64 KiB and 100 ms (or the remaining timeout),
+so descendants retaining its stdout cannot keep the runtime waiting. Hooks of
 one phase run in order; descriptors from 3 up are closed in the hook where glibc
 supports it (2.34+). A failing prestart, createRuntime or createContainer hook
 fails `create`/`run` without leaving state; a failing startContainer hook fails

@@ -59,7 +59,7 @@ extension ContainerHooks {
                         path: (pointers + starts[0])[0]!, arguments: pointers + starts[1],
                         environment: hook.env == nil ? nil : pointers + starts[2], timeout: hook.duration)
                     return unsafe HookRunner.run(
-                        prepared, writeState: { _ = Self.sendAll(json.span.bytes, to: $0) },
+                        prepared, writeState: { _ = $0(json.span.bytes) },
                         consume: { chunk in
                             guard output.count < Self.outputLimit else { return }
                             chunk.withUnsafeBytes { unsafe output.append(contentsOf: $0.prefix(Self.outputLimit - output.count)) }
@@ -83,16 +83,4 @@ extension ContainerHooks {
 
     /// Output kept for an error message.
     private static let outputLimit = 64 * 1024
-
-    /// Writes all of `bytes`, false once the hook stopped reading; a hook
-    /// that never reads its state only loses the rest. Allocates nothing.
-    @discardableResult
-    static func sendAll(_ bytes: RawSpan, to socket: FileDescriptor) -> Bool {
-        var sent = 0
-        while sent < bytes.byteCount {
-            guard let count = try? Kernel.Socket.send(socket, bytes.extracting(sent...)), count > 0 else { return false }
-            sent += count
-        }
-        return true
-    }
 }

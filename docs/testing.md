@@ -182,6 +182,13 @@ subreaper, shared/private PID namespaces, surviving descendants after init exits
 paused and stopped states, descendant cgroups, non-KILL init-only signaling and
 bystander/stale-identity safety. It needs cgroup v2 `cgroup.kill` (Linux 5.14+).
 
+`scripts/hooks-integration.sh` covers six-phase ordering and state, failure and
+cleanup behavior. Its static `hook-io-probe.c` also checks 512 KiB state delivery
+to hooks that ignore stdin, write 256 KiB before reading it, or close it early,
+in both supervisor (`createRuntime`) and init (`startContainer`) execution.
+The one-second timeout includes blocked input delivery; a continuously writing
+descendant must not extend final diagnostic draining.
+
 `scripts/filesystems-integration.sh` mounts sysfs, mqueue, tmpfs-based shm and a
 read-only tmpfs in new network/IPC namespaces. It compares run/create/start/exec
 with runc, verifies mount types/flags before start, EROFS, private network and IPC
