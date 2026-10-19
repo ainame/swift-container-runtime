@@ -186,6 +186,8 @@ func readsRootReadonly(root: String, readonly: Bool) throws {
     (config(mounts: #"[{"destination": "/data", "type": "bind", "options": ["rbind"]}]"#), "source is required"),
     (config(mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup2"}]"#), "cgroup2"),
     (config(mounts: #"[{"destination": "/sys", "type": "sysfs", "options": ["mode=755"]}]"#), "mode=755"),
+    (config(mounts: #"[{"destination": "/x", "type": "bind", "source": "/tmp", "options": ["rbind", "relatime"]}]"#), "relatime"),
+    (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["strictatime", "relatime"]}]"#), "relatime"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["uid=1000"]}]"#), "uid=1000"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": ["mode=9"]}]"#), "mode=9"),
     (config(mounts: #"[{"destination": "/x", "type": "tmpfs", "options": [""]}]"#), "options"),
@@ -627,4 +629,46 @@ func plansSuppliedNamespacePaths(_ namespace: String) throws {
     #expect(extended.arguments == baseline.arguments)
     #expect(extended.security == baseline.security)
     #expect(extended.mounts == baseline.mounts)
+}
+
+/// `spec` writes relatime for /sys/fs/cgroup; a new mount is relatime already.
+@Test func acceptsRelatimeForNewMounts() throws {
+    let built = try plan(config(
+        mounts: #"[{"destination": "/sys/fs/cgroup", "type": "cgroup", "source": "cgroup", "options": ["nosuid", "relatime", "ro"]}]"#,
+        linux: #"{"namespaces": [{"type": "mount"}, {"type": "uts"}, {"type": "cgroup"}]}"#))
+    #expect(built.mounts[0].flags == [.nosuid, .readonly])
+}
+
+/// runc's rootless fs2 fallback: only without a path and without any
+/// request; device rules count as a request here.
+@Test func rootlessCgroupFallbackNeedsNoRequests() throws {
+    let bare = try plan(config())
+    #expect(bare.cgroup.allowsRootlessFallback(effectiveUID: 1000))
+    #expect(!bare.cgroup.allowsRootlessFallback(effectiveUID: 0))
+    for linux in [
+        #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "cgroupsPath": "/custom"}"#,
+        #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "resources": {"pids": {"limit": 64}}}"#,
+        #"{"namespaces": [{"type": "mount"}, {"type": "uts"}], "resources": {"devices": [{"allow": false, "access": "rwm"}]}}"#,
+    ] {
+        #expect(!(try plan(config(linux: linux))).cgroup.allowsRootlessFallback(effectiveUID: 1000), "\(linux)")
+    }
+}
+
+/// An unprivileged caller writes only its own one-ID GID map, after denying
+/// setgroups; anything else goes through newgidmap, as in runc.
+@Test func rootlessMapsDenySetgroupsOnlyForTheCallersOwnGID() throws {
+    func maps(_ gid: String) throws -> UserNamespace {
+        let configuration = try OCIConfiguration.decode(Array(config(linux: """
+            {"namespaces": [{"type": "mount"}, {"type": "uts"}, {"type": "user"}],
+             "uidMappings": [{"containerID": 0, "hostID": 1000, "size": 1}], "gidMappings": \(gid)}
+            """).utf8))
+        return try #require(try OCIRunPlan(configuration, bundle: FilePath("/bundle"), rootfs: FilePath("/bundle/rootfs")).userNamespace)
+    }
+    let own = try maps(#"[{"containerID": 0, "hostID": 1000, "size": 1}]"#)
+    #expect(own.deniesSetgroups(effectiveUID: 1000, effectiveGID: 1000))
+    #expect(!own.deniesSetgroups(effectiveUID: 0, effectiveGID: 1000))
+    #expect(!own.deniesSetgroups(effectiveUID: 1000, effectiveGID: 1001))
+    let helper = try maps(#"[{"containerID": 0, "hostID": 1000, "size": 1}, {"containerID": 1, "hostID": 200000, "size": 65536}]"#)
+    #expect(!helper.deniesSetgroups(effectiveUID: 1000, effectiveGID: 1000))
+    #expect(helper.gidHelperArguments == ["0", "1000", "1", "1", "200000", "65536"])
 }

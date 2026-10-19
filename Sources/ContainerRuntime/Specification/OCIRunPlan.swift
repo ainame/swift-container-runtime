@@ -502,6 +502,11 @@ public struct OCIRunPlan: Sendable {
             case "dev": flags.remove(.nodev); cleared.insert(.nodev)
             case "exec": flags.remove(.noexec); cleared.insert(.noexec)
             case "strictatime": flags.insert(.strictatime)
+            // A new mount without noatime or strictatime is already relatime
+            // (MS_RELATIME is the kernel default since Linux 2.6.30), so the
+            // option `spec` writes for /sys/fs/cgroup needs no flag. A bind
+            // keeps its source's atime mode instead, so it stays unsupported there.
+            case "relatime" where type != .bind && !flags.contains(.strictatime): break
             case "ro": flags.insert(.readonly); cleared.remove(.readonly)
             case "rw": flags.remove(.readonly); cleared.insert(.readonly)
             case "bind" where type == .bind: break

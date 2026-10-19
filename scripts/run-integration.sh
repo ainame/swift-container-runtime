@@ -2,7 +2,7 @@
 # Shared suite inventory for focused local runs and the complete CI gate.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-suites="namespace oci lifecycle lookup credentials capabilities rlimits preserve-fds pidfd-socket readonly path-controls cgroup cpu cpuset freezer ps update events metadata logging kill filesystems devices device-nodes bind network-namespace user-namespace shared-namespace seccomp oom keyring lsm console sysctl cgroupns hooks"
+suites="namespace oci lifecycle lookup credentials capabilities rlimits preserve-fds pidfd-socket readonly path-controls cgroup cpu cpuset freezer ps update events metadata logging kill filesystems devices device-nodes bind network-namespace user-namespace rootless shared-namespace seccomp oom keyring lsm console sysctl cgroupns hooks"
 # CI runs these groups as parallel jobs, balanced by measured release
 # durations; "rest" is every suite not named here, so new suites always run.
 shard_cpu="cpu lifecycle filesystems"

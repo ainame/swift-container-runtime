@@ -174,11 +174,18 @@ struct WorkloadSetup {
         if let error = unsafe Self.giveStdio(to: uid_t(security.uid)) {
             return LaunchRecord.reportFailure(to: report, at: .stdioOwnership, error: error)
         }
-        // setgroups always runs, so an empty list clears the caller's groups;
-        // setgid must precede setuid, which gives up the right to change groups.
-        // Unless keepcaps was set above, a non-zero uid also loses every capability.
+        // setgroups runs whenever the user namespace allows it, so an empty
+        // list clears the caller's groups; setgid must precede setuid, which
+        // gives up the right to change groups. Unless keepcaps was set above,
+        // a non-zero uid also loses every capability. A rootless map written
+        // without newgidmap denies setgroups: as runc does, the inherited
+        // (unmapped) groups then stay, and requested ones fail the launch.
         let groups = unsafe supplementaryGids
-        if let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Credentials.setGroups(groups) }) {
+        if Kernel.Credentials.setgroupsDenied() {
+            if !groups.isEmpty {
+                return LaunchRecord.reportFailure(to: report, at: .supplementaryGroups, error: .notPermitted, detail: 1)
+            }
+        } else if let error = Errno.failure({ () throws(Errno) in try unsafe Kernel.Credentials.setGroups(groups) }) {
             return LaunchRecord.reportFailure(to: report, at: .supplementaryGroups, error: error)
         }
         if let error = Errno.failure({ () throws(Errno) in try Kernel.Credentials.setGroupID(gid_t(security.gid)) }) {

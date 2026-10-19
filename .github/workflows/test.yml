@@ -68,7 +68,7 @@ jobs:
       - name: Install OCI fixtures
         run: |
           apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc libseccomp-dev
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc libseccomp-dev uidmap
       - name: Build srunc with strict memory safety
         run: swift build -c ${{ matrix.configuration }} --disable-automatic-resolution --product srunc
       - name: Integration suites

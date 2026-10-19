@@ -21,7 +21,9 @@ struct RootFilesystemSetup {
     let devices: [DeviceNode]
     /// First device path in the launch string vector, prepared before fork.
     let deviceGroupBase: Int
-    /// User namespaces cannot mknod host device nodes; bind the defaults instead.
+    /// The init creates or joins a user namespace: standard devices are bind
+    /// mounted from the host (mknod is refused there), and a refused cgroup2
+    /// mount falls back to a read-only tmpfs.
     let bindsStandardDevices: Bool
     /// In an inherited mount namespace, chroot preserves namespace identity.
     let usesPivotRoot: Bool
@@ -191,9 +193,22 @@ struct RootFilesystemSetup {
                     mount, components: destination, prefixes: group(InitStringGroup.destinationPrefixes(index)), beneath: root)
             } else {
                 let filesystem = unsafe group(InitStringGroup.filesystem(index))
-                failure = unsafe Self.mount(
+                var result = unsafe Self.mount(
                     root, destination, source: unsafe filesystem[0]!, type: unsafe filesystem[1]!,
                     flags: mount.flags.kernelFlags, data: unsafe filesystem[2]!, propagation: mount.propagation)
+                // runc's mountCgroupV2 fallback in a user namespace: cgroup2
+                // fails with EPERM, or with EBUSY when the init stayed in the
+                // caller's cgroup (a rootless container without one) and the
+                // same superblock is already mounted there through a /sys
+                // rbind. Like runc without a cgroup to bind, mask the
+                // destination with a read-only tmpfs instead.
+                if mount.type == .cgroup, unsafe bindsStandardDevices, let error = result?.error,
+                   error == .notPermitted || error == .resourceBusy {
+                    result = unsafe Self.mount(
+                        root, destination, source: "tmpfs", type: "tmpfs", flags: [.readOnly, .noSetUserID, .noDevices, .noExecute],
+                        data: "", propagation: nil)
+                }
+                failure = result
             }
             if var failure {
                 failure.detail = Int32(index)

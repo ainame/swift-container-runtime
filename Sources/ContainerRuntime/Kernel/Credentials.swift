@@ -19,6 +19,31 @@ extension Kernel {
             guard unsafe setgroups(numericCast(groups.count), groups.baseAddress) == 0 else { throw .current }
         }
 
+        /// True when /proc/self/setgroups reads `deny`: an unprivileged
+        /// writer installed this user namespace's GID map, so setgroups(2)
+        /// always fails with EPERM (Linux 3.19+). A missing file (older
+        /// kernels, or no procfs) reads as allowed. Safe between fork and
+        /// exec: it reads into a stack buffer and allocates nothing.
+        static func setgroupsDenied() -> Bool {
+            #if os(Linux)
+            let raw = unsafe open("/proc/self/setgroups", O_RDONLY | O_CLOEXEC)
+            guard raw >= 0 else { return false }
+            defer { _ = close(raw) }
+            // The file holds "allow\n" or "deny\n".
+            var buffer = InlineArray<8, UInt8>(repeating: 0)
+            let count: Int
+            do {
+                var span = buffer.mutableSpan
+                count = (try? Kernel.File.read(FileDescriptor(rawValue: raw), into: &span)) ?? 0
+            }
+            guard count >= 4 else { return false }
+            return buffer[0] == UInt8(ascii: "d") && buffer[1] == UInt8(ascii: "e")
+                && buffer[2] == UInt8(ascii: "n") && buffer[3] == UInt8(ascii: "y")
+            #else
+            return false
+            #endif
+        }
+
         static func setGroupID(_ gid: gid_t) throws(Errno) {
             guard setgid(gid) == 0 else { throw .current }
         }

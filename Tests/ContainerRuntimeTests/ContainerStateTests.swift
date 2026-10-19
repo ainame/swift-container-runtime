@@ -298,7 +298,16 @@ func lifecycleRejectsInvalidRoots(_ root: String) {
 }
 
 @Test func lifecycleDefaultsToRuntimeDirectory() throws {
-    #expect(try ContainerLifecycle().root == FilePath("/run/swift-container-runtime"))
+    #expect(try ContainerLifecycle().root == FilePath(ContainerLifecycle.defaultRoot))
+    #expect(ContainerLifecycle.defaultRoot(effectiveUID: 0, runtimeDirectory: "/run/user/0") == "/run/swift-container-runtime")
+    #expect(ContainerLifecycle.defaultRoot(effectiveUID: 1000, runtimeDirectory: nil) == "/run/swift-container-runtime")
+    #expect(ContainerLifecycle.defaultRoot(effectiveUID: 1000, runtimeDirectory: "relative") == "/run/swift-container-runtime")
+}
+
+/// Like runc, a rootless caller keeps its state below $XDG_RUNTIME_DIR.
+@Test func rootlessLifecycleDefaultsToXDGRuntimeDirectory() {
+    #expect(ContainerLifecycle.defaultRoot(effectiveUID: 1000, runtimeDirectory: "/run/user/1000") == "/run/user/1000/swift-container-runtime")
+    #expect(ContainerLifecycle.defaultRoot(effectiveUID: 1000, runtimeDirectory: "/run/user/1000/") == "/run/user/1000/swift-container-runtime")
 }
 
 /// Lifecycle commands on a missing root report the missing container and

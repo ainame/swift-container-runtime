@@ -316,8 +316,8 @@ struct Run: RuntimeDescriptorCommand {
         discussion: "Supports an educational subset of config.json and rejects anything else. "
             + "In the foreground it exits with the workload's status and removes the container state. "
             + "With --detach it returns after the workload started and keeps the state for state, kill, and delete. "
-            + "A terminal (process.terminal) needs --detach and --console-socket; foreground terminals and rootless "
-            + "operation are not implemented; this is not a security boundary."
+            + "A terminal (process.terminal) needs --detach and --console-socket; foreground terminals "
+            + "are not implemented; this is not a security boundary."
     )
 
     @OptionGroup var globals: GlobalOptions

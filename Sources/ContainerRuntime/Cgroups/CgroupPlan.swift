@@ -236,6 +236,14 @@ public struct CgroupPlan: Sendable, Equatable {
         self.resources = resources
     }
 
+    /// runc's rootless fs2 fallback (`needAnyControllers` without a path):
+    /// an unprivileged caller that cannot create the default cgroup may run
+    /// without one when nothing is asked of it. Unlike runc, device rules
+    /// count as a request, so a requested restriction is never dropped.
+    func allowsRootlessFallback(effectiveUID: uid_t) -> Bool {
+        effectiveUID != 0 && location == .runtimeDefault && resources.writes.isEmpty && resources.devicePolicy == nil
+    }
+
     /// Components below the mount root for `id`. Never empty, except for an
     /// unusable systemd scope name, which `prepare` reports.
     public func components(for id: ContainerID) -> [String] {

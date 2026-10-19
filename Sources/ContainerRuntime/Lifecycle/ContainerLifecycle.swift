@@ -1,3 +1,4 @@
+import Foundation
 import SystemPackage
 
 /// Persistent OCI lifecycle commands over one state root, following runc.
@@ -9,8 +10,25 @@ import SystemPackage
 /// 1), and every command derives the status from the recorded init identity
 /// and the live system, so a vanished init reads as stopped.
 public struct ContainerLifecycle: Sendable {
-    /// The default state root, like runc's `/run/runc`.
-    public static let defaultRoot = "/run/swift-container-runtime"
+    /// The default state root, like runc's `/run/runc`. As runc does for an
+    /// unprivileged (rootless) caller, a non-root effective UID uses
+    /// `$XDG_RUNTIME_DIR/swift-container-runtime`, since only root can
+    /// create directories in /run.
+    public static var defaultRoot: String {
+        defaultRoot(
+            effectiveUID: Kernel.Process.effectiveUserID,
+            runtimeDirectory: ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"])
+    }
+
+    /// `defaultRoot` for a caller: the runtime directory applies only to a
+    /// non-root caller, and only when it is an absolute path without NUL.
+    static func defaultRoot(effectiveUID: uid_t, runtimeDirectory: String?) -> String {
+        let base = "swift-container-runtime"
+        if effectiveUID != 0, let runtime = runtimeDirectory, runtime.hasPrefix("/"), !runtime.utf8.contains(0) {
+            return (runtime.hasSuffix("/") ? runtime : runtime + "/") + base
+        }
+        return "/run/" + base
+    }
 
     /// The state root: one subdirectory per container, like runc's `--root`.
     public let root: FilePath
@@ -146,11 +164,15 @@ public struct ContainerLifecycle: Sendable {
         // Serialize acquisition with delete/start, then pin the recorded init
         // and all kernel handles before releasing any new child.
         let container = try lock(id)
-        var pinned: (process: InitIdentity, cgroup: CgroupIdentity)?
-        var target: (record: ContainerRecord, process: InitIdentity, cgroup: CgroupIdentity)?
+        // A rootless container without a delegated cgroup records none; its
+        // exec processes then stay in the caller's cgroup, as with runc.
+        var pinned: (process: InitIdentity, cgroup: CgroupIdentity?)?
+        var target: (record: ContainerRecord, process: InitIdentity, cgroup: CgroupIdentity?)?
         while target == nil {
-            guard let record = try container.readRecord(), let process = record.initProcess,
-                  let cgroup = record.cgroup else { throw RuntimeError("container has no recorded init or cgroup") }
+            guard let record = try container.readRecord(), let process = record.initProcess else {
+                throw RuntimeError("container has no recorded init")
+            }
+            let cgroup = record.cgroup
             // After a paused wait, only the generation observed before
             // unlocking may proceed; never follow a replacement container.
             if let pinned, pinned.process != process || pinned.cgroup != cgroup {
@@ -167,12 +189,13 @@ public struct ContainerLifecycle: Sendable {
                 // the frozen cgroup and resume can take the lock meanwhile.
                 pinned = (process, cgroup)
                 container.unlock()
+                guard let cgroup else { throw RuntimeError("container has no cgroup to resume") }
                 try Self.waitForThaw(process, separatePIDNamespace: record.pidNamespace, cgroup: cgroup)
                 // Relocking fails if the state directory was deleted or recreated.
                 try container.lock()
             }
         }
-        guard let target else { throw RuntimeError("container has no recorded init or cgroup") }
+        guard let target else { throw RuntimeError("container has no recorded init") }
         let (record, process, cgroup) = (target.record, target.process, target.cgroup)
         guard processFile?.utf8.contains(0) != true else { throw RuntimeError("process file path contains NUL") }
         let plan = try OCIRunPlan.loadExec(
@@ -187,7 +210,7 @@ public struct ContainerLifecycle: Sendable {
             hooks.waitsForReady = false
             hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
-            hooks.placeInit = { try CgroupLeaf.join(cgroup, pid: $0) }
+            hooks.placeInit = { pid in if let cgroup { try CgroupLeaf.join(cgroup, pid: pid) } }
             var child: Int32 = 0
             hooks.initStarted = { child = $0.pid }
             hooks.executed = {
@@ -517,10 +540,21 @@ extension ContainerLifecycle {
 
     /// Prepares the container's cgroup and records it before any init
     /// exists, so every later failure or command can find and remove it.
+    ///
+    /// Returns nil only for runc's rootless fallback: an unprivileged caller
+    /// without a delegated cgroup, no `linux.cgroupsPath` and no resources
+    /// runs the container in the caller's own cgroup, as runc's fs2 manager
+    /// does. Such a container has no pause, update, stats or cgroup-wide kill.
     private static func prepareCgroup(
         _ plan: OCIRunPlan, id: ContainerID, record: inout ContainerRecord, container: LockedContainer
-    ) throws -> CgroupLeaf {
-        let leaf = try CgroupLeaf.prepare(plan.cgroup, id: id)
+    ) throws -> CgroupLeaf? {
+        let leaf: CgroupLeaf
+        do {
+            leaf = try CgroupLeaf.prepare(plan.cgroup, id: id)
+        } catch where plan.cgroup.allowsRootlessFallback(effectiveUID: Kernel.Process.effectiveUserID) {
+            // Like runc, silently: the caller asked for no cgroup settings.
+            return nil
+        }
         record.cgroup = leaf.identity
         do {
             try container.writeRecord(record)
@@ -643,7 +677,11 @@ extension ContainerLifecycle {
             hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
             // A systemd scope exists only from the join on; record it then.
-            hooks.placeInit = { try cgroup.join($0); record.cgroup = cgroup.identity }
+            hooks.placeInit = { pid in
+                guard let cgroup else { return }
+                try cgroup.join(pid)
+                record.cgroup = cgroup.identity
+            }
             hooks.initStarted = { record.initProcess = $0 }
             // Recorded before the commit: an init that outlives this command
             // is always findable by later commands.
@@ -702,7 +740,11 @@ extension ContainerLifecycle {
             hooks.preserved = preserved
             hooks.closeInChildren = { container.detachInForkedChild() }
             // A systemd scope exists only from the join on; record it then.
-            hooks.placeInit = { try cgroup.join($0); record.cgroup = cgroup.identity }
+            hooks.placeInit = { pid in
+                guard let cgroup else { return }
+                try cgroup.join(pid)
+                record.cgroup = cgroup.identity
+            }
             hooks.initStarted = { record.initProcess = $0 }
             hooks.executed = {
                 if let pidFile, let process = record.initProcess {

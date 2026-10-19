@@ -113,6 +113,8 @@ extension OCIRunPlan {
             case .findExecutable, .relativeExecutable: return "process.args[0] \(name): \(stage.description)"
             case .setUserID: return "\(stage.description) \(security.uid)"
             case .setGroupID: return "\(stage.description) \(security.gid)"
+            case .supplementaryGroups where detail == 1:
+                return "\(stage.description): setgroups is denied in this user namespace (a rootless GID map written without newgidmap)"
             case .dropBoundingCapability:
                 return "\(stage.description) \(CapabilitySet.name(of: Int(detail))) (the runtime needs CAP_SETPCAP)"
             case .raiseAmbientCapability:
