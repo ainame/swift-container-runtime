@@ -6,8 +6,9 @@ driver on an Ubuntu 26.04 arm64 VM (kernel 7.0, AppArmor enabled), registered as
 an extra runtime and selected with `--runtime swift`. The [Docker gate](#current-result)
 passes with Docker's default security there, as it does with runc. The CI `docker`
 job runs the same gate and the AppArmor gate on GitHub's x86_64 Ubuntu 26.04
-runner with its Docker switched to cgroupfs. Other hosts, the systemd cgroup
-driver and rootless setups are unverified. The original
+runner with its Docker switched to cgroupfs. Other hosts are unverified; the
+systemd cgroup driver and rootless setups are [not supported](#unsupported-host-setups)
+on any cgroup version. The original
 assessment was source-based; the [engine baseline](engine-baseline.md) records the
 captures and execution evidence.
 
@@ -66,6 +67,40 @@ default security, networking, volumes, limits, terminals and cleanup. It is an
 experimental claim for that one profile, not general Docker compatibility: a
 systemd cgroup driver, rootless or user-remapped daemons, other architectures,
 real hook consumers (for example GPU toolkits, which also need devices) and non-network namespace sharing remain open.
+
+## Unsupported host setups
+
+These gaps are independent of the cgroup version: srunc supports only cgroup v2,
+and both fail on v2 hosts. Neither is caused by the cgroup v1 exclusion.
+
+**systemd cgroup driver.** The driver decides who manages a container's cgroup,
+not which cgroup version the host runs. srunc implements only the cgroupfs
+driver, writing `/sys/fs/cgroup` itself. With the systemd driver the runtime
+asks systemd over D-Bus for a transient scope unit (such as
+`docker-<id>.scope` in `system.slice`) and applies limits as unit properties
+(`MemoryMax=`, `CPUQuota=`, `TasksMax=`), because systemd expects to be the
+sole writer of a v2 tree. Docker, containerd and Kubernetes recommend that
+driver on v2, so many default installations use it.
+
+- Docker or containerd configured for systemd passes global `--systemd-cgroup`;
+  srunc rejects that option and container creation fails. Switch the daemon to
+  `"exec-opts": ["native.cgroupdriver=cgroupfs"]` (containerd: `SystemdCgroup = false`).
+- `linux.cgroupsPath` is then a `slice:prefix:name` tuple, not a path. Without
+  `--systemd-cgroup`, srunc currently treats a tuple such as
+  `system.slice:docker:abc` as a single relative component below
+  `/swift-container-runtime` instead of rejecting it.
+- Support needs a D-Bus client (a dependency decision), mapping OCI resources to
+  unit properties with direct writes for the rest, and unit lifetime and
+  cleanup. This is a Docker-driven extension beyond kontainer's pinned scope.
+
+**Rootless.** Rootless operation relies on cgroup v2, the only version that
+safely delegates a subtree to an unprivileged user, usually through systemd
+(`user@.service` with `Delegate=yes`), so cgroup control often needs the systemd
+driver as well. srunc applies UID/GID mappings only when run as root. Missing:
+an unprivileged user namespace with the `newuidmap`/`newgidmap` mapping
+handshake, unprivileged mount and device setup, and behavior without a delegated
+cgroup (runc then skips resource limits). Rootless or user-remapped daemons are
+therefore unsupported; this is roadmap milestone 7.
 
 Kontainer already documents a `ctr --runc-binary` example using an Alpine image,
 seccomp, read-only rootfs, UID/GID mappings and resource controls. Reproducing that

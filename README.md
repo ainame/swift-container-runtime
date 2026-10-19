@@ -7,7 +7,10 @@ root filesystems, process isolation, and cgroups fit together in a small OCI run
 boundary. Rootless operation and foreground terminals are not implemented; detached terminals are handed to
 `--console-socket`. Experimental Docker support (`--runtime swift`) passes an
 acceptance gate on one declared Ubuntu/cgroupfs profile; see
-[Docker integration](docs/docker-integration.md). The [roadmap](docs/roadmap.md) targets
+[Docker integration](docs/docker-integration.md). Hosts using the systemd cgroup
+driver (common Docker defaults) or rootless daemons are
+[not supported](docs/docker-integration.md#unsupported-host-setups), independent
+of cgroup v1. The [roadmap](docs/roadmap.md) targets
 kontainer-runtime-level functionality and eventual Docker integration.
 
 ## Try it
