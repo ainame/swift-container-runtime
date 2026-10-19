@@ -137,8 +137,8 @@ Cgroup v1, checkpoint/restore and systemd-managed cgroups are outside the pinned
 target's implemented functionality. Legacy memory fields, CPU realtime controls,
 network/RDMA resource classes and `blockIO.leafWeight` are also not target gaps:
 the pinned target does not apply them. Do not import the entire runc backlog.
-If Docker's chosen cgroup driver requires systemd integration, treat that as a
-separate Docker-driven extension and make the scope decision explicitly.
+Docker's usual systemd cgroup driver is now implemented as such a Docker-driven
+extension (`--systemd-cgroup`); see [Docker integration](docker-integration.md#cgroup-drivers-and-rootless-setups).
 
 ## How to decide an increment is done
 

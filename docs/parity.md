@@ -72,7 +72,7 @@ Evidence paths in the target, relative to `src/nativeMain/kotlin/`:
 
 ## What is not evidence of a parity requirement
 
-The target mentions checkpoint/restore in help names but does not register or implement those commands. Its `--systemd-cgroup` option explicitly reports that it is unimplemented, and its resource implementation uses cgroup v2. Checkpoint/restore, cgroup v1, and systemd-managed cgroups are therefore outside this target's implemented functionality.
+The target mentions checkpoint/restore in help names but does not register or implement those commands. Its `--systemd-cgroup` option explicitly reports that it is unimplemented, and its resource implementation uses cgroup v2. Checkpoint/restore, cgroup v1, and systemd-managed cgroups are therefore outside this target's implemented functionality. The Swift runtime implements a systemd cgroup driver anyway, as an extension for Docker's default configuration (see [Docker integration](docker-integration.md#cgroup-drivers-and-rootless-setups)).
 
 The pinned target's `spec/Spec.kt` and `CgroupV2.applyResources` establish memory limit/reservation/swap, CPU shares/quota/period/burst/idle/cpus/mems, pids, hugepages, unified settings and block-I/O weight/throttles. `command/Update.kt` applies the memory check-before-update; device rules are applied separately by `DeviceCgroup`. Legacy memory fields (`swappiness`, `kernel`, `kernelTCP`, `disableOOMKiller`, `useHierarchy`), CPU realtime fields, and network/RDMA resource classes are not implemented there and do not belong on the parity backlog.
 

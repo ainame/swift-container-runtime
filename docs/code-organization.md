@@ -23,9 +23,10 @@ spelling, escaping and fractional-second digits.
 | `Specification/` | Bundle and `config.json` decoding, validation into `OCIRunPlan`/`OCIProcessPlan`, the starter spec, features metadata |
 | `Launch/` | The fork handshake, rootfs and workload setup, the start gate, pidfd hand-off, descriptor preservation |
 | `Lifecycle/` | Container commands, state records and their directories, live observation, PID files, `ps` |
-| `Cgroups/` | cgroup v2 placement, resource plans and updates, interface-file parsing, statistics |
+| `Cgroups/` | cgroup v2 placement (cgroupfs or systemd scopes), resource plans and updates, interface-file parsing, statistics |
 | `Events/` | Event snapshots and JSON, the inotify watch, tick scheduling, timestamps and duration text |
 | `System/` | Owned descriptors, procfs, verified processes, runtime errors |
+| `DBus/` | A minimal synchronous D-Bus client (wire format, SASL EXTERNAL, method calls and signals) for the systemd cgroup driver; no threads |
 | `Kernel/` | The only files that import libc and `LinuxAPI`: system calls as Swift API, with `ENOSYS` stubs off Linux |
 
 A file belongs where its main type's responsibility lies; a Linux extension of a

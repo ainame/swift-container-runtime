@@ -133,7 +133,7 @@ below now verifies its constrained nonterminal exit/reaping/stdio behavior.
 | Captured exec JSON | Plans and executes through the real shim, including stdout, exit 42, detached PID publication and missing-program error extraction. |
 | `kill --all` | Implemented with runc 1.4 compatibility semantics; see the focused kill validation below. |
 | Version/features | Focused metadata integration passes. go-runc v1.1.0's version parser only populates values for the literal `runc version ` prefix; Swift retains its own identity, so this helper returns empty metadata. The captured shim create path did not query version. Features emit valid OCI JSON; broader engine feature negotiation is unverified. |
-| Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. The later keyring follow-up implements no-new-keyring; no-pivot remains deferred. `--systemd-cgroup` and explicit global `--rootless` remain rejected; no systemd support is implied. |
+| Optional flags | Source: no-pivot/no-new-keyring appear only when requested; neither occurred in this capture. The later keyring follow-up implements no-new-keyring; no-pivot remains deferred. Explicit global `--rootless` remains rejected. `--systemd-cgroup` was rejected at capture time; a later systemd cgroup driver implements it (see [Docker integration](docker-integration.md#cgroup-drivers-and-rootless-setups)). |
 | Next runnable scenario | Supplied namespace joins, followed by remaining security/console gates. Directory-rootfs and pinned-image nonterminal scenarios now have live evidence below. |
 
 ## Focused validation

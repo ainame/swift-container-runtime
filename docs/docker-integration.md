@@ -6,9 +6,9 @@ driver on an Ubuntu 26.04 arm64 VM (kernel 7.0, AppArmor enabled), registered as
 an extra runtime and selected with `--runtime swift`. The [Docker gate](#current-result)
 passes with Docker's default security there, as it does with runc. The CI `docker`
 job runs the same gate and the AppArmor gate on GitHub's x86_64 Ubuntu 26.04
-runner with its Docker switched to cgroupfs. Other hosts are unverified; the
-systemd cgroup driver and rootless setups are [not supported](#unsupported-host-setups)
-on any cgroup version. The original
+runner with its Docker switched to cgroupfs, then again with the
+[systemd cgroup driver](#cgroup-drivers-and-rootless-setups). Other hosts are
+unverified, and rootless setups are not supported. The original
 assessment was source-based; the [engine baseline](engine-baseline.md) records the
 captures and execution evidence.
 
@@ -53,44 +53,65 @@ no user remapping, and an explicit host security profile.
 | Contract | Current evidence | Gap and priority |
 | --- | --- | --- |
 | Launch/control lifecycle | create/start/state/delete, PID files, detached exec with process JSON, process identity protection, update, pause/resume and stats exist. The constrained directory-rootfs shim test verifies PID publication/reaping, pipes/EOF, exit codes and failure cleanup. | Remaining integration work includes concurrent exec/control, richer image/namespace profiles, forced-removal variations and richer host profiles. Check PID-file publication failures after launcher exit. |
-| CLI and diagnostics | Global `--root`; command options cover much of go-runc's basic API. Global log/debug options and text/JSON error logging are implemented. | The real containerd 2.2.2 shim extracts failed create/exec errors from Swift JSON logs. Captured create/exec bundles and argv are recorded in the engine baseline. `--no-new-keyring` now persists an explicit init/exec opt-out. Audit `--no-pivot`, `--rootless` and `--systemd-cgroup` against the chosen versions. |
+| CLI and diagnostics | Global `--root`; command options cover much of go-runc's basic API. Global log/debug options and text/JSON error logging are implemented. | The real containerd 2.2.2 shim extracts failed create/exec errors from Swift JSON logs. Captured create/exec bundles and argv are recorded in the engine baseline. `--no-new-keyring` now persists an explicit init/exec opt-out. `--systemd-cgroup` selects the systemd cgroup driver. Audit `--no-pivot` and `--rootless` against the chosen versions. |
 | Engine-generated OCI JSON | Strict decoding accepts a deliberately narrow subset, including annotations. Directory-rootfs and pinned Alpine create/exec JSON now work through containerd. | Large for richer engine bundles: add applying support for requested fields such as non-network namespace paths, custom device entries, seccomp notification, hooks and process security settings. Null/empty/default objects from engine serializers need explicit tests; never silently drop requested restrictions. |
 | Rootfs/mounts | proc/tmpfs/devpts/sysfs/mqueue, shm, read-only cgroup2 with a cgroup namespace, file/directory bind/rbind, ro/rw and explicit VFS flags, private/rprivate propagation, default devices, pivot_root, readonly root and path controls. Docker's hosts/resolv.conf/hostname binds, bind and named volumes and `--tmpfs` pass. | Remaining: broader propagation/remount flags, dangling target symlinks and protected-proc bind handling, a cgroup mount without a cgroup namespace. |
 | Namespaces/network | New mount/pid/uts/ipc/network/cgroup namespaces; absolute supplied network paths join on create/run, and exec joins the live init. Docker's default bridge, published ports, container-to-container TCP, resolv.conf and namespaced sysctls pass. | Remaining: other namespace joins and broader host/shared combinations (for example `--network host`, `--ipc container:`). |
 | Security | Credentials, capabilities, rlimits, no-new-privileges, path controls, OOM adjustment, named session keyrings, device BPF rules, non-notification seccomp and requested AppArmor/SELinux process and key labels exist; unavailable modules fail before launch. containerd's generated default AppArmor profile confines image init and exec on an Ubuntu AppArmor host. Containerd default/custom seccomp profiles pass the pinned image with active syscall-denial evidence. | Docker's default security (docker-default AppArmor, default seccomp, capabilities, device rules) passes the Docker gate. Remaining: custom devices, SELinux mount labels and positive SELinux evidence. A run with security disabled proves only that explicit profile. All six hook phases are implemented for integrations that supply hooks. |
 | Console | Nonterminal stdio, descriptor/pidfd handoff, and PTY allocation with controlling terminal, `/dev/console`, initial size and `--console-socket` master handoff for init and exec. containerd's shim attaches, resizes and reports exit status for `ctr run -t` and `ctr tasks exec -t`. Docker `run -it`/`exec -it` pass with the caller's size and exit status. | Remaining: the runtime's own foreground terminal proxy and later resize evidence. The shim owns attached I/O and resize after handoff; direct foreground CLI forwarding is a separate responsibility. |
-| Cgroups/resources | v2 memory/pids/CPU/cpuset, updates, stats, freezer and identity-safe cleanup. | Moderate to large: integration with an engine-created hierarchy, I/O limits, live device-rule updates and owned ancestor cleanup. Shared-PID SIGKILL subtree cleanup and `--all` compatibility now have focused Linux evidence; the constrained nonterminal shim lifecycle passes, with broader image/profile acceptance still open. Current support does not include systemd cgroup management. Never interpret a systemd slice tuple as a filesystem path. |
+| Cgroups/resources | v2 memory/pids/CPU/cpuset, updates, stats, freezer and identity-safe cleanup. | Moderate to large: integration with an engine-created hierarchy, I/O limits, live device-rule updates and owned ancestor cleanup. Shared-PID SIGKILL subtree cleanup and `--all` compatibility now have focused Linux evidence; the constrained nonterminal shim lifecycle passes, with broader image/profile acceptance still open. The systemd driver creates transient scopes with `--systemd-cgroup`; a slice tuple is never interpreted as a filesystem path. |
 | Packaging/portability | SwiftPM executable and Linux debug/release CI definition. | Moderate: release-mode daemon-host installation and runtime library requirements; execute on both arm64 and x86_64. Musl/static distribution remains unverified. A dynamic build can serve the first experiment if its libraries are installed. |
 
 **Overall:** ordinary rootful Docker usage works on the declared profile, with
 default security, networking, volumes, limits, terminals and cleanup. It is an
-experimental claim for that one profile, not general Docker compatibility: a
-systemd cgroup driver, rootless or user-remapped daemons, other architectures,
+experimental claim for the gated profiles (cgroupfs and systemd drivers), not
+general Docker compatibility: rootless or user-remapped daemons, other architectures,
 real hook consumers (for example GPU toolkits, which also need devices) and non-network namespace sharing remain open.
 
-## Unsupported host setups
+## Cgroup drivers and rootless setups
 
-These gaps are independent of the cgroup version: srunc supports only cgroup v2,
-and both fail on v2 hosts. Neither is caused by the cgroup v1 exclusion.
+Neither the cgroup driver nor rootless operation depends on the cgroup version:
+srunc supports only cgroup v2, and the cgroup v1 exclusion plays no part here.
 
 **systemd cgroup driver.** The driver decides who manages a container's cgroup,
-not which cgroup version the host runs. srunc implements only the cgroupfs
-driver, writing `/sys/fs/cgroup` itself. With the systemd driver the runtime
-asks systemd over D-Bus for a transient scope unit (such as
-`docker-<id>.scope` in `system.slice`) and applies limits as unit properties
-(`MemoryMax=`, `CPUQuota=`, `TasksMax=`), because systemd expects to be the
-sole writer of a v2 tree. Docker, containerd and Kubernetes recommend that
-driver on v2, so many default installations use it.
+not which cgroup version the host runs. Docker, containerd and Kubernetes
+recommend the systemd driver on v2, so many default installations use it. They
+then pass the global `--systemd-cgroup` option to every runtime command and set
+`linux.cgroupsPath` to a `slice:prefix:name` tuple such as
+`system.slice:docker:<id>`.
 
-- Docker or containerd configured for systemd passes global `--systemd-cgroup`;
-  srunc rejects that option and container creation fails. Switch the daemon to
-  `"exec-opts": ["native.cgroupdriver=cgroupfs"]` (containerd: `SystemdCgroup = false`).
-- `linux.cgroupsPath` is then a `slice:prefix:name` tuple, not a path. srunc
-  rejects a bare tuple such as `system.slice:docker:abc` even without
-  `--systemd-cgroup`, rather than creating it as a directory.
-- Support needs a D-Bus client (a dependency decision), mapping OCI resources to
-  unit properties with direct writes for the rest, and unit lifetime and
-  cleanup. This is a Docker-driven extension beyond kontainer's pinned scope.
+With `--systemd-cgroup`, srunc follows runc's systemd driver for cgroup v2:
+
+- At create, the init (still blocked) is placed in a transient scope,
+  `prefix-name.scope` in the expanded slice, started through systemd's private
+  D-Bus socket `/run/systemd/private` with `Delegate=yes`, accounting enabled and
+  no default dependencies. The scope cannot exist earlier: systemd refuses a
+  scope without processes.
+- Limits are given to systemd as unit properties (`MemoryMax`, `MemoryLow`,
+  `MemorySwapMax`, `TasksMax`, `CPUWeight`, `CPUQuotaPerSecUSec`,
+  `CPUQuotaPeriodUSec`, `AllowedCPUs`, `AllowedMemoryNodes`) so a later rewrite
+  by systemd keeps them, and are then written to the delegated cgroup as with
+  cgroupfs. `cpu.idle`, `cpu.max.burst` and the device eBPF filter are only
+  written directly. `update` changes the unit properties first.
+- Exec, pause, kill, stats and events use the scope's cgroup directly. Delete
+  kills what remains, stops the unit (systemd removes the cgroup) and resets a
+  failed unit.
+- The D-Bus client is a small synchronous implementation in `DBus/`, with no
+  threads and no new dependency. Properties need systemd 244 or later for
+  cpusets and 242 for the quota period.
+
+Evidence: CI run 39182795829 (commit `028d5a3`) on GitHub's x86_64 Ubuntu 26.04
+runner with Docker 29.4.2 and systemd 259 passes the full [Docker gate](#current-result)
+with `native.cgroupdriver=systemd` for both runc and srunc. For srunc the gate
+also checks that the init is in `system.slice/docker-<id>.scope`, that the unit is
+active, and that unit and cgroup are gone after removal. The arm64 VM profile has
+only cgroupfs evidence.
+
+Not implemented: slice units (a name ending in `.slice`), the system bus
+fallback when the private socket is missing, `systemdUser` for rootless
+setups, and other unit properties such as block-I/O or device rules. A bare
+tuple without `--systemd-cgroup` is rejected rather than created as a
+directory.
 
 **Rootless.** Rootless operation relies on cgroup v2, the only version that
 safely delegates a subtree to an unprivileged user, usually through systemd

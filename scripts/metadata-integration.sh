@@ -61,7 +61,7 @@ test "$("$runtime" -v)" = "$version" || fail "-v and --version differ"
 # --- features -------------------------------------------------------------------
 "$runtime" features > "$scratch/features.json"
 canon "$scratch/features.json" > "$scratch/features.canon" || fail "features is not valid JSON"
-for expected in '"ociVersionMin":"1.0.0"' '"hooks":["prestart","createRuntime","createContainer","startContainer","poststart","poststop"]' '"v2":true' '"v1":false' '"systemd":false' \
+for expected in '"ociVersionMin":"1.0.0"' '"hooks":["prestart","createRuntime","createContainer","startContainer","poststart","poststop"]' '"v2":true' '"v1":false' '"systemd":true' \
     '"seccomp":{"enabled":true}' '"idmap":{"enabled":false}' '"apparmor":{"enabled":true}' '"selinux":{"enabled":true}' '"CAP_CHOWN"' '"pid"' '"network","cgroup","user"]'; do
     grep -qF "$expected" "$scratch/features.canon" || fail "features lacks $expected"
 done
