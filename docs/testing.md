@@ -374,8 +374,11 @@ sudo python3 scripts/runtime-tools-integration.py \
 
 ### Current runtime-tools status
 
-Recorded 2026-10-19 at upstream `bd3b0bd` (58 executables). Both hosts use
-cgroup v2 and Ubuntu 26.04.
+Recorded 2026-10-19 at upstream `bd3b0bd` (58 executables) and rerun on both
+hosts for srunc `92ce94f`, after rootless operation landed, with unchanged
+results (CI run 39206598752). Both hosts use cgroup v2 and Ubuntu 26.04. The
+gate runs as root, so it does not exercise rootless operation;
+`scripts/rootless-integration.sh` covers that.
 
 | Host | Passed | Excluded | Failed | Host exclusions |
 | --- | --- | --- | --- | --- |
