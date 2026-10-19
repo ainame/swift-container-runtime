@@ -3,6 +3,9 @@
 Build instructions and detailed Linux integration coverage.
 For an introduction, see the [README](../README.md). Run commands from the repository root.
 
+For measured startup time, peak process RSS and binary size, see
+[runtime benchmarks](benchmarks.md), including the raw ARM64 baseline and runner.
+
 ## Toolchain and checks
 
 The package requires Swift tools 6.4. `.swift-version` selects the macOS 6.4.0 release without changing your global toolchain. Linux tests use the explicit `swift:6.4.1` image and a separate build directory. `Package.resolved` records the CLI dependency resolution.
