@@ -13,8 +13,9 @@ permissions:
   contents: read
 
 # A newer push to the same branch or pull request supersedes a running check.
+# The event is part of the key so pushes never cancel a manual full matrix.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

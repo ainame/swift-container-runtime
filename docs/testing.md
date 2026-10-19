@@ -39,7 +39,8 @@ only on manual dispatch, for review or milestone candidates:
 gh workflow run Tests --ref main
 ```
 
-A newer push to the same branch cancels a superseded run. There is no requirement to reproduce the full
+A newer push to the same branch cancels a superseded push run, but not a
+manual full-matrix run. There is no requirement to reproduce the full
 matrix locally before every commit.
 
 For targeted Linux runs, select suites by behavior rather than running every
