@@ -8,7 +8,7 @@ passes with Docker's default security there, as it does with runc. The CI `docke
 job runs the same gate and the AppArmor gate on GitHub's x86_64 Ubuntu 26.04
 runner with its Docker switched to cgroupfs, then again with the
 [systemd cgroup driver](#cgroup-drivers-and-rootless-setups). Other hosts are
-unverified, and rootless setups are not supported. The original
+unverified, and rootless engine setups are not supported. The original
 assessment was source-based; the [engine baseline](engine-baseline.md) records the
 captures and execution evidence.
 
@@ -116,11 +116,16 @@ directory.
 **Rootless.** Rootless operation relies on cgroup v2, the only version that
 safely delegates a subtree to an unprivileged user, usually through systemd
 (`user@.service` with `Delegate=yes`), so cgroup control often needs the systemd
-driver as well. srunc applies UID/GID mappings only when run as root. Missing:
-an unprivileged user namespace with the `newuidmap`/`newgidmap` mapping
-handshake, unprivileged mount and device setup, and behavior without a delegated
-cgroup (runc then skips resource limits). Rootless or user-remapped daemons are
-therefore unsupported; this is roadmap milestone 7.
+driver as well. srunc runs [rootless containers](runtime-reference.md#rootless-operation)
+as an unprivileged user: the user namespace with direct own-ID maps or the
+`newuidmap`/`newgidmap` helpers, unprivileged mount and device setup, a state
+root below `$XDG_RUNTIME_DIR`, and runc's fallback without a delegated cgroup
+(no resources may be requested then). Still missing for a rootless daemon:
+`systemdUser` scopes through the user manager's bus, so a rootless engine
+cannot apply limits, the global `--rootless` option, and engine-level evidence
+for rootless Docker or containerd (RootlessKit, its network and port drivers).
+Rootless or user-remapped daemons therefore remain unsupported; this is roadmap
+milestone 7.
 
 Kontainer already documents a `ctr --runc-binary` example using an Alpine image,
 seccomp, read-only rootfs, UID/GID mappings and resource controls. Reproducing that

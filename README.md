@@ -4,12 +4,13 @@ An educational Linux container runtime written in Swift. Explore how namespaces,
 root filesystems, process isolation, and cgroups fit together in a small OCI runtime.
 
 **For learning and experimentation.** This is not a production runtime or a security
-boundary. Rootless operation and foreground terminals are not implemented; detached terminals are handed to
-`--console-socket`. Experimental Docker support (`--runtime swift`) passes an
+boundary. Foreground terminals are not implemented; detached terminals are handed to
+`--console-socket`. An unprivileged user can run [rootless containers](docs/runtime-reference.md#rootless-operation)
+without a delegated cgroup. Experimental Docker support (`--runtime swift`) passes an
 acceptance gate on Ubuntu with both the cgroupfs and the systemd cgroup driver
 (`--systemd-cgroup`, Docker's usual default); see
-[Docker integration](docs/docker-integration.md). Rootless daemons are
-[not supported](docs/docker-integration.md#cgroup-drivers-and-rootless-setups),
+[Docker integration](docs/docker-integration.md). Rootless Docker daemons are
+[not supported yet](docs/docker-integration.md#cgroup-drivers-and-rootless-setups),
 independent of cgroup v1. The [roadmap](docs/roadmap.md) targets
 kontainer-runtime-level functionality and eventual Docker integration.
 

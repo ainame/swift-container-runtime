@@ -19,7 +19,9 @@ The subsequent runtime-tools work adds rootful UID/GID mappings, supplied
 namespace paths, inherited-mount cleanup, custom device nodes and mount
 propagation. The pinned validation profile and its upstream/host exclusions are
 documented in [testing](testing.md#oci-runtime-tools-validation). Rootless
-operation, mapping-helper delegation and time namespaces remain future work.
+operation without a delegated cgroup (direct own-ID maps, newuidmap/newgidmap,
+the XDG state root and runc's no-cgroup fallback) now runs as an unprivileged
+user; rootless cgroup delegation and time namespaces remain future work.
 
 The lifecycle and observability foundation is substantial: create/start/run,
 nonterminal exec, persistent state and process identity checks, kill/delete,
@@ -121,7 +123,7 @@ Do not rebuild the feature backlog from the entire OCI schema.
 The following still belongs to the kontainer-level goal even when a simple Docker
 container works:
 
-- Namespace maps and rootless operation; cgroup/time namespace combinations and
+- Rootless cgroup delegation (systemd user manager); cgroup/time namespace combinations and
   time offsets; idmapped and recursive mount semantics; no-pivot setup.
 - Process HOME lookup, omitted/empty process handling, scheduler, I/O priority,
   exec CPU affinity and NUMA memory policy; complete init/exec policy coverage.
