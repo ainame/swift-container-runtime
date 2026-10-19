@@ -4,13 +4,53 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The complete debug and release integration matrix (see docs/testing.md
+  # validation tiers); pushes and pull requests run release integration only.
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request supersedes a running check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  linux:
+  unit:
+    name: unit (${{ matrix.configuration }})
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [debug, release]
+    container:
+      image: swift:6.4.1-resolute
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify toolchain
+        run: |
+          swift --version
+          swift --version | grep -q 'Swift version 6.4.1 '
+      - name: Install libseccomp headers
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libseccomp-dev
+      - name: Unit tests with strict memory diagnostics
+        run: swift test -c ${{ matrix.configuration }} --disable-automatic-resolution
+
+  integration:
+    # Suites are independent and each job gets a fresh runner VM, so the
+    # inventory is split into shards (scripts/run-integration.sh --list-shards).
+    name: integration (${{ matrix.configuration }}, ${{ matrix.shard }})
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["debug","release"]' || '["release"]') }}
+        shard: [cpu, cgroup, controllers, rest]
     container:
       image: swift:6.4.1-resolute
       # Namespace, procfs, mount, and mknod integration tests require privileges.
@@ -29,14 +69,10 @@ jobs:
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static runc libseccomp-dev
-      - name: Unit tests with strict memory diagnostics
-        run: swift test --disable-automatic-resolution
-      - name: Debug integration suites
-        run: sh scripts/run-integration.sh .build/debug/srunc
-      - name: Optimized unit and integration tests
-        run: |
-          swift test -c release --disable-automatic-resolution
-          sh scripts/run-integration.sh .build/release/srunc
+      - name: Build srunc with strict memory safety
+        run: swift build -c ${{ matrix.configuration }} --disable-automatic-resolution --product srunc
+      - name: Integration suites
+        run: sh scripts/run-integration.sh .build/${{ matrix.configuration }}/srunc --shard ${{ matrix.shard }}
 
   docker:
     # x86_64 engine profile on the hosted runner: its Docker, AppArmor and

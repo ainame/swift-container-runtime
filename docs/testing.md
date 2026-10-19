@@ -11,7 +11,7 @@ The package requires Swift tools 6.4. `.swift-version` selects the macOS 6.4.0 r
 swift test
 ```
 
-Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs the unit tests and debug/release namespace, OCI, lifecycle, credential, and capability checks in the pinned Swift 6.4.1 Linux image.
+Strict memory diagnostics and warnings-as-errors are package settings, so ordinary builds and tests enforce them automatically. GitHub Actions runs debug and release unit tests and the release integration suites in the pinned Swift 6.4.1 Linux image, split into four parallel shards. A weekly schedule and manual dispatch run the integration suites in debug as well. The project has no `assert` or `#if DEBUG` code, and preconditions, overflow and exclusivity checks trap in both modes, so optimized builds are the riskier per-push target for its unsafe launch code; debug integration is still exercised by local `scripts/test-linux.sh` runs.
 
 ## Validation tiers
 
@@ -32,8 +32,10 @@ build their dependencies. Do not repeat a successful local full gate just to
 obtain the same result in another environment; use the existing CI review gate
 where suitable and distinguish passed, pending and unrun checks. Commits made
 during implementation can explicitly say release validation is deferred to review.
-The current CI runs the full matrix for PRs and main; there is no requirement to
-reproduce it locally before every commit.
+CI runs release integration for PRs and main, and the full debug/release matrix
+weekly or on manual dispatch (`gh workflow run Tests --ref BRANCH`); a newer
+push cancels a superseded run. There is no requirement to reproduce the full
+matrix locally before every commit.
 
 For targeted Linux runs, select suites by behavior rather than running every
 suite because a shared file was touched:
@@ -87,7 +89,7 @@ scripts/test-linux.sh --list
 scripts/test-linux.sh --configuration debug lifecycle update
 ```
 
-With no suite arguments the script runs every integration in debug. Use `scripts/test-linux.sh --configuration all` for the complete review gate; CI also runs both configurations. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/srunc update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
+With no suite arguments the script runs every integration in debug. Use `scripts/test-linux.sh --configuration all`, or a manual dispatch of the CI workflow, for the complete review gate. Both use the same suite inventory in `scripts/run-integration.sh`, which reports each suite's duration and stops on the first failure. CI runs it as `--shard cpu|cgroup|controllers|rest` (see `--list-shards`); `rest` is every suite not named in another shard, so a new suite always runs. Rebalance the named shards from the reported durations when one becomes the bottleneck. On an already prepared Linux host, run `scripts/run-integration.sh .build/debug/srunc update` to reuse its installed fixtures and build. Suite names are checked before a local VM starts. New integration suites must be added to that shared inventory.
 
 Inside the VM it also installs `busybox-static` and `runc` and runs `scripts/oci-integration.sh`. That script builds a static BusyBox rootfs and runs the same bundles through this runtime and runc. Both must satisfy the shared checks: PID 1, rootfs contents and isolation from host files, hostname, cwd, environment replacement, device nodes, separate stdout/stderr, exit 42, and missing executables. Runtime-specific checks cover exit 125 diagnostics, rejected configurations, symlink escapes from mount destinations (absolute and relative), and setup failures after partial mounting. Those failures must not run the workload or change host mounts and hostname. Set `RUNC_COMPARE=0` to skip runc, or `RUNC_COMPARE=1` to require it.
 
