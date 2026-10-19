@@ -123,7 +123,7 @@ Do not rebuild the feature backlog from the entire OCI schema.
 The following still belongs to the kontainer-level goal even when a simple Docker
 container works:
 
-- Rootless cgroup delegation (systemd user manager); cgroup/time namespace combinations and
+- Rootless leftovers (host-PID `/proc` bind, delegated `cgroupsPath` evidence); cgroup/time namespace combinations and
   time offsets; idmapped and recursive mount semantics; no-pivot setup.
 - Process HOME lookup, omitted/empty process handling, scheduler, I/O priority,
   exec CPU affinity and NUMA memory policy; complete init/exec policy coverage.
