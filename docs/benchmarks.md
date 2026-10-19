@@ -5,7 +5,53 @@ runtime startup, namespace/rootfs setup, workload execution, wait and state
 cleanup. It is a small launch benchmark, not a Docker or application throughput
 benchmark.
 
-## Four-runtime comparison, including kontainer
+## Current comparison: srunc, kontainer, runc, crun and youki
+
+Measured on 2026-10-19 using the same ARM64 `srunc-dev` VM (5 vCPUs, 32 GiB,
+Ubuntu 26.04.1, Linux 6.12.28), static BusyBox `/bin/true` bundle, native probe,
+10 warmups and 20 measured runs per runtime. All six executables were
+interleaved in one session, with no builds running.
+
+| Runtime | Median run (ms) | Median peak process RSS (MiB) | Binary size (MB) |
+| --- | ---: | ---: | ---: |
+| srunc `d75ffd3` (FoundationEssentials) | 7.438 | 12.742 | 15.483 |
+| kontainer-runtime 0.6.1 | 3.483 | 5.043 | 4.107 |
+| Ubuntu runc 1.4.0-0ubuntu1 | 6.306 | 11.955 | 10.925 |
+| Upstream runc 1.5.2 | 6.565 | 10.188 | 10.092 |
+| crun 1.30.1 | 1.652 | 2.168 | 3.364 |
+| youki 0.7.0 | 5.663 | 4.129 | 6.812 |
+
+[Raw samples, versions, linkage and hashes](benchmarks/2026-10-19-arm64-all.json)
+retain all 120 measurements. The srunc executable uses Swift 6.4.1 release
+optimization, static Swift libraries, FoundationEssentials, and `strip`; it
+still dynamically links the system libraries listed in the report. The
+Ubuntu runc package also uses shared libraries. Kontainer, upstream runc,
+crun and youki are fully static. Sizes exclude shared dependencies; this is
+still not a uniformly fully static comparison.
+
+The additional binaries are upstream release artifacts, with downloaded file
+SHA-256 verified against GitHub's asset digests (also retained in the report):
+
+- [crun 1.30.1 ARM64](https://github.com/containers/crun/releases/tag/1.30.1),
+  standard `crun-1.30.1-linux-arm64` asset with systemd support enabled.
+- [youki 0.7.0 ARM64 musl](https://github.com/youki-dev/youki/releases/tag/v0.7.0),
+  `youki-0.7.0-aarch64-musl.tar.gz`; the table measures its extracted executable,
+  not the compressed archive.
+
+Use the reproduction command below with these additional arguments to include
+both installed executables:
+
+```sh
+--runtime crun=/path/to/crun-1.30.1-linux-arm64 \
+--runtime youki=/path/to/extracted/youki \
+--allow-empty-state-directory crun=.empty-directory
+```
+
+crun leaves an empty `.empty-directory` support directory in its private state
+root. As with kontainer's `.exeseal` below, the allowance permits only that
+explicitly declared empty directory; container state must still be removed.
+
+## Historical four-runtime comparison, including kontainer
 
 Rerun on the same ARM64 VM after all build experiments finished, using 10
 warmups and 20 measured runs per runtime with the same bundle and native probe:
@@ -71,8 +117,8 @@ Foundation fallback where needed. With that change, macOS and Linux debug unit
 tests and Linux debug logging, OCI and lifecycle integrations passed. The
 release/static-Swift build again measured **15,483,000 bytes after stripping**;
 symbol inspection confirmed that `icudt76_dat` and full Foundation Swift symbols
-are absent. Startup and RSS have not been remeasured for this change, so the
-comparison tables retain the original executable's measurements.
+are absent. The current comparison above measures startup and RSS after this
+change; the historical tables retain the original executable's measurements.
 
 [Size evidence and exact experimental import changes](benchmarks/2026-10-19-binary-size.json)
 record the two binary hashes and section sizes. Debug information is not the

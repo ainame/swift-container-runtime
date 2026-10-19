@@ -1,0 +1,908 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-19T06:29:42Z",
+  "source_commit": "d75ffd3693a4af037369b9bbf28c3e62efd8d7cd",
+  "source_dirty": false,
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "srunc-dev",
+      "release": "6.12.28",
+      "version": "#1 SMP Tue May 20 15:19:05 UTC 2025",
+      "machine": "aarch64",
+      "processor": ""
+    },
+    "cpu": "Architecture:                         aarch64\nCPU op-mode(s):                       64-bit\nByte Order:                           Little Endian\nCPU(s):                               5\nOn-line CPU(s) list:                  0-4\nVendor ID:                            Apple\nModel name:                           -\nModel:                                0\nThread(s) per core:                   1\nCore(s) per cluster:                  5\nSocket(s):                            -\nCluster(s):                           1\nStepping:                             0x0\nBogoMIPS:                             48.00\nFlags:                                fp asimd aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 asimddp sha512 asimdfhm dit uscat ilrcpc flagm sb dcpodp flagm2 frint\nVulnerability Gather data sampling:   Not affected\nVulnerability Itlb multihit:          Not affected\nVulnerability L1tf:                   Not affected\nVulnerability Mds:                    Not affected\nVulnerability Meltdown:               Not affected\nVulnerability Mmio stale data:        Not affected\nVulnerability Reg file data sampling: Not affected\nVulnerability Retbleed:               Not affected\nVulnerability Spec rstack overflow:   Not affected\nVulnerability Spec store bypass:      Vulnerable\nVulnerability Spectre v1:             Mitigation; __user pointer sanitization\nVulnerability Spectre v2:             Mitigation; CSV2, but not BHB\nVulnerability Srbds:                  Not affected\nVulnerability Tsx async abort:        Not affected",
+    "memory": "total        used        free      shared  buff/cache   available\nMem:     33822720000   553234432 30961184768     6889472  2629365760 33269485568\nSwap:              0           0           0",
+    "os_release": "PRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"26.04\"\nVERSION=\"26.04.1 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=resolute\nLOGO=ubuntu-logo\n"
+  },
+  "method": {
+    "warmups": 10,
+    "runs": 20,
+    "order_seed": 0,
+    "timing": "native probe CLOCK_MONOTONIC fork through wait4; foreground OCI run including cleanup",
+    "rss": "wait4 ru_maxrss (KiB); largest process high-water mark, not aggregate",
+    "storage": "guest /var/tmp; warm caches; runtime order shuffled per round"
+  },
+  "allowed_empty_state_directories": {
+    "srunc": [],
+    "kontainer-runtime": [
+      ".exeseal"
+    ],
+    "runc-1.4": [],
+    "runc-1.5.2": [],
+    "crun": [
+      ".empty-directory"
+    ],
+    "youki": []
+  },
+  "bundle_config": {
+    "ociVersion": "1.0.2",
+    "process": {
+      "terminal": false,
+      "user": {
+        "uid": 0,
+        "gid": 0
+      },
+      "args": [
+        "/bin/true"
+      ],
+      "env": [
+        "PATH=/bin"
+      ],
+      "cwd": "/",
+      "noNewPrivileges": true
+    },
+    "root": {
+      "path": "rootfs",
+      "readonly": true
+    },
+    "hostname": "bench",
+    "mounts": [
+      {
+        "destination": "/proc",
+        "type": "proc",
+        "source": "proc"
+      },
+      {
+        "destination": "/dev",
+        "type": "tmpfs",
+        "source": "tmpfs",
+        "options": [
+          "nosuid",
+          "strictatime",
+          "mode=755",
+          "size=65536k"
+        ]
+      }
+    ],
+    "linux": {
+      "namespaces": [
+        {
+          "type": "pid"
+        },
+        {
+          "type": "mount"
+        },
+        {
+          "type": "uts"
+        },
+        {
+          "type": "ipc"
+        }
+      ]
+    }
+  },
+  "busybox_sha256": "c2f279d1d5640a0f327890d41cad594c0f059f3fed3f96dd72fdcc4f5e18ec02",
+  "runtimes": {
+    "srunc": {
+      "path": "/var/tmp/srunc-benchmark-bin/srunc-essentials",
+      "sha256": "18af9cec09ce716c4f58ee8010892787c18e7bcc7630addec03a436762b02d09",
+      "size_bytes": 15483000,
+      "version": "srunc version 0.0.0-dev\nspec: 1.3.0",
+      "elf_header": "ELF Header:\n  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 \n  Class:                             ELF64\n  Data:                              2's complement, little endian\n  Version:                           1 (current)\n  OS/ABI:                            UNIX - System V\n  ABI Version:                       0\n  Type:                              DYN (Position-Independent Executable file)\n  Machine:                           AArch64\n  Version:                           0x1\n  Entry point address:               0x156480\n  Start of program headers:          64 (bytes into file)\n  Start of section headers:          15479672 (bytes into file)\n  Flags:                             0x0\n  Size of this header:               64 (bytes)\n  Size of program headers:           56 (bytes)\n  Number of program headers:         10\n  Size of section headers:           64 (bytes)\n  Number of section headers:         52\n  Section header string table index: 51",
+      "linkage": "linux-vdso.so.1 (0x0000ffff92cc4000)\n\tlibseccomp.so.2 => /usr/lib/aarch64-linux-gnu/libseccomp.so.2 (0x0000ffff91cc0000)\n\tlibm.so.6 => /usr/lib/aarch64-linux-gnu/libm.so.6 (0x0000ffff91bf0000)\n\tlibstdc++.so.6 => /usr/lib/aarch64-linux-gnu/libstdc++.so.6 (0x0000ffff91950000)\n\tlibgcc_s.so.1 => /usr/lib/aarch64-linux-gnu/libgcc_s.so.1 (0x0000ffff91910000)\n\tlibc.so.6 => /usr/lib/aarch64-linux-gnu/libc.so.6 (0x0000ffff91740000)\n\t/lib/ld-linux-aarch64.so.1 (0x0000ffff92c80000)",
+      "samples": [
+        {
+          "elapsed_ms": 8.235125,
+          "max_rss_kib": 13028,
+          "exit_code": 0,
+          "round": 1
+        },
+        {
+          "elapsed_ms": 7.901458,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 2
+        },
+        {
+          "elapsed_ms": 7.551666,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 3
+        },
+        {
+          "elapsed_ms": 7.428667,
+          "max_rss_kib": 12792,
+          "exit_code": 0,
+          "round": 4
+        },
+        {
+          "elapsed_ms": 6.548709,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 5
+        },
+        {
+          "elapsed_ms": 9.508166,
+          "max_rss_kib": 13032,
+          "exit_code": 0,
+          "round": 6
+        },
+        {
+          "elapsed_ms": 6.587542,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 7
+        },
+        {
+          "elapsed_ms": 7.210541,
+          "max_rss_kib": 12916,
+          "exit_code": 0,
+          "round": 8
+        },
+        {
+          "elapsed_ms": 6.254167,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 9
+        },
+        {
+          "elapsed_ms": 8.416166,
+          "max_rss_kib": 13036,
+          "exit_code": 0,
+          "round": 10
+        },
+        {
+          "elapsed_ms": 7.153458,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 11
+        },
+        {
+          "elapsed_ms": 9.963416,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 12
+        },
+        {
+          "elapsed_ms": 6.9685,
+          "max_rss_kib": 12788,
+          "exit_code": 0,
+          "round": 13
+        },
+        {
+          "elapsed_ms": 7.54975,
+          "max_rss_kib": 12916,
+          "exit_code": 0,
+          "round": 14
+        },
+        {
+          "elapsed_ms": 7.021458,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 15
+        },
+        {
+          "elapsed_ms": 7.447,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 16
+        },
+        {
+          "elapsed_ms": 9.289167,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 17
+        },
+        {
+          "elapsed_ms": 7.776,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 18
+        },
+        {
+          "elapsed_ms": 6.711792,
+          "max_rss_kib": 13044,
+          "exit_code": 0,
+          "round": 19
+        },
+        {
+          "elapsed_ms": 7.277916,
+          "max_rss_kib": 13048,
+          "exit_code": 0,
+          "round": 20
+        }
+      ],
+      "median_elapsed_ms": 7.4378335,
+      "median_max_rss_kib": 13048.0
+    },
+    "kontainer-runtime": {
+      "path": "/var/tmp/srunc-benchmark-bin/kontainer-runtime",
+      "sha256": "77e936f076a079a8a7052ba2e812d0e9acd4caa261962c3edd8bfe75396e6850",
+      "size_bytes": 4107240,
+      "version": "kontainer-runtime version 0.6.1\ncommit: 1cddeba\nspec: 1.2.0",
+      "elf_header": "ELF Header:\n  Magic:   7f 45 4c 46 02 01 01 03 00 00 00 00 00 00 00 00 \n  Class:                             ELF64\n  Data:                              2's complement, little endian\n  Version:                           1 (current)\n  OS/ABI:                            UNIX - GNU\n  ABI Version:                       0\n  Type:                              EXEC (Executable file)\n  Machine:                           AArch64\n  Version:                           0x1\n  Entry point address:               0x2b73c0\n  Start of program headers:          64 (bytes into file)\n  Start of section headers:          4105256 (bytes into file)\n  Flags:                             0x0\n  Size of this header:               64 (bytes)\n  Size of program headers:           56 (bytes)\n  Number of program headers:         10\n  Size of section headers:           64 (bytes)\n  Number of section headers:         31\n  Section header string table index: 30",
+      "linkage": "not a dynamic executable",
+      "samples": [
+        {
+          "elapsed_ms": 3.756584,
+          "max_rss_kib": 4972,
+          "exit_code": 0,
+          "round": 1
+        },
+        {
+          "elapsed_ms": 3.986292,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 2
+        },
+        {
+          "elapsed_ms": 3.516667,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 3
+        },
+        {
+          "elapsed_ms": 3.416542,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 4
+        },
+        {
+          "elapsed_ms": 3.225833,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 5
+        },
+        {
+          "elapsed_ms": 3.395,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 6
+        },
+        {
+          "elapsed_ms": 3.822333,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 7
+        },
+        {
+          "elapsed_ms": 3.521208,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 8
+        },
+        {
+          "elapsed_ms": 3.174875,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 9
+        },
+        {
+          "elapsed_ms": 3.76125,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 10
+        },
+        {
+          "elapsed_ms": 3.386041,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 11
+        },
+        {
+          "elapsed_ms": 3.849542,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 12
+        },
+        {
+          "elapsed_ms": 3.74875,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 13
+        },
+        {
+          "elapsed_ms": 3.66975,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 14
+        },
+        {
+          "elapsed_ms": 3.388584,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 15
+        },
+        {
+          "elapsed_ms": 3.526916,
+          "max_rss_kib": 5132,
+          "exit_code": 0,
+          "round": 16
+        },
+        {
+          "elapsed_ms": 3.417042,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 17
+        },
+        {
+          "elapsed_ms": 3.447458,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 18
+        },
+        {
+          "elapsed_ms": 3.41575,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 19
+        },
+        {
+          "elapsed_ms": 3.4485,
+          "max_rss_kib": 5164,
+          "exit_code": 0,
+          "round": 20
+        }
+      ],
+      "median_elapsed_ms": 3.4825835,
+      "median_max_rss_kib": 5164.0
+    },
+    "runc-1.4": {
+      "path": "/usr/sbin/runc",
+      "sha256": "b30dde4b6df96a676fb089251a8be8b5b32cef1c210fc637f28e009fec2dfb8e",
+      "size_bytes": 10924704,
+      "version": "runc version 1.4.0-0ubuntu1\nspec: 1.3.0\ngo: go1.24.9\nlibseccomp: 2.6.0",
+      "elf_header": "ELF Header:\n  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 \n  Class:                             ELF64\n  Data:                              2's complement, little endian\n  Version:                           1 (current)\n  OS/ABI:                            UNIX - System V\n  ABI Version:                       0\n  Type:                              EXEC (Executable file)\n  Machine:                           AArch64\n  Version:                           0x1\n  Entry point address:               0x402f00\n  Start of program headers:          64 (bytes into file)\n  Start of section headers:          10922208 (bytes into file)\n  Flags:                             0x0\n  Size of this header:               64 (bytes)\n  Size of program headers:           56 (bytes)\n  Number of program headers:         12\n  Size of section headers:           64 (bytes)\n  Number of section headers:         39\n  Section header string table index: 38",
+      "linkage": "linux-vdso.so.1 (0x0000ffffb84ad000)\n\tlibseccomp.so.2 => /usr/lib/aarch64-linux-gnu/libseccomp.so.2 (0x0000ffffb8420000)\n\tlibc.so.6 => /usr/lib/aarch64-linux-gnu/libc.so.6 (0x0000ffffb8250000)\n\t/lib/ld-linux-aarch64.so.1 (0x0000ffffb8470000)",
+      "samples": [
+        {
+          "elapsed_ms": 7.201917,
+          "max_rss_kib": 12256,
+          "exit_code": 0,
+          "round": 1
+        },
+        {
+          "elapsed_ms": 6.69225,
+          "max_rss_kib": 11940,
+          "exit_code": 0,
+          "round": 2
+        },
+        {
+          "elapsed_ms": 6.264334,
+          "max_rss_kib": 12196,
+          "exit_code": 0,
+          "round": 3
+        },
+        {
+          "elapsed_ms": 6.053667,
+          "max_rss_kib": 12068,
+          "exit_code": 0,
+          "round": 4
+        },
+        {
+          "elapsed_ms": 6.360209,
+          "max_rss_kib": 12108,
+          "exit_code": 0,
+          "round": 5
+        },
+        {
+          "elapsed_ms": 24.085542,
+          "max_rss_kib": 12256,
+          "exit_code": 0,
+          "round": 6
+        },
+        {
+          "elapsed_ms": 6.293416,
+          "max_rss_kib": 12128,
+          "exit_code": 0,
+          "round": 7
+        },
+        {
+          "elapsed_ms": 6.844416,
+          "max_rss_kib": 12128,
+          "exit_code": 0,
+          "round": 8
+        },
+        {
+          "elapsed_ms": 6.147625,
+          "max_rss_kib": 12256,
+          "exit_code": 0,
+          "round": 9
+        },
+        {
+          "elapsed_ms": 6.272667,
+          "max_rss_kib": 12240,
+          "exit_code": 0,
+          "round": 10
+        },
+        {
+          "elapsed_ms": 6.651333,
+          "max_rss_kib": 12256,
+          "exit_code": 0,
+          "round": 11
+        },
+        {
+          "elapsed_ms": 6.504208,
+          "max_rss_kib": 12256,
+          "exit_code": 0,
+          "round": 12
+        },
+        {
+          "elapsed_ms": 6.227625,
+          "max_rss_kib": 12244,
+          "exit_code": 0,
+          "round": 13
+        },
+        {
+          "elapsed_ms": 6.856625,
+          "max_rss_kib": 12384,
+          "exit_code": 0,
+          "round": 14
+        },
+        {
+          "elapsed_ms": 6.318625,
+          "max_rss_kib": 12252,
+          "exit_code": 0,
+          "round": 15
+        },
+        {
+          "elapsed_ms": 6.220458,
+          "max_rss_kib": 12056,
+          "exit_code": 0,
+          "round": 16
+        },
+        {
+          "elapsed_ms": 6.08875,
+          "max_rss_kib": 12248,
+          "exit_code": 0,
+          "round": 17
+        },
+        {
+          "elapsed_ms": 6.266208,
+          "max_rss_kib": 12256,
+          "exit_code": 0,
+          "round": 18
+        },
+        {
+          "elapsed_ms": 6.073583,
+          "max_rss_kib": 12128,
+          "exit_code": 0,
+          "round": 19
+        },
+        {
+          "elapsed_ms": 6.594166,
+          "max_rss_kib": 11812,
+          "exit_code": 0,
+          "round": 20
+        }
+      ],
+      "median_elapsed_ms": 6.3060205,
+      "median_max_rss_kib": 12242.0
+    },
+    "runc-1.5.2": {
+      "path": "/opt/runc-1.5.2/runc.arm64",
+      "sha256": "d10ecae898361832a059be2089bab92d158aec54661b18ed7346ed79628b46b0",
+      "size_bytes": 10091904,
+      "version": "runc version 1.5.2\ncommit: v1.5.2-0-g29dd3dc\nspec: 1.3.0\ngo: go1.26.8\nlibseccomp: 2.6.1\nlibpathrs: 0.2.6",
+      "elf_header": "ELF Header:\n  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 \n  Class:                             ELF64\n  Data:                              2's complement, little endian\n  Version:                           1 (current)\n  OS/ABI:                            UNIX - System V\n  ABI Version:                       0\n  Type:                              DYN (Position-Independent Executable file)\n  Machine:                           AArch64\n  Version:                           0x1\n  Entry point address:               0xe9300\n  Start of program headers:          64 (bytes into file)\n  Start of section headers:          10089664 (bytes into file)\n  Flags:                             0x0\n  Size of this header:               64 (bytes)\n  Size of program headers:           56 (bytes)\n  Number of program headers:         9\n  Size of section headers:           64 (bytes)\n  Number of section headers:         35\n  Section header string table index: 34",
+      "linkage": "statically linked",
+      "samples": [
+        {
+          "elapsed_ms": 6.8535,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 1
+        },
+        {
+          "elapsed_ms": 6.65525,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 2
+        },
+        {
+          "elapsed_ms": 6.724417,
+          "max_rss_kib": 10304,
+          "exit_code": 0,
+          "round": 3
+        },
+        {
+          "elapsed_ms": 6.318125,
+          "max_rss_kib": 10304,
+          "exit_code": 0,
+          "round": 4
+        },
+        {
+          "elapsed_ms": 6.723291,
+          "max_rss_kib": 10816,
+          "exit_code": 0,
+          "round": 5
+        },
+        {
+          "elapsed_ms": 6.697625,
+          "max_rss_kib": 10688,
+          "exit_code": 0,
+          "round": 6
+        },
+        {
+          "elapsed_ms": 6.309666,
+          "max_rss_kib": 10304,
+          "exit_code": 0,
+          "round": 7
+        },
+        {
+          "elapsed_ms": 7.183209,
+          "max_rss_kib": 10560,
+          "exit_code": 0,
+          "round": 8
+        },
+        {
+          "elapsed_ms": 6.611916,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 9
+        },
+        {
+          "elapsed_ms": 6.517167,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 10
+        },
+        {
+          "elapsed_ms": 6.429333,
+          "max_rss_kib": 10176,
+          "exit_code": 0,
+          "round": 11
+        },
+        {
+          "elapsed_ms": 6.298666,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 12
+        },
+        {
+          "elapsed_ms": 6.413292,
+          "max_rss_kib": 10560,
+          "exit_code": 0,
+          "round": 13
+        },
+        {
+          "elapsed_ms": 6.699084,
+          "max_rss_kib": 10688,
+          "exit_code": 0,
+          "round": 14
+        },
+        {
+          "elapsed_ms": 6.447,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 15
+        },
+        {
+          "elapsed_ms": 6.488542,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 16
+        },
+        {
+          "elapsed_ms": 6.295542,
+          "max_rss_kib": 10560,
+          "exit_code": 0,
+          "round": 17
+        },
+        {
+          "elapsed_ms": 6.97475,
+          "max_rss_kib": 10560,
+          "exit_code": 0,
+          "round": 18
+        },
+        {
+          "elapsed_ms": 6.7675,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 19
+        },
+        {
+          "elapsed_ms": 6.352583,
+          "max_rss_kib": 10432,
+          "exit_code": 0,
+          "round": 20
+        }
+      ],
+      "median_elapsed_ms": 6.5645415,
+      "median_max_rss_kib": 10432.0
+    },
+    "crun": {
+      "path": "/var/tmp/srunc-benchmark-bin/crun",
+      "sha256": "0ef30b0fbb494dc9c5303d46b091a84e27cb8ac99c985123fb1eb339854b69ea",
+      "size_bytes": 3364408,
+      "version": "crun version 1.30.1\ncommit: 079ff6a7a16d029460af882f9ea44674e6a510b6\nrundir: /run/crun\nspec: 1.0.0\n+SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +JSON_C",
+      "elf_header": "ELF Header:\n  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 \n  Class:                             ELF64\n  Data:                              2's complement, little endian\n  Version:                           1 (current)\n  OS/ABI:                            UNIX - System V\n  ABI Version:                       0\n  Type:                              EXEC (Executable file)\n  Machine:                           AArch64\n  Version:                           0x1\n  Entry point address:               0x400f80\n  Start of program headers:          64 (bytes into file)\n  Start of section headers:          3363000 (bytes into file)\n  Flags:                             0x0\n  Size of this header:               64 (bytes)\n  Size of program headers:           56 (bytes)\n  Number of program headers:         6\n  Size of section headers:           64 (bytes)\n  Number of section headers:         22\n  Section header string table index: 21",
+      "linkage": "not a dynamic executable",
+      "samples": [
+        {
+          "elapsed_ms": 1.693916,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 1
+        },
+        {
+          "elapsed_ms": 1.475,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 2
+        },
+        {
+          "elapsed_ms": 1.502958,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 3
+        },
+        {
+          "elapsed_ms": 1.684666,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 4
+        },
+        {
+          "elapsed_ms": 1.78175,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 5
+        },
+        {
+          "elapsed_ms": 1.449958,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 6
+        },
+        {
+          "elapsed_ms": 1.677292,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 7
+        },
+        {
+          "elapsed_ms": 1.495042,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 8
+        },
+        {
+          "elapsed_ms": 1.647959,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 9
+        },
+        {
+          "elapsed_ms": 1.650625,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 10
+        },
+        {
+          "elapsed_ms": 1.768667,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 11
+        },
+        {
+          "elapsed_ms": 1.744458,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 12
+        },
+        {
+          "elapsed_ms": 1.600833,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 13
+        },
+        {
+          "elapsed_ms": 1.756708,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 14
+        },
+        {
+          "elapsed_ms": 1.6085,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 15
+        },
+        {
+          "elapsed_ms": 1.654042,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 16
+        },
+        {
+          "elapsed_ms": 1.460208,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 17
+        },
+        {
+          "elapsed_ms": 1.639042,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 18
+        },
+        {
+          "elapsed_ms": 1.697875,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 19
+        },
+        {
+          "elapsed_ms": 1.658458,
+          "max_rss_kib": 2220,
+          "exit_code": 0,
+          "round": 20
+        }
+      ],
+      "median_elapsed_ms": 1.6523335000000001,
+      "median_max_rss_kib": 2220.0
+    },
+    "youki": {
+      "path": "/var/tmp/srunc-benchmark-bin/youki",
+      "sha256": "9acced77db02503fa397cca082aa3f0e60aa9410ed70cc69344d4682dbeccbf4",
+      "size_bytes": 6811568,
+      "version": "youki version: 0.7.0\ncommit: 0.7.0-94ba653efbb180ce04650f6ae01a8e6bc8f96d92\nspec: 1.1.0\nrustc: 1.96.0",
+      "elf_header": "ELF Header:\n  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 \n  Class:                             ELF64\n  Data:                              2's complement, little endian\n  Version:                           1 (current)\n  OS/ABI:                            UNIX - System V\n  ABI Version:                       0\n  Type:                              EXEC (Executable file)\n  Machine:                           AArch64\n  Version:                           0x1\n  Entry point address:               0x41dbd8\n  Start of program headers:          64 (bytes into file)\n  Start of section headers:          6810416 (bytes into file)\n  Flags:                             0x0\n  Size of this header:               64 (bytes)\n  Size of program headers:           56 (bytes)\n  Number of program headers:         6\n  Size of section headers:           64 (bytes)\n  Number of section headers:         18\n  Section header string table index: 17",
+      "linkage": "not a dynamic executable",
+      "samples": [
+        {
+          "elapsed_ms": 5.95175,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 1
+        },
+        {
+          "elapsed_ms": 6.208959,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 2
+        },
+        {
+          "elapsed_ms": 5.957167,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 3
+        },
+        {
+          "elapsed_ms": 5.382708,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 4
+        },
+        {
+          "elapsed_ms": 5.491208,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 5
+        },
+        {
+          "elapsed_ms": 5.469208,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 6
+        },
+        {
+          "elapsed_ms": 5.720875,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 7
+        },
+        {
+          "elapsed_ms": 5.4465,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 8
+        },
+        {
+          "elapsed_ms": 5.759833,
+          "max_rss_kib": 4136,
+          "exit_code": 0,
+          "round": 9
+        },
+        {
+          "elapsed_ms": 5.801834,
+          "max_rss_kib": 4224,
+          "exit_code": 0,
+          "round": 10
+        },
+        {
+          "elapsed_ms": 5.341209,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 11
+        },
+        {
+          "elapsed_ms": 5.842375,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 12
+        },
+        {
+          "elapsed_ms": 5.699166,
+          "max_rss_kib": 4212,
+          "exit_code": 0,
+          "round": 13
+        },
+        {
+          "elapsed_ms": 5.885,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 14
+        },
+        {
+          "elapsed_ms": 5.62775,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 15
+        },
+        {
+          "elapsed_ms": 5.718,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 16
+        },
+        {
+          "elapsed_ms": 5.535209,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 17
+        },
+        {
+          "elapsed_ms": 5.499833,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 18
+        },
+        {
+          "elapsed_ms": 5.37225,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 19
+        },
+        {
+          "elapsed_ms": 5.490625,
+          "max_rss_kib": 4228,
+          "exit_code": 0,
+          "round": 20
+        }
+      ],
+      "median_elapsed_ms": 5.663458,
+      "median_max_rss_kib": 4228.0
+    }
+  },
+  "release_assets": {
+    "kontainer-runtime": {
+      "url": "https://github.com/ternbusty/kontainer-runtime/releases/download/v0.6.1/kontainer-runtime_0.6.1_linux_arm64",
+      "sha256": "77e936f076a079a8a7052ba2e812d0e9acd4caa261962c3edd8bfe75396e6850",
+      "verification": "matched GitHub release asset digest"
+    },
+    "crun": {
+      "url": "https://github.com/containers/crun/releases/download/1.30.1/crun-1.30.1-linux-arm64",
+      "sha256": "0ef30b0fbb494dc9c5303d46b091a84e27cb8ac99c985123fb1eb339854b69ea",
+      "verification": "matched GitHub release asset digest"
+    },
+    "youki": {
+      "url": "https://github.com/youki-dev/youki/releases/download/v0.7.0/youki-0.7.0-aarch64-musl.tar.gz",
+      "sha256": "b96c05c2c82f1d20a74b611188fa120894c50a6128f73856bb371604ecb69bd0",
+      "verification": "matched GitHub release asset digest"
+    }
+  }
+}
