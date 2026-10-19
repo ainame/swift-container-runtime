@@ -14,6 +14,13 @@ key names and which keys are present, hugetlb size keys, which executable a
 lookup chooses) and let Swift decide formatting such as key order, number
 spelling, escaping and fractional-second digits.
 
+Runtime sources use `FoundationEssentials` when available, with a
+`#if canImport(FoundationEssentials)` / `#else import Foundation` fallback for
+Apple platforms that need it. Keep Linux builds free of full Foundation imports:
+static Swift builds otherwise embed unnecessary internationalization code and
+ICU data. JSON, file utilities and ISO 8601 timestamps used here work with
+FoundationEssentials.
+
 ## Directories
 
 `Sources/ContainerRuntime` groups files by runtime phase:

@@ -49,7 +49,7 @@ ELF/symbol inspection of the original binary identifies **33,976,096 bytes
 the entire stripped executable**. Its `.rodata` section totals 37.20 MB, and
 `.text` totals 15.29 MB. These are embedded bytes, not peak resident memory.
 
-Two files unconditionally import full Foundation:
+At the baseline revision, two files unconditionally imported full Foundation:
 `Sources/RuntimeCLI/RuntimeLog.swift` and
 `Sources/ContainerRuntime/Lifecycle/ContainerLifecycle.swift`. In this static
 Swift build, their Foundation dependency brings in internationalization/ICU
@@ -65,9 +65,16 @@ cost; it is not a claim that all remaining size belongs to our runtime code.
 The remainder still includes the Swift standard library, FoundationEssentials,
 ArgumentParser, swift-system, metadata and unwind information.
 
-The experiment passed compilation only; behavior and Linux integrations have
-not been validated for that source change. The comparison table uses the
-original, unchanged executable. [Size evidence and exact import changes](benchmarks/2026-10-19-binary-size.json)
+The experiment initially passed compilation only. The two runtime imports now
+use the existing `canImport(FoundationEssentials)` conditional, preserving a
+Foundation fallback where needed. With that change, macOS and Linux debug unit
+tests and Linux debug logging, OCI and lifecycle integrations passed. The
+release/static-Swift build again measured **15,483,000 bytes after stripping**;
+symbol inspection confirmed that `icudt76_dat` and full Foundation Swift symbols
+are absent. Startup and RSS have not been remeasured for this change, so the
+comparison tables retain the original executable's measurements.
+
+[Size evidence and exact experimental import changes](benchmarks/2026-10-19-binary-size.json)
 record the two binary hashes and section sizes. Debug information is not the
 explanation for the reported 59.49 MB: the original unstripped binary is larger,
 and all benchmarked srunc sizes were measured after `strip`.

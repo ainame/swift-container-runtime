@@ -1,6 +1,10 @@
 import ArgumentParser
 import ContainerRuntime
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import SystemPackage
 
 /// One synchronous command owns its log. No global state or threads are needed

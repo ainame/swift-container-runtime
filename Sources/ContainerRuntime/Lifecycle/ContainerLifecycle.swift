@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import SystemPackage
 
 /// Persistent OCI lifecycle commands over one state root, following runc.
