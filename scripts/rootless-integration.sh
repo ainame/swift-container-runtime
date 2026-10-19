@@ -113,6 +113,13 @@ own_maps=',
     "uidMappings": [{"containerID": 0, "hostID": '"$uid"', "size": 1}],
     "gidMappings": [{"containerID": 0, "hostID": '"$gid"', "size": 1}]'
 root_user='{"uid": 0, "gid": 0}'
+# alive PID: exists and has not exited. Zombies count as exited: a detached
+# init's reaper may be a PID 1 that never reaps (as in CI job containers).
+alive() {
+    stat_line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+    state=${stat_line##*) }
+    case "${state%% *}" in Z | X | x | '') return 1 ;; esac
+}
 # A container ID records no state when the runtime lists none.
 no_state() { [ -z "$(as_user $1 list -q)" ] || fail "$2 left state: $(as_user $1 list -q)"; }
 
@@ -162,7 +169,7 @@ rootless" ] || { cat "$out.exec"; fail "$impl exec output"; }
         i=$((i + 1)); [ "$i" -lt 50 ] || fail "$impl init did not stop"; sleep 0.1
     done
     as_user $rt delete "life-$impl"
-    kill -0 "$pid" 2>/dev/null && fail "$impl init survived delete"
+    if alive "$pid"; then fail "$impl init survived delete"; fi
     no_state "$rt" "$impl delete"
 
     # setgroups is denied under a direct map, so requested groups fail.
