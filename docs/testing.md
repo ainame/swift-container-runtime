@@ -205,7 +205,33 @@ sh scripts/containerd-integration.sh .build/linux-6.4.1/debug/srunc /tmp/sct-eng
 It selects the supplied binary explicitly, creates its own containerd namespace,
 runtime root, cgroup subtree and directory rootfs, and cleans them up. It checks
 pipes/EOF, init/exec PID files, exit codes, shim reaping, kill/delete, error logs
-and failure cleanup. It does not change a daemon default or test Docker, image
+and failure cleanup. Its process probe adds 12 concurrent attached execs (success,
+exit 42 and missing executables), eight short-lived detached execs with PID-file
+and reaping checks, and simultaneous 2 MiB stdout/stderr streams consumed by slow
+readers. An unrelated exec must still finish while those readers are stopped;
+every byte, tail marker, EOF and exit status is checked afterwards. The Docker CI
+job also runs this gate against the runner's containerd socket.
+
+The process probe uses regular files for ordinary command diagnostics and bounded
+waits for CLI completion: a detached workload retaining a pipe writer must not
+make the harness wait for EOF. Only the intentional slow-reader scenario captures
+pipes. The runtime already uses close-on-exec launch-report descriptors and a
+hook runner that stops waiting when the hook exits, even if descendants retain
+its output; these ownership rules must be preserved.
+
+On 2026-10-19, the new process probe passed with srunc (Linux debug) and Ubuntu's
+runc 1.4.0 through containerd/ctr 2.2.2 on the arm64 `srunc-dev` machine. With an
+immediate exit after large output, slow readers lose final bytes with **both**
+runtimes. The normal probe therefore acknowledges receipt over stdin before
+allowing exit; this isolates backpressure and EOF handling from the shared
+engine/client final-drain defect. To reproduce the loss against an existing test
+task, run `python3 scripts/containerd-process-integration.py SOCKET NAMESPACE
+CONTAINER BUNDLE --immediate-exit`. This mode intentionally fails on the observed
+profile. Immediate short-lived exec output remains checked without an
+acknowledgement. These cases were informed by Apple's
+[guest relay and process-supervision code](https://github.com/apple/containerization/tree/6adea5663427b4068108e9268e6125fc139b6045/vminitd/Sources/VminitdCore).
+
+The gate does not change a daemon default or test Docker, image
 unpacking, network provisioning, TTYs or default seccomp/LSM security.
 
 `scripts/bind-integration.sh` checks file/directory bind and rbind through real

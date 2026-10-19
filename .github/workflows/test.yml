@@ -103,7 +103,7 @@ jobs:
       - name: Register the runtime with Docker
         run: |
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static libseccomp2 jq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq busybox-static libseccomp2 jq python3
           config=/etc/docker/daemon.json
           [ -f "$config" ] || echo '{}' | sudo tee "$config" > /dev/null
           sudo jq '. + {"exec-opts": ["native.cgroupdriver=cgroupfs"],
@@ -118,6 +118,8 @@ jobs:
         run: |
           sudo sh scripts/docker-integration.sh runc "$IMAGE"
           sudo sh scripts/docker-integration.sh swift "$IMAGE"
+      - name: Containerd exec races and backpressure
+        run: sudo sh scripts/containerd-integration.sh /usr/local/bin/srunc /run/containerd/containerd.sock
       - name: AppArmor confinement gate
         run: sudo sh scripts/apparmor-integration.sh /usr/local/bin/srunc
       - name: Switch Docker to the systemd cgroup driver

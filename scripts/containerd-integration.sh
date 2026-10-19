@@ -67,6 +67,8 @@ exec_pid=$(cat "$bundle/detached.pid")
 [ -r "/proc/$exec_pid/stat" ] || fail 'detached exec PID was not published'
 if c tasks exec --exec-id bad holder /missing-program > "$scratch/bad.out" 2> "$scratch/bad.err"; then fail 'missing exec succeeded'; fi
 grep -q 'OCI runtime exec failed: exec workload' "$scratch/bad.err" || fail 'shim did not extract runtime exec error'
+# Stress the same live shim before checking its final task/FD/cgroup cleanup.
+python3 "$(dirname "$0")/containerd-process-integration.py" "$address" "$namespace" holder "$bundle"
 c tasks kill --all --signal SIGKILL holder
 c tasks rm holder >/dev/null
 c containers delete holder
