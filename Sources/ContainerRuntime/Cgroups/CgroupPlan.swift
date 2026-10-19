@@ -251,8 +251,18 @@ public struct CgroupPlan: Sendable, Equatable {
     /// Unlike runc, which cleans `.` and `..` lexically, such components are
     /// rejected, and an absolute path must name a cgroup below the mount
     /// root: runc would place the container in the root cgroup itself.
+    ///
+    /// A value shaped like runc's systemd-driver tuple (`slice:prefix:name`,
+    /// three colon-separated fields without a `/`) is rejected rather than
+    /// created as one directory: engines send it only with the systemd cgroup
+    /// driver, which this runtime does not implement.
     static func location(_ path: String?) throws -> Location {
         guard let path, !path.isEmpty else { return .runtimeDefault }
+        guard path.contains("/") || path.split(separator: ":", omittingEmptySubsequences: false).count != 3 else {
+            throw RuntimeError(
+                "config.json: linux.cgroupsPath looks like a systemd slice:prefix:name tuple, but the systemd cgroup driver is not supported: \(path)"
+            )
+        }
         guard !path.utf8.contains(0), !path.utf8.contains(UInt8(ascii: "\n")) else {
             throw RuntimeError("config.json: linux.cgroupsPath must not contain NUL or newline")
         }

@@ -39,6 +39,9 @@ private func rejection(_ linuxFields: String) -> String? {
     (#", "cgroupsPath": "pod/ctr""#, ["swift-container-runtime", "pod", "ctr"]),
     (#", "cgroupsPath": "/test/ctr""#, ["test", "ctr"]),
     (#", "cgroupsPath": "//test//ctr/""#, ["test", "ctr"]),
+    // Colons alone are ordinary name characters; only the bare tuple shape is refused.
+    (#", "cgroupsPath": "a:b""#, ["swift-container-runtime", "a:b"]),
+    (#", "cgroupsPath": "/pod/a:b:c""#, ["pod", "a:b:c"]),
 ])
 func resolvesCgroupPaths(_ fields: String, _ components: [String]) throws {
     #expect(try plan(linuxFields: fields).cgroup.components(for: box) == components)
@@ -53,6 +56,10 @@ func resolvesCgroupPaths(_ fields: String, _ components: [String]) throws {
     (#", "cgroupsPath": "a\nb""#, "newline"),
     (#", "cgroupsPath": "a\u0000b""#, "NUL"),
     (#", "cgroupsPath": 7"#, "linux.cgroupsPath"),
+    // systemd-driver tuples, including runc's empty-slice and empty-prefix forms.
+    (#", "cgroupsPath": "system.slice:docker:abc""#, "systemd cgroup driver is not supported"),
+    (#", "cgroupsPath": ":docker:abc""#, "systemd cgroup driver is not supported"),
+    (#", "cgroupsPath": "system.slice::abc""#, "systemd cgroup driver is not supported"),
 ])
 func rejectsUnsafeCgroupPaths(_ fields: String, _ reason: String) {
     let message = rejection(fields)

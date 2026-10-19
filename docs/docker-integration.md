@@ -85,10 +85,9 @@ driver on v2, so many default installations use it.
 - Docker or containerd configured for systemd passes global `--systemd-cgroup`;
   srunc rejects that option and container creation fails. Switch the daemon to
   `"exec-opts": ["native.cgroupdriver=cgroupfs"]` (containerd: `SystemdCgroup = false`).
-- `linux.cgroupsPath` is then a `slice:prefix:name` tuple, not a path. Without
-  `--systemd-cgroup`, srunc currently treats a tuple such as
-  `system.slice:docker:abc` as a single relative component below
-  `/swift-container-runtime` instead of rejecting it.
+- `linux.cgroupsPath` is then a `slice:prefix:name` tuple, not a path. srunc
+  rejects a bare tuple such as `system.slice:docker:abc` even without
+  `--systemd-cgroup`, rather than creating it as a directory.
 - Support needs a D-Bus client (a dependency decision), mapping OCI resources to
   unit properties with direct writes for the rest, and unit lifetime and
   cleanup. This is a Docker-driven extension beyond kontainer's pinned scope.
