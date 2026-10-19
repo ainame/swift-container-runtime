@@ -376,7 +376,9 @@ sudo python3 scripts/runtime-tools-integration.py \
 
 Recorded 2026-10-19 at upstream `bd3b0bd` (58 executables) and rerun on both
 hosts for srunc `92ce94f`, after rootless operation landed, with unchanged
-results (CI run 39206598752). Both hosts use cgroup v2 and Ubuntu 26.04. The
+results (CI run 39206598752). All 24 exclusions were also run by name against
+srunc `92ce94f` on `srunc-dev`: each still fails for its recorded reason, so
+the list is unchanged. Both hosts use cgroup v2 and Ubuntu 26.04. The
 gate runs as root, so it does not exercise rootless operation;
 `scripts/rootless-integration.sh` covers that.
 
